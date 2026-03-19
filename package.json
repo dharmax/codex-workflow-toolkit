@@ -1,0 +1,29 @@
+{
+  "name": "codex-workflow-toolkit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Reusable Codex CLI workflow toolkit for JS/TS repositories.",
+  "bin": {
+    "codex-workflow-init": "./scripts/init-project.mjs",
+    "codex-workflow-ticket": "./runtime/scripts/codex-workflow/kanban-ticket.mjs",
+    "codex-workflow-guidance": "./runtime/scripts/codex-workflow/guidance-summary.mjs",
+    "codex-workflow-verify": "./runtime/scripts/codex-workflow/verification-summary.mjs",
+    "codex-workflow-review": "./runtime/scripts/codex-workflow/review-summary.mjs",
+    "codex-workflow-guideline-audit": "./runtime/scripts/codex-workflow/guideline-audit.mjs",
+    "codex-workflow-audit": "./runtime/scripts/codex-workflow/workflow-audit.mjs"
+  },
+  "scripts": {
+    "init:here": "node scripts/init-project.mjs --target .",
+    "ticket": "node runtime/scripts/codex-workflow/kanban-ticket.mjs",
+    "guidance": "node runtime/scripts/codex-workflow/guidance-summary.mjs",
+    "verify": "node runtime/scripts/codex-workflow/verification-summary.mjs",
+    "review": "node runtime/scripts/codex-workflow/review-summary.mjs",
+    "audit:guidelines": "node runtime/scripts/codex-workflow/guideline-audit.mjs",
+    "audit": "node runtime/scripts/codex-workflow/workflow-audit.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
