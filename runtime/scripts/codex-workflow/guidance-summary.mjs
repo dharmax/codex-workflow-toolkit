@@ -3,7 +3,7 @@
 import path from "node:path";
 import { parseArgs, printAndExit, splitCsv } from "./lib/cli.mjs";
 import { exists, normalizePath, readText } from "./lib/fs-utils.mjs";
-import { deriveKeywords, summarizeGuidance } from "./lib/guidance-utils.mjs";
+import { deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
 import { getChanges, isGitRepo } from "./lib/git-utils.mjs";
 import { findTicket, parseKanban } from "./lib/kanban-utils.mjs";
 
@@ -66,12 +66,14 @@ const keywords = deriveKeywords({ ticketText, files: uniqueFiles });
 const agentsPath = path.resolve(root, "AGENTS.md");
 const contributingPath = path.resolve(root, "CONTRIBUTING.md");
 const executionProtocolPath = path.resolve(root, "execution-protocol.md");
+const enforcementPath = path.resolve(root, "enforcement.md");
 const guidelinesPath = path.resolve(root, "project-guidelines.md");
 const knowledgePath = path.resolve(root, "knowledge.md");
-const [agents, contributing, executionProtocol, guidelines, knowledge] = await Promise.all([
+const [agents, contributing, executionProtocol, enforcement, guidelines, knowledge] = await Promise.all([
   readText(agentsPath),
   readText(contributingPath),
   readText(executionProtocolPath),
+  readText(enforcementPath),
   readText(guidelinesPath),
   readText(knowledgePath)
 ]);
@@ -81,12 +83,14 @@ const summary = {
   ticket: ticket ? { id: ticket.id, title: ticket.title, section: ticket.section } : null,
   files: uniqueFiles,
   keywords,
+  validationPlan: inferValidationPlan({ ticket, files: uniqueFiles }),
   sections: {
-    agents: summarizeGuidance(agents, keywords, { alwaysIncludeTop: true, limit: 6, fallbackLimit: 6 }),
-    contributing: summarizeGuidance(contributing, keywords, { limit: 6, fallbackLimit: 4 }),
-    executionProtocol: summarizeGuidance(executionProtocol, keywords, { limit: 6, fallbackLimit: 4 }),
-    projectGuidelines: summarizeGuidance(guidelines, keywords, { limit: 6, fallbackLimit: 4 }),
-    knowledge: summarizeGuidance(knowledge, keywords, { limit: 6, fallbackLimit: 4 })
+    agents: summarizeGuidance(agents, keywords, { alwaysIncludeTop: true, limit: 4, fallbackLimit: 4 }),
+    contributing: summarizeGuidance(contributing, keywords, { limit: 4, fallbackLimit: 3 }),
+    executionProtocol: summarizeGuidance(executionProtocol, keywords, { limit: 4, fallbackLimit: 3 }),
+    enforcement: summarizeGuidance(enforcement, keywords, { limit: 3, fallbackLimit: 2 }),
+    projectGuidelines: summarizeGuidance(guidelines, keywords, { limit: 4, fallbackLimit: 3 }),
+    knowledge: summarizeGuidance(knowledge, keywords, { limit: 3, fallbackLimit: 2 })
   }
 };
 
@@ -96,7 +100,7 @@ if (args.json) {
 }
 
 const missingFiles = [];
-for (const filePath of [agentsPath, contributingPath, executionProtocolPath, guidelinesPath, knowledgePath]) {
+for (const filePath of [agentsPath, contributingPath, executionProtocolPath, enforcementPath, guidelinesPath, knowledgePath]) {
   if (!(await exists(filePath))) {
     missingFiles.push(path.basename(filePath));
   }
@@ -117,6 +121,17 @@ if (missingFiles.length) {
 }
 
 lines.push("");
+lines.push("Suggested Validation");
+lines.push(`- Level: ${summary.validationPlan.level}`);
+lines.push(`- Recommendation: ${summary.validationPlan.recommendation}`);
+for (const item of summary.validationPlan.checks) {
+  lines.push(`- Check: ${item}`);
+}
+for (const item of summary.validationPlan.notes) {
+  lines.push(`- Note: ${item}`);
+}
+
+lines.push("");
 lines.push("AGENTS");
 for (const item of summary.sections.agents) {
   lines.push(`- ${item}`);
@@ -131,6 +146,12 @@ for (const item of summary.sections.contributing) {
 lines.push("");
 lines.push("Execution Protocol");
 for (const item of summary.sections.executionProtocol) {
+  lines.push(`- ${item}`);
+}
+
+lines.push("");
+lines.push("Enforcement");
+for (const item of summary.sections.enforcement) {
   lines.push(`- ${item}`);
 }
 

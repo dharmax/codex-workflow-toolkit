@@ -1,6 +1,6 @@
 # codex-workflow-toolkit
 
-Reusable Codex CLI workflow kit for JS/TS repositories. It provides one orchestration skill, a safe project bootstrap script, durable workflow and engineering guidance, and helper scripts for kanban, review, verification, and enforceable audits.
+Reusable Codex CLI workflow kit for JS/TS repositories. It provides one orchestration skill, a safe project bootstrap script, durable workflow and engineering guidance, and helper scripts for kanban, review, verification, and strict enforceable audits.
 
 ## Contents
 
@@ -29,12 +29,31 @@ The installer copies:
 - `AGENTS.md`
 - `CONTRIBUTING.md`
 - `execution-protocol.md`
+- `enforcement.md`
 - `kanban.md`
+- `kanban-archive.md`
+- `epics.md`
 - `project-guidelines.md`
 - `knowledge.md`
+- `.github/workflows/codex-workflow-audit.yml`
 - `scripts/codex-workflow/*`
 
-Existing non-empty files are not overwritten unless `--force` is passed.
+If `package.json` exists, the installer also adds namespaced workflow scripts:
+
+- `workflow:ticket`
+- `workflow:new-ticket`
+- `workflow:next-ticket`
+- `workflow:move-ticket`
+- `workflow:archive-done`
+- `workflow:migrate-kanban`
+- `workflow:guidance`
+- `workflow:review`
+- `workflow:verify`
+- `workflow:guideline-audit`
+- `workflow:audit`
+
+Existing non-empty files and conflicting package scripts are not overwritten unless `--force` is passed.
+The default install is strict: `enforcement.md` ships with an active baseline `codex-workflow-audit` block, and the CI scaffold runs the workflow audit automatically on GitHub.
 
 ## Usage
 
@@ -47,20 +66,51 @@ Use codex-workflow-toolkit for TKT-042.
 In an initialized target project, the common commands are:
 
 ```bash
-node scripts/codex-workflow/kanban-ticket.mjs --id TKT-001
-node scripts/codex-workflow/guidance-summary.mjs --ticket TKT-001 --changed
-node scripts/codex-workflow/review-summary.mjs
-node scripts/codex-workflow/verification-summary.mjs --cmd "pnpm test" --cmd "pnpm build"
-node scripts/codex-workflow/workflow-audit.mjs
+pnpm -s workflow:ticket --id TKT-001
+pnpm -s workflow:new-ticket --id TKT-002 --title "Follow-up polish" --to Suggestions
+pnpm -s workflow:next-ticket
+pnpm -s workflow:move-ticket --id TKT-001 --to "In Progress"
+pnpm -s workflow:move-ticket --id TKT-001 --to Done
+pnpm -s workflow:archive-done
+pnpm -s workflow:migrate-kanban
+pnpm -s workflow:guidance --ticket TKT-001 --changed
+pnpm -s workflow:review
+pnpm -s workflow:verify --cmd "pnpm test" --cmd "pnpm build"
+pnpm -s workflow:audit
 ```
+
+## Next Planned Step
+
+Add tests/fixtures-based end-to-end fixture repo matrix coverage for initialized target repos, including strict-default pass cases and project-specific audit-extension allowlist pass/fail scenarios with workflow script and CI workflow validation.
 
 ## Command Notes
 
 `kanban-ticket.mjs`
 - extracts a ticket by id, or the first ticket in a section
 
+`kanban-new.mjs`
+- creates a normalized Obsidian kanban card in the requested lane
+- supports the common structured fields directly from flags
+
+`kanban-next.mjs`
+- returns the next ticket using lane-priority order
+- defaults to `Bugs P1 -> ToDo -> Bugs P2/P3 -> In Progress -> Human Inspection -> Backlog -> Deep Backlog -> Suggestions -> Done`
+
+`kanban-move.mjs`
+- moves a ticket between kanban lanes reliably
+- auto-adds or updates `- Done: YYYY-MM-DD` when moving to `Done`
+- removes `Done` metadata when moving a ticket back out of `Done`
+
+`kanban-archive.mjs`
+- moves stale dated `Done` tickets into `kanban-archive.md`
+- groups archived tickets by `YYYY-MM`
+
+`kanban-migrate-obsidian.mjs`
+- migrates the older `###`-ticket kanban shape into the Obsidian task-card board format
+- remaps legacy lanes to the newer board where needed
+
 `guidance-summary.mjs`
-- condenses `AGENTS.md`, `CONTRIBUTING.md`, `execution-protocol.md`, `project-guidelines.md`, and `knowledge.md`
+- condenses `AGENTS.md`, `CONTRIBUTING.md`, `execution-protocol.md`, `enforcement.md`, `project-guidelines.md`, and `knowledge.md`
 - can focus on a ticket and current changed files
 
 `review-summary.mjs`
@@ -78,8 +128,9 @@ node scripts/codex-workflow/workflow-audit.mjs
 
 `guideline-audit.mjs`
 - reads fenced `codex-workflow-audit` JSON blocks from project markdown docs
-- enforces file-header requirements plus required/forbidden regex rules scoped by path prefixes and extensions
+- enforces file-header requirements, required/forbidden regex rules, forbidden import boundaries, and path-scoped allowlists
 - is designed to grow with project-specific guidance instead of hardcoding one repo’s UI rules
+- `--json` emits structured findings with file, line, rule kind, rule id, and rule source
 
 ## Audit Extensions
 
@@ -105,9 +156,24 @@ Example schema:
       "message": "Use explicit tooltip contracts, not native title."
     }
   ],
-  "requiredPatterns": []
+  "requiredPatterns": [],
+  "forbiddenImports": [],
+  "allowlists": [
+    {
+      "include": ["src/legacy"],
+      "extensions": [".ts"],
+      "ruleIds": ["no-source-todo"]
+    }
+  ]
 }
 ```
+
+Default initialized repos also get an active baseline in `enforcement.md` covering:
+- Responsibility/Scope headers in `src`, `tests`, and `docs`
+- no fake underscore privacy markers in app code
+- no `TODO` / `FIXME` in production source
+- no native `title=` tooltips under `src/ui`
+- no UI imports from `src/engine`
 
 ## Design Constraints
 

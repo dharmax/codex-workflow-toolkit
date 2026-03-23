@@ -1,3 +1,5 @@
+<!-- Responsibility: Define the repo-wide execution contract and read order for human and agent contributors.
+Scope: Project-specific technical rules belong in project-guidelines.md and enforcement.md, not in this top-level workflow contract. -->
 # AGENTS
 
 Use `codex-workflow-toolkit` for non-trivial JS/TS work when the request is specific enough to tie to a ticket, file scope, and verification plan.
@@ -11,13 +13,18 @@ If the skill is unavailable, follow the same process with `scripts/codex-workflo
 
 1. `kanban.md`
 2. `execution-protocol.md`
-3. `project-guidelines.md`
-4. `knowledge.md`
-5. `CONTRIBUTING.md`
+3. `enforcement.md`
+4. `project-guidelines.md`
+5. `knowledge.md`
+6. `CONTRIBUTING.md`
 
 ## Core Contract
 
 - `kanban.md` is the execution queue and ticket source of truth.
+- Keep `kanban.md` updated in real time: move work into `In Progress` when it starts and into `Done` only when evidence exists.
+- Keep older completed tickets in `kanban-archive.md`, not in the live board.
+- Keep `Deep Backlog` tickets tied to `epics.md`.
+- Prefer `workflow:new-ticket`, `workflow:next-ticket`, `workflow:move-ticket`, `workflow:archive-done`, and `workflow:migrate-kanban` over manual board editing when possible.
 - Work one ticket or one explicit batch ticket at a time.
 - Keep changes narrow to one owned problem family.
 - Do not mark work complete without verification evidence.

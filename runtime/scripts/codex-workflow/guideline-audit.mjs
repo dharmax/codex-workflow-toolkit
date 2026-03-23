@@ -28,8 +28,11 @@ if (args.json) {
 
 if (summary.failures.length) {
   process.stderr.write("guideline-audit: FAIL\n");
-  for (const failure of summary.failures) {
-    process.stderr.write(`- ${failure}\n`);
+  for (const finding of summary.findings) {
+    const location = finding.file ? `${finding.file}${finding.line ? `:${finding.line}` : ""}` : finding.ruleSource ?? "audit";
+    process.stderr.write(
+      `- [${finding.ruleKind}] ${location}: ${finding.message}${finding.ruleSource && finding.ruleSource !== location ? ` (${finding.ruleSource})` : ""}\n`
+    );
   }
   process.exit(1);
 }
@@ -40,3 +43,5 @@ process.stdout.write(`- audit extension blocks: ${summary.blockCount}\n`);
 process.stdout.write(`- header rules: ${summary.ruleCounts.headers}\n`);
 process.stdout.write(`- forbidden patterns: ${summary.ruleCounts.forbiddenPatterns}\n`);
 process.stdout.write(`- required patterns: ${summary.ruleCounts.requiredPatterns}\n`);
+process.stdout.write(`- forbidden imports: ${summary.ruleCounts.forbiddenImports}\n`);
+process.stdout.write(`- allowlists: ${summary.ruleCounts.allowlists}\n`);

@@ -1,3 +1,5 @@
+<!-- Responsibility: Define durable engineering constraints, architectural boundaries, and review standards for the project.
+Scope: Queue state belongs in kanban.md and machine-enforced baseline rules belong in enforcement.md, not in this narrative guidance doc. -->
 # Project Guidelines
 
 Keep this file short and durable. If a point is ticket-local, keep it out.
@@ -28,6 +30,7 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Preserve established patterns unless the ticket requires a deliberate change.
 - Avoid unrelated cleanup during delivery work.
 - If one local bug reveals a shared contract problem, fix the smallest complete shared contract.
+- Make the smallest coherent burst that solves the ticket honestly; do not fragment systemic fixes into fake micro-progress.
 
 ## Type Safety
 
@@ -42,6 +45,12 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Stateful domain entities should expose behavior through cohesive modules or classes, not scattered inline mutation.
 - If a semantic UI surface can be named, give it owned component or module representation before it becomes a giant anonymous template.
 - Keep generic shells generic; domain-specific content selection belongs outside the shell.
+
+## File Responsibility Headers
+
+- Every source or owned-doc file should start with a short `Responsibility:` and `Scope:` header.
+- Keep both lines concise. If the header cannot stay honest and short, the file boundary is probably wrong.
+- When a file starts owning multiple unrelated concerns, split it instead of widening the header until it becomes meaningless.
 
 ## UI Discipline
 
@@ -66,10 +75,33 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 
 ## Test Strategy
 
+- Goal: maximize efficiency in time and token cost without compromising reliability.
 - Prefer fast deterministic module tests for domain behavior.
 - Add integration or E2E coverage only where user-visible flows or system boundaries require it.
 - No placeholder tests: every test should be capable of catching a real bug.
 - When fixing a bug, add the test that would have caught that bug.
+- Keep verification layered:
+  - workflow/guidance/kanban contract changes should prove themselves through `workflow-audit`
+  - small tickets should default to quick but meaningful unit or module tests
+  - related batches or larger tickets should add E2E, including visual proof when UI behavior changed
+  - every few batches should run super-E2E, simulation, or emulator-backed flows when the project supports them
+  - special mechanisms and rare flows should get special-purpose tests instead of being left to generic coverage
+  - domain changes should prefer focused deterministic tests before broader runs
+  - E2E should cover system paths and regressions, not replace module-level proof
+  - human-only acceptance should stay explicit instead of being implied by green automation
+
+## Test Examples
+
+- Small ticket example:
+  - fix one selector bug -> one focused unit test
+  - clamp one malformed payload path -> one focused module contract test
+- Batch example:
+  - normalize several related UI tickets -> targeted browser/E2E plus visual check
+  - land one larger routing/persistence ticket -> E2E for the affected user path
+- Super-E2E example:
+  - after a few related batches, run the heavier emulator/simulation path to regain broader confidence
+- Special-test example:
+  - imports, migrations, AI artifact shaping, payment paths, or other unusual flows should get purpose-built tests
 
 ## Review Triggers
 
@@ -77,6 +109,7 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Production code without tests requires justification.
 - Guidance-file edits should be rare and intentional.
 - File boundaries should stay honest. If a responsibility header is hard to keep concise, the file boundary is probably wrong.
+- If the same review guidance keeps recurring, move it into an audit rule instead of paying that review cost repeatedly.
 
 ## Audit Extensions
 
@@ -89,6 +122,8 @@ Schema example:
 {
   "headers": [],
   "forbiddenPatterns": [],
-  "requiredPatterns": []
+  "requiredPatterns": [],
+  "forbiddenImports": [],
+  "allowlists": []
 }
 ```

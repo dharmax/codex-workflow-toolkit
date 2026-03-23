@@ -129,6 +129,7 @@ function classify(filePath) {
     normalized === "AGENTS.md"
     || normalized === "CONTRIBUTING.md"
     || normalized === "execution-protocol.md"
+    || normalized === "enforcement.md"
     || normalized === "kanban.md"
     || normalized === "project-guidelines.md"
     || normalized === "knowledge.md"

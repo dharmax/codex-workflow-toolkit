@@ -7,6 +7,11 @@
   "bin": {
     "codex-workflow-init": "./scripts/init-project.mjs",
     "codex-workflow-ticket": "./runtime/scripts/codex-workflow/kanban-ticket.mjs",
+    "codex-workflow-new-ticket": "./runtime/scripts/codex-workflow/kanban-new.mjs",
+    "codex-workflow-next-ticket": "./runtime/scripts/codex-workflow/kanban-next.mjs",
+    "codex-workflow-move-ticket": "./runtime/scripts/codex-workflow/kanban-move.mjs",
+    "codex-workflow-archive-done": "./runtime/scripts/codex-workflow/kanban-archive.mjs",
+    "codex-workflow-migrate-kanban": "./runtime/scripts/codex-workflow/kanban-migrate-obsidian.mjs",
     "codex-workflow-guidance": "./runtime/scripts/codex-workflow/guidance-summary.mjs",
     "codex-workflow-verify": "./runtime/scripts/codex-workflow/verification-summary.mjs",
     "codex-workflow-review": "./runtime/scripts/codex-workflow/review-summary.mjs",
@@ -16,6 +21,11 @@
   "scripts": {
     "init:here": "node scripts/init-project.mjs --target .",
     "ticket": "node runtime/scripts/codex-workflow/kanban-ticket.mjs",
+    "new-ticket": "node runtime/scripts/codex-workflow/kanban-new.mjs",
+    "next-ticket": "node runtime/scripts/codex-workflow/kanban-next.mjs",
+    "move-ticket": "node runtime/scripts/codex-workflow/kanban-move.mjs",
+    "archive-done": "node runtime/scripts/codex-workflow/kanban-archive.mjs",
+    "migrate-kanban": "node runtime/scripts/codex-workflow/kanban-migrate-obsidian.mjs",
     "guidance": "node runtime/scripts/codex-workflow/guidance-summary.mjs",
     "verify": "node runtime/scripts/codex-workflow/verification-summary.mjs",
     "review": "node runtime/scripts/codex-workflow/review-summary.mjs",

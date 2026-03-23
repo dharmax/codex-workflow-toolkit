@@ -7,7 +7,7 @@ import { findTicket, parseKanban, renderTicket } from "./lib/kanban-utils.mjs";
 
 const HELP = `Usage:
   node scripts/codex-workflow/kanban-ticket.mjs --id TKT-001
-  node scripts/codex-workflow/kanban-ticket.mjs --section "Ready"
+  node scripts/codex-workflow/kanban-ticket.mjs --section "ToDo"
 
 Options:
   --root <path>      Project root. Defaults to current directory.
@@ -49,4 +49,3 @@ if (args.json) {
 }
 
 process.stdout.write(`${renderTicket(ticket)}\n`);
-

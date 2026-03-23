@@ -1,3 +1,5 @@
+<!-- Responsibility: Record durable lessons, traps, and decisions that should outlive a single ticket.
+Scope: The active queue and baseline enforcement rules belong in kanban.md and enforcement.md, not in this lessons log. -->
 # Knowledge
 
 Record durable facts that reduce future context cost. Do not mirror transient ticket notes.
@@ -6,8 +8,9 @@ Record durable facts that reduce future context cost. Do not mirror transient ti
 
 1. `kanban.md`
 2. `execution-protocol.md`
-3. `project-guidelines.md`
-4. this file
+3. `enforcement.md`
+4. `project-guidelines.md`
+5. this file
 
 ## Facts
 
@@ -26,6 +29,12 @@ Record durable facts that reduce future context cost. Do not mirror transient ti
 - If a UI or domain surface can be named, it usually needs explicit software ownership.
 - If a child surface needs many loose props from one owner, redesign the contract around a compact view model plus explicit actions.
 - If a rule keeps getting restated in review, encode it in a `codex-workflow-audit` block so the repo enforces it.
+- Workflow and guidance changes are not done until `node scripts/codex-workflow/workflow-audit.mjs` passes.
+- If a claim still needs reliable non-human proof, keep it in the active workflow instead of closing it with human-only language.
+- Explicit user queue ordering and inline ticket notes are part of the work contract, not optional hints.
+- A live kanban only works if it is updated in real time; stale lane position is false status.
+- `Done` is for recent completed work with dates, not for long-term history. Archive older entries into `kanban-archive.md`.
+- `Deep Backlog` tickets should point at explicit epics rather than becoming an unstructured future bucket.
 
 ## Decisions
 

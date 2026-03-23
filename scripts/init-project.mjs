@@ -17,6 +17,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const templatesRoot = path.resolve(repoRoot, "templates");
 const runtimeRoot = path.resolve(repoRoot, "runtime", "scripts", "codex-workflow");
+const WORKFLOW_PACKAGE_SCRIPTS = {
+  "workflow:ticket": "node scripts/codex-workflow/kanban-ticket.mjs",
+  "workflow:new-ticket": "node scripts/codex-workflow/kanban-new.mjs",
+  "workflow:next-ticket": "node scripts/codex-workflow/kanban-next.mjs",
+  "workflow:move-ticket": "node scripts/codex-workflow/kanban-move.mjs",
+  "workflow:archive-done": "node scripts/codex-workflow/kanban-archive.mjs",
+  "workflow:migrate-kanban": "node scripts/codex-workflow/kanban-migrate-obsidian.mjs",
+  "workflow:guidance": "node scripts/codex-workflow/guidance-summary.mjs",
+  "workflow:review": "node scripts/codex-workflow/review-summary.mjs",
+  "workflow:verify": "node scripts/codex-workflow/verification-summary.mjs",
+  "workflow:guideline-audit": "node scripts/codex-workflow/guideline-audit.mjs",
+  "workflow:audit": "node scripts/codex-workflow/workflow-audit.mjs"
+};
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -42,8 +55,20 @@ const plan = [
     target: path.resolve(targetRoot, "execution-protocol.md")
   },
   {
+    source: path.resolve(templatesRoot, "enforcement.md"),
+    target: path.resolve(targetRoot, "enforcement.md")
+  },
+  {
     source: path.resolve(templatesRoot, "kanban.md"),
     target: path.resolve(targetRoot, "kanban.md")
+  },
+  {
+    source: path.resolve(templatesRoot, "kanban-archive.md"),
+    target: path.resolve(targetRoot, "kanban-archive.md")
+  },
+  {
+    source: path.resolve(templatesRoot, "epics.md"),
+    target: path.resolve(targetRoot, "epics.md")
   },
   {
     source: path.resolve(templatesRoot, "project-guidelines.md"),
@@ -53,6 +78,10 @@ const plan = [
     source: path.resolve(templatesRoot, "knowledge.md"),
     target: path.resolve(targetRoot, "knowledge.md")
   },
+  {
+    source: path.resolve(templatesRoot, ".github", "workflows", "codex-workflow-audit.yml"),
+    target: path.resolve(targetRoot, ".github", "workflows", "codex-workflow-audit.yml")
+  },
   ...(await buildRuntimePlan(runtimeRoot, path.resolve(targetRoot, "scripts", "codex-workflow")))
 ];
 
@@ -60,7 +89,14 @@ const summary = {
   installed: [],
   overwritten: [],
   skipped: [],
-  identical: []
+  identical: [],
+  packageScripts: {
+    installed: [],
+    overwritten: [],
+    skipped: [],
+    identical: [],
+    error: null
+  }
 };
 
 await mkdir(targetRoot, { recursive: true });
@@ -95,6 +131,10 @@ for (const entry of plan) {
 }
 
 const looksLikeJsProject = await fileExists(path.resolve(targetRoot, "package.json"));
+if (looksLikeJsProject) {
+  await reconcilePackageScripts(targetRoot, summary.packageScripts, { force, dryRun });
+}
+
 const lines = [];
 lines.push(`Target: ${targetRoot}`);
 lines.push(`Mode: ${dryRun ? "dry-run" : "write"}`);
@@ -117,9 +157,39 @@ for (const item of summary.skipped) {
 lines.push("");
 lines.push(`Identical: ${summary.identical.length}`);
 
+if (looksLikeJsProject) {
+  lines.push("");
+  lines.push(`Package scripts installed: ${summary.packageScripts.installed.length}`);
+  for (const item of summary.packageScripts.installed) {
+    lines.push(`- ${item}`);
+  }
+  lines.push("");
+  lines.push(`Package scripts overwritten: ${summary.packageScripts.overwritten.length}`);
+  for (const item of summary.packageScripts.overwritten) {
+    lines.push(`- ${item}`);
+  }
+  lines.push("");
+  lines.push(`Package scripts skipped: ${summary.packageScripts.skipped.length}`);
+  for (const item of summary.packageScripts.skipped) {
+    lines.push(`- ${item}`);
+  }
+  lines.push("");
+  lines.push(`Package scripts identical: ${summary.packageScripts.identical.length}`);
+
+  if (summary.packageScripts.error) {
+    lines.push("");
+    lines.push(`Package scripts error: ${summary.packageScripts.error}`);
+  }
+}
+
 if (summary.skipped.length) {
   lines.push("");
   lines.push("Re-run with --force to overwrite skipped files.");
+}
+
+if (summary.packageScripts.skipped.length) {
+  lines.push("");
+  lines.push("Re-run with --force to overwrite skipped package scripts.");
 }
 
 process.stdout.write(`${lines.join("\n")}\n`);
@@ -224,4 +294,57 @@ async function fileExists(filePath) {
 
 function relativeTarget(rootPath, targetPath) {
   return path.relative(rootPath, targetPath) || ".";
+}
+
+async function reconcilePackageScripts(targetRootPath, packageSummary, options) {
+  const packageJsonPath = path.resolve(targetRootPath, "package.json");
+  let packageJson;
+
+  try {
+    packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
+  } catch (error) {
+    packageSummary.error = `Could not parse package.json (${error.message})`;
+    return;
+  }
+
+  const scripts = packageJson.scripts && typeof packageJson.scripts === "object" ? packageJson.scripts : {};
+  let changed = false;
+
+  for (const [scriptName, command] of Object.entries(WORKFLOW_PACKAGE_SCRIPTS)) {
+    const existing = scripts[scriptName];
+
+    if (existing === undefined) {
+      scripts[scriptName] = command;
+      packageSummary.installed.push(scriptName);
+      changed = true;
+      continue;
+    }
+
+    if (existing === command) {
+      packageSummary.identical.push(scriptName);
+      continue;
+    }
+
+    if (options.force) {
+      scripts[scriptName] = command;
+      packageSummary.overwritten.push(scriptName);
+      changed = true;
+      continue;
+    }
+
+    packageSummary.skipped.push(scriptName);
+  }
+
+  if (!changed || options.dryRun) {
+    return;
+  }
+
+  packageJson.scripts = sortObjectKeys(scripts);
+  await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
+}
+
+function sortObjectKeys(value) {
+  return Object.fromEntries(
+    Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+  );
 }

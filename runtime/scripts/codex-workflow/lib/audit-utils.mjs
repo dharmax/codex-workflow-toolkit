@@ -57,7 +57,9 @@ export async function collectAuditConfig(root) {
   const merged = {
     headers: [],
     forbiddenPatterns: [],
-    requiredPatterns: []
+    requiredPatterns: [],
+    forbiddenImports: [],
+    allowlists: []
   };
   const failures = [];
   let blockCount = 0;
@@ -86,6 +88,8 @@ export async function collectAuditConfig(root) {
       mergeRuleList(merged.headers, parsed.headers, { source: `${relativePath}:${block.line}` });
       mergeRuleList(merged.forbiddenPatterns, parsed.forbiddenPatterns, { source: `${relativePath}:${block.line}` });
       mergeRuleList(merged.requiredPatterns, parsed.requiredPatterns, { source: `${relativePath}:${block.line}` });
+      mergeRuleList(merged.forbiddenImports, parsed.forbiddenImports, { source: `${relativePath}:${block.line}` });
+      mergeRuleList(merged.allowlists, parsed.allowlists, { source: `${relativePath}:${block.line}` });
     }
   }
 
@@ -101,6 +105,7 @@ export async function runGuidelineAudit(root) {
   const files = await listRepoFiles(root);
   const { config, markdownFiles, blockCount, failures } = await collectAuditConfig(root);
   const texts = new Map();
+  const findings = failures.map(configFailureToFinding);
 
   const readFileCached = async (relativePath) => {
     if (!texts.has(relativePath)) {
@@ -112,7 +117,10 @@ export async function runGuidelineAudit(root) {
 
   for (const rule of config.headers) {
     if (rule.__invalid) {
-      failures.push(`${rule.__source}: audit rule entries must be JSON objects`);
+      findings.push(createConfigFinding({
+        message: "audit rule entries must be JSON objects",
+        ruleSource: rule.__source
+      }));
       continue;
     }
 
@@ -126,9 +134,13 @@ export async function runGuidelineAudit(root) {
 
       for (const snippet of requiredNearTop) {
         if (!head.includes(snippet)) {
-          failures.push(
-            `${relativePath}: missing required near-top snippet ${JSON.stringify(snippet)} (${rule.message ?? rule.__source})`
-          );
+          findings.push(createRuleFinding({
+            file: relativePath,
+            line: 1,
+            ruleKind: "headers",
+            rule,
+            fallback: `missing required near-top snippet ${JSON.stringify(snippet)}`
+          }));
         }
       }
     }
@@ -139,7 +151,7 @@ export async function runGuidelineAudit(root) {
     rules: config.forbiddenPatterns,
     mode: "forbidden",
     readFileCached,
-    failures
+    findings
   });
 
   await runPatternAudit({
@@ -147,17 +159,30 @@ export async function runGuidelineAudit(root) {
     rules: config.requiredPatterns,
     mode: "required",
     readFileCached,
-    failures
+    findings
   });
 
+  await runForbiddenImportAudit({
+    files,
+    rules: config.forbiddenImports,
+    readFileCached,
+    findings
+  });
+
+  const filteredFindings = applyAllowlists(findings, config.allowlists);
+  const filteredFailures = filteredFindings.map(formatAuditFinding);
+
   return {
-    failures,
+    failures: filteredFailures,
+    findings: filteredFindings,
     blockCount,
     markdownFiles,
     ruleCounts: {
       headers: config.headers.length,
       forbiddenPatterns: config.forbiddenPatterns.length,
-      requiredPatterns: config.requiredPatterns.length
+      requiredPatterns: config.requiredPatterns.length,
+      forbiddenImports: config.forbiddenImports.length,
+      allowlists: config.allowlists.length
     }
   };
 }
@@ -191,15 +216,21 @@ function mergeRuleList(target, value, metadata) {
   }
 }
 
-async function runPatternAudit({ files, rules, mode, readFileCached, failures }) {
+async function runPatternAudit({ files, rules, mode, readFileCached, findings }) {
   for (const rule of rules) {
     if (rule.__invalid) {
-      failures.push(`${rule.__source}: audit rule entries must be JSON objects`);
+      findings.push(createConfigFinding({
+        message: "audit rule entries must be JSON objects",
+        ruleSource: rule.__source
+      }));
       continue;
     }
 
     if (typeof rule.pattern !== "string" || !rule.pattern.trim()) {
-      failures.push(`${rule.__source}: audit rule is missing a non-empty pattern`);
+      findings.push(createConfigFinding({
+        message: "audit rule is missing a non-empty pattern",
+        ruleSource: rule.__source
+      }));
       continue;
     }
 
@@ -207,7 +238,10 @@ async function runPatternAudit({ files, rules, mode, readFileCached, failures })
     try {
       regex = new RegExp(rule.pattern, String(rule.flags ?? ""));
     } catch (error) {
-      failures.push(`${rule.__source}: invalid regex ${JSON.stringify(rule.pattern)} (${error.message})`);
+      findings.push(createConfigFinding({
+        message: `invalid regex ${JSON.stringify(rule.pattern)} (${error.message})`,
+        ruleSource: rule.__source
+      }));
       continue;
     }
 
@@ -215,18 +249,95 @@ async function runPatternAudit({ files, rules, mode, readFileCached, failures })
 
     for (const relativePath of matchedFiles) {
       const text = await readFileCached(relativePath);
-      regex.lastIndex = 0;
-      const matched = regex.test(text);
+      const firstMatch = findRegexMatch(text, regex);
 
-      if (mode === "forbidden" && matched) {
-        failures.push(`${relativePath}: ${rule.message ?? `matched forbidden pattern ${JSON.stringify(rule.pattern)}`}`);
+      if (mode === "forbidden" && firstMatch) {
+        findings.push(createRuleFinding({
+          file: relativePath,
+          line: firstMatch.line,
+          ruleKind: "forbiddenPatterns",
+          rule,
+          fallback: `matched forbidden pattern ${JSON.stringify(rule.pattern)}`,
+          detail: firstMatch.match
+        }));
       }
 
-      if (mode === "required" && !matched) {
-        failures.push(`${relativePath}: ${rule.message ?? `missing required pattern ${JSON.stringify(rule.pattern)}`}`);
+      if (mode === "required" && !firstMatch) {
+        findings.push(createRuleFinding({
+          file: relativePath,
+          ruleKind: "requiredPatterns",
+          rule,
+          fallback: `missing required pattern ${JSON.stringify(rule.pattern)}`
+        }));
       }
     }
   }
+}
+
+async function runForbiddenImportAudit({ files, rules, readFileCached, findings }) {
+  for (const rule of rules) {
+    if (rule.__invalid) {
+      findings.push(createConfigFinding({
+        message: "audit rule entries must be JSON objects",
+        ruleSource: rule.__source
+      }));
+      continue;
+    }
+
+    const targets = normalizeList(rule.targets);
+    if (!targets.length) {
+      findings.push(createConfigFinding({
+        message: "forbiddenImports rule must declare one or more targets",
+        ruleSource: rule.__source
+      }));
+      continue;
+    }
+
+    const matchedFiles = files.filter((relativePath) => matchesFileRule(relativePath, rule));
+
+    for (const relativePath of matchedFiles) {
+      const text = await readFileCached(relativePath);
+      const importSource = findForbiddenImport(text, targets);
+
+      if (importSource) {
+        findings.push(createRuleFinding({
+          file: relativePath,
+          line: importSource.line,
+          ruleKind: "forbiddenImports",
+          rule,
+          fallback: `forbidden import ${JSON.stringify(importSource.source)}`,
+          detail: importSource.source
+        }));
+      }
+    }
+  }
+}
+
+function applyAllowlists(findings, allowlists) {
+  const activeAllowlists = [];
+  const configFindings = [];
+
+  for (const rule of allowlists) {
+    if (rule.__invalid) {
+      configFindings.push(createConfigFinding({
+        message: "audit rule entries must be JSON objects",
+        ruleSource: rule.__source
+      }));
+      continue;
+    }
+
+    activeAllowlists.push(rule);
+  }
+
+  const filtered = findings.filter((finding) => {
+    if (!finding.file || finding.ruleKind === "config") {
+      return true;
+    }
+
+    return !activeAllowlists.some((rule) => matchesAllowlist(finding, rule));
+  });
+
+  return [...configFindings, ...filtered];
 }
 
 function matchesFileRule(relativePath, rule) {
@@ -244,6 +355,37 @@ function matchesFileRule(relativePath, rule) {
   }
 
   if (extensions.length && !extensions.some((extension) => normalizedPath.endsWith(extension))) {
+    return false;
+  }
+
+  return true;
+}
+
+function matchesAllowlist(finding, rule) {
+  const normalizedPath = normalizePath(finding.file);
+  const include = normalizeList(rule.include);
+  const exclude = normalizeList(rule.exclude);
+  const extensions = normalizeList(rule.extensions);
+  const ruleIds = normalizeList(rule.ruleIds ?? rule.rules);
+  const ruleKinds = normalizeList(rule.ruleKinds ?? rule.kinds);
+
+  if (include.length && !include.some((value) => pathMatches(normalizedPath, value))) {
+    return false;
+  }
+
+  if (exclude.some((value) => pathMatches(normalizedPath, value))) {
+    return false;
+  }
+
+  if (extensions.length && !extensions.some((extension) => normalizedPath.endsWith(extension))) {
+    return false;
+  }
+
+  if (ruleIds.length && !ruleIds.includes(String(finding.ruleId ?? ""))) {
+    return false;
+  }
+
+  if (ruleKinds.length && !ruleKinds.includes(String(finding.ruleKind))) {
     return false;
   }
 
@@ -273,4 +415,89 @@ function pathMatches(relativePath, pattern) {
 
 export async function fileExistsRelative(root, relativePath) {
   return await exists(path.resolve(root, relativePath));
+}
+
+function findForbiddenImport(text, targets) {
+  const importPattern = /\bimport\s+(?:[^"'()]+\s+from\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+
+  for (const match of text.matchAll(importPattern)) {
+    const importSource = match[1] ?? match[2] ?? "";
+    if (targets.some((target) => importSource === target || importSource.startsWith(`${target}/`))) {
+      return {
+        source: importSource,
+        line: indexToLine(text, match.index ?? 0)
+      };
+    }
+  }
+
+  return null;
+}
+
+function findRegexMatch(text, regex) {
+  const flags = uniqueFlags(regex.flags, "g");
+  const searchable = new RegExp(regex.source, flags);
+  const match = searchable.exec(text);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    match: match[0],
+    line: indexToLine(text, match.index ?? 0)
+  };
+}
+
+function uniqueFlags(...values) {
+  return [...new Set(values.join("").split("").filter(Boolean))].join("");
+}
+
+function indexToLine(text, index) {
+  return text.slice(0, index).split(/\r?\n/).length;
+}
+
+function createRuleFinding({ file, line = null, ruleKind, rule, fallback, detail = null }) {
+  return {
+    file,
+    line,
+    ruleKind,
+    ruleId: rule.id ?? null,
+    ruleSource: rule.__source ?? null,
+    message: String(rule.message ?? fallback),
+    detail
+  };
+}
+
+function createConfigFinding({ message, ruleSource = null }) {
+  return {
+    file: null,
+    line: null,
+    ruleKind: "config",
+    ruleId: null,
+    ruleSource,
+    message: String(message),
+    detail: null
+  };
+}
+
+function configFailureToFinding(message) {
+  const match = String(message).match(/^([^:]+:\d+):\s+(.+)$/);
+
+  if (!match) {
+    return createConfigFinding({ message });
+  }
+
+  return createConfigFinding({
+    message: match[2],
+    ruleSource: match[1]
+  });
+}
+
+export function formatAuditFinding(finding) {
+  const location = finding.file
+    ? `${finding.file}${finding.line ? `:${finding.line}` : ""}`
+    : finding.ruleSource ?? "audit";
+  const suffix = finding.ruleSource && finding.ruleSource !== location ? ` (${finding.ruleSource})` : "";
+  const detail = finding.detail && finding.detail !== finding.message ? ` [${finding.detail}]` : "";
+  return `${location}: ${finding.message}${detail}${suffix}`;
 }

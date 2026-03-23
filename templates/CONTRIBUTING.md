@@ -1,27 +1,53 @@
+<!-- Responsibility: Define the contributor execution loop, validation expectations, and closure truthfulness rules.
+Scope: Ticket-local implementation detail and project-specific technical constraints belong in kanban or project-guidelines docs, not here. -->
 # Contributing
 
 ## Read Order
 
 1. `kanban.md`
 2. `execution-protocol.md`
-3. `project-guidelines.md`
-4. `knowledge.md`
+3. `enforcement.md`
+4. `project-guidelines.md`
+5. `knowledge.md`
 
 ## Burst Rule
 
 - Move exactly one ticket or one explicit batch ticket to `In Progress` before substantive edits.
+- Keep `ToDo` as the immediate next queue, not a parking lot.
 - Batch by one owned problem family, not by convenience.
 - Keep unrelated cleanup out of the same slice unless it is required for the ticket.
 - If new issues are discovered, add tickets instead of silently expanding scope.
+
+## Kanban Maintenance
+
+- `Deep Backlog`: larger later work tied to an epic in `epics.md`.
+- `Backlog`: real work worth tracking, but not next-up.
+- `ToDo`: the next actionable queue.
+- `Bugs P1`: urgent regressions that outrank normal `ToDo`.
+- `Bugs P2/P3`: non-critical bugs still worth scheduling explicitly.
+- `In Progress`: the one live ticket being worked now.
+- `Human Inspection`: tickets waiting on human eyes, ears, or product judgment.
+- `Suggestions`: optional improvements to consider, not committed scope.
+- `Done`: recently finished tickets only; add `- Done: YYYY-MM-DD` and archive older entries into `kanban-archive.md`.
+- Keep `kanban.md` in Obsidian Kanban plugin format. Do not invent an alternate board shape.
+- Use `node scripts/codex-workflow/kanban-new.mjs --id <ticket> --title <title> --to <lane>` to create normalized cards.
+- Use `node scripts/codex-workflow/kanban-next.mjs` to inspect the next ticket by lane priority.
+- Use `node scripts/codex-workflow/kanban-move.mjs --id <ticket> --to <lane>` for reliable lane moves.
+- Use `node scripts/codex-workflow/kanban-archive.mjs` to sweep stale `Done` work into `kanban-archive.md`.
+- Use `node scripts/codex-workflow/kanban-migrate-obsidian.mjs` once when an older repo still uses the legacy board format.
 
 ## Validation By Risk
 
 - Workflow or guidance changes: run `node scripts/codex-workflow/workflow-audit.mjs`.
 - Docs-only: run the lightest workflow/doc checks that prove the change.
+- Small ticket: quick but meaningful unit or module tests.
+- Related batch or larger ticket: E2E, including visual checks when UI is involved.
+- Every few batches: super-E2E, simulation, or emulator-backed flows when available.
+- Special mechanisms or unique flows: add special tests for that path directly.
 - Low-risk UI copy or styling: typecheck plus a targeted browser check when relevant.
 - Domain logic, persistence, or state changes: typecheck plus focused automated tests.
 - User-visible system-path regressions: add targeted integration or E2E coverage when the bug justifies it.
-- Broad sweeps are for closure or regression verification, not every small edit.
+- Broad sweeps are for closure, accumulated confidence, or regression verification, not every small edit.
 
 ## Audit Extensions
 
@@ -35,6 +61,7 @@ Add machine-readable project rules in fenced `codex-workflow-audit` JSON blocks 
 - Never imply a requested behavior works unless it was actually verified.
 - Never claim a test was run if it was not.
 - User instructions are binding unless a narrow exception is required for product integrity, safety, truthfulness, or higher-priority constraints.
+- If the user gives an explicit work order across tickets or lanes, follow that order until it is exhausted or a real blocker is stated.
 
 ## Closure Checklist
 

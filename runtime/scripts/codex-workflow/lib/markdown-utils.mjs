@@ -36,6 +36,7 @@ export function extractMarkdownCandidates(markdown) {
   const lines = markdown.split(/\r?\n/);
   const candidates = [];
   let inCodeFence = false;
+  let inHtmlComment = false;
 
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
@@ -43,6 +44,18 @@ export function extractMarkdownCandidates(markdown) {
 
     if (trimmed.startsWith("```")) {
       inCodeFence = !inCodeFence;
+      continue;
+    }
+
+    if (trimmed.startsWith("<!--")) {
+      inHtmlComment = !trimmed.includes("-->");
+      continue;
+    }
+
+    if (inHtmlComment) {
+      if (trimmed.includes("-->")) {
+        inHtmlComment = false;
+      }
       continue;
     }
 
