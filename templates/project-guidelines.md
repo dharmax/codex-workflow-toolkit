@@ -10,6 +10,7 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Treat AI output as untrusted input: validate, bound, and default safely.
 - Do not let non-critical async work block the main user loop.
 - Preserve access to core state and critical controls when reshaping UI surfaces.
+- Keep hot-path guidance lean. Archive history elsewhere instead of turning active guidance files into context sinks.
 
 ## Architecture
 
@@ -108,6 +109,7 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Config or dependency changes require explicit mention.
 - Production code without tests requires justification.
 - Guidance-file edits should be rare and intentional.
+- If a guidance file keeps growing with old notes, extract durable rules and move the rest into archives or ticket artifacts.
 - File boundaries should stay honest. If a responsibility header is hard to keep concise, the file boundary is probably wrong.
 - If the same review guidance keeps recurring, move it into an audit rule instead of paying that review cost repeatedly.
 

@@ -1,0 +1,8 @@
+{
+  "id": "context-pack",
+  "stability": "stable",
+  "category": "session-hygiene",
+  "summary": "Build a compact handoff artifact from the active ticket, changed files, guidance, and risks.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/codex-workflow/context-pack.mjs"
+}

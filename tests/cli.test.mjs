@@ -33,7 +33,7 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     const firstRun = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
     assert.equal(firstRun.code, 0);
     assert.match(firstRun.stdout, new RegExp(`Installed: ${await countInstallableFiles()}`));
-    assert.match(firstRun.stdout, /Package scripts installed: 6/);
+    assert.match(firstRun.stdout, /Package scripts installed: 11/);
 
     const agentFile = await readFile(path.join(targetRoot, "AGENTS.md"), "utf8");
     assert.match(agentFile, /Use `codex-workflow-toolkit`/);
@@ -56,7 +56,7 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     const secondRun = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
     assert.equal(secondRun.code, 0);
     assert.match(secondRun.stdout, new RegExp(`Identical: ${await countInstallableFiles()}`));
-    assert.match(secondRun.stdout, /Package scripts identical: 6/);
+    assert.match(secondRun.stdout, /Package scripts identical: 11/);
   } finally {
     await cleanup(targetRoot);
   }
@@ -70,7 +70,7 @@ test("generated helper scripts work against initialized project state", async ()
     const initResult = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
     assert.equal(initResult.code, 0);
     assert.match(initResult.stdout, /package\.json found/);
-    assert.match(initResult.stdout, /Package scripts installed: 6/);
+    assert.match(initResult.stdout, /Package scripts installed: 11/);
 
     const workflowAuditInitial = await runNode(["scripts/codex-workflow/workflow-audit.mjs"], { cwd: targetRoot });
     assert.equal(workflowAuditInitial.code, 0);
@@ -156,7 +156,7 @@ test("workflow audit catches kanban state violations", async () => {
     const kanban = await readFile(kanbanPath, "utf8");
     const mutatedKanban = kanban.replace(
       "## In Progress\n",
-      "## In Progress\n\n### TKT-101 First active ticket\n- Outcome: keep moving.\n\n### TKT-102 Second active ticket\n- Outcome: this should fail the audit.\n"
+      "## In Progress\n\n- [ ] TKT-101 First active ticket\n  - Outcome: keep moving.\n\n- [ ] TKT-102 Second active ticket\n  - Outcome: this should fail the audit.\n"
     );
     await writeFile(kanbanPath, mutatedKanban, "utf8");
 
@@ -264,7 +264,7 @@ test("workflow audit json reports realistic documentation drift and grouped fail
       kanbanPath,
       kanban.replace(
         "## In Progress\n",
-        "## In Progress\n\n### TKT-200 Drift one\n- Outcome: first active item.\n\n### TKT-201 Drift two\n- Outcome: second active item.\n"
+        "## In Progress\n\n- [ ] TKT-200 Drift one\n  - Outcome: first active item.\n\n- [ ] TKT-201 Drift two\n  - Outcome: second active item.\n"
       ),
       "utf8"
     );

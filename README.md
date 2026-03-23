@@ -1,13 +1,19 @@
 # codex-workflow-toolkit
 
-Reusable Codex CLI workflow kit for JS/TS repositories. It provides one orchestration skill, a safe project bootstrap script, durable workflow and engineering guidance, and helper scripts for kanban, review, verification, and strict enforceable audits.
+Reusable workflow system for JS/TS repositories. It provides a shared `ai-workflow` CLI, toolkit codelets, thin agent-specific skill adapters, project-local codelet overrides, and optional wrapper-friendly session hygiene.
 
 ## Contents
 
-- `SKILL.md`: single top-level workflow skill
+- `SKILL.md`: local development copy of the Codex-facing orchestration skill
+- `cli/`: `ai-workflow` command surface and project-local codelet routing
+- `shared/codelets/`: toolkit-owned reusable codelets
+- `shared/templates/`: long-term shared template location
+- `shared/scripts/`: long-term shared script location
+- `skills/`: thin agent adapters for Codex, Claude, and Gemini
 - `scripts/init-project.mjs`: safe installer for a target repository
 - `templates/`: workflow, execution, and engineering guidance files
 - `runtime/scripts/codex-workflow/`: helper scripts copied into target projects
+- `docs/`: design and token-efficiency plan
 
 ## Install
 
@@ -18,11 +24,73 @@ git clone <repo-url> codex-workflow-toolkit
 cd codex-workflow-toolkit
 ```
 
+Local install is the preferred long-term usage mode for projects because it gives stable repeatable helper behavior. `npx` remains useful for ad hoc use.
+
 Bootstrap a target JS/TS project:
 
 ```bash
 node scripts/init-project.mjs --target /path/to/project
 ```
+
+Run the local CLI from this repository:
+
+```bash
+node cli/ai-workflow.mjs list
+node cli/ai-workflow.mjs doctor
+```
+
+Package direction:
+
+```bash
+pnpm add -D @dharmax/ai-workflow
+# or
+npx @dharmax/ai-workflow doctor
+```
+
+## Layout
+
+```text
+.
+├── SKILL.md
+├── cli/
+│   ├── ai-workflow.mjs
+│   └── lib/
+├── shared/
+│   ├── codelets/
+│   ├── templates/
+│   └── scripts/
+├── skills/
+│   ├── codex/
+│   ├── claude/
+│   └── gemini/
+├── docs/
+│   └── token-efficiency-plan.md
+├── runtime/
+│   └── scripts/codex-workflow/
+├── scripts/
+│   └── init-project.mjs
+├── templates/
+└── tests/
+```
+
+## Architecture
+
+- The shared toolkit is the source of truth. It owns the CLI, toolkit codelets, templates, and thin agent adapters.
+- The agent skills stay thin. They route into `ai-workflow` instead of embedding heavyweight logic in `SKILL.md`.
+- Project-local codelets live under `.ai-workflow/codelets` and override toolkit codelets with the same id.
+- The copied runtime scripts remain the project-local substrate for initialized repos and compatibility.
+- An optional wrapper may add session control, remoting, or rate limiting, but the core system must remain usable without it.
+
+## Installation Model
+
+Link agent adapters into a project from the central toolkit:
+
+```bash
+ai-workflow install codex
+ai-workflow install all
+```
+
+This creates project-local agent folders such as `.codex/skills` that symlink back to the central toolkit and initializes `.ai-workflow/config.json` without overwriting unrelated existing content.
 
 The installer copies:
 
@@ -61,6 +129,17 @@ Prefer explicit skill invocation in Codex:
 
 ```text
 Use codex-workflow-toolkit for TKT-042.
+```
+
+Prefer the CLI for bounded helper work:
+
+```bash
+ai-workflow extract ticket TKT-001
+ai-workflow extract guidelines --ticket TKT-001 --changed
+ai-workflow run review
+ai-workflow verify --cmd "pnpm test"
+ai-workflow run context-pack --ticket TKT-001 --changed
+ai-workflow install codex
 ```
 
 In an initialized target project, the common commands are:
@@ -112,6 +191,10 @@ Add tests/fixtures-based end-to-end fixture repo matrix coverage for initialized
 `guidance-summary.mjs`
 - condenses `AGENTS.md`, `CONTRIBUTING.md`, `execution-protocol.md`, `enforcement.md`, `project-guidelines.md`, and `knowledge.md`
 - can focus on a ticket and current changed files
+
+`context-pack.mjs`
+- builds a compact handoff bundle from the active ticket, changed files, extracted guidance, review focus, and session-hygiene recommendation
+- is the deterministic local precursor for recommending `/compact` or `/new`
 
 `review-summary.mjs`
 - summarizes the changed-file surface
@@ -178,7 +261,11 @@ Default initialized repos also get an active baseline in `enforcement.md` coveri
 ## Design Constraints
 
 - single skill entry point
-- scripts over repeated prompt reasoning when practical
+- deterministic scripts and codelets over repeated prompt reasoning when practical
+- guideline extraction and ticket extraction are first-class hot-path operations
+- session hygiene is explicit: recommend `/compact` or `/new` truthfully, but do not pretend the skill controls chat history
+- shared toolkit codelets are reusable across agents; project codelets override toolkit codelets by id
+- skills stay thin and agent-specific; real logic lives in the CLI and codelets
 - no completion without evidence
 - guidance files stay short, durable, and meaningfully opinionated
 - enforcement should be extensible from project docs rather than frozen in toolkit code

@@ -13,6 +13,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 5. Make the smallest coherent burst that solves the ticket honestly.
 6. Validate at the real risk level of the change.
 7. Update kanban, then guidance docs if durable contracts changed, and archive stale done cards when needed.
+8. If the thread is getting heavy, create a compact handoff artifact before continuing.
 
 ## Ticket Ownership
 
@@ -57,6 +58,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - Never claim a command was run if it was not.
 - Validation goal: minimum time and token cost that still preserves reliability.
 - Reliability is not negotiable; efficiency chooses the smallest sufficient proof, not weaker proof.
+- Prefer deterministic local extraction, changed-file summaries, and verification helpers over repeated model reasoning for bounded low-risk tasks.
 - Prefer targeted validation before broad sweeps.
 - Default validation cadence:
   - small ticket: quick but meaningful unit or module tests first
@@ -74,6 +76,13 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - If a full rerun isolates one failing artifact, stop the sweep and switch to focused reproduction.
 - End long verification work in one truthful state only: green with proof, bounded checkpoint, or explicit blocker.
 - If workflow docs or project rules changed, run `node scripts/codex-workflow/workflow-audit.mjs`.
+
+## Session Hygiene
+
+- Keep live context small: extract the active ticket and relevant guidelines instead of dragging full boards and docs through the hot path.
+- Recommend `/compact` when the current thread still has useful recent state but the working set details are starting to sprawl.
+- Recommend `/new` when a compact handoff artifact exists and continuing in the current thread would mostly carry stale detail.
+- Treat `/clear` as a human/operator action only. Do not pretend the skill can force or verify internal chat-history deletion.
 
 ## Validation Examples
 

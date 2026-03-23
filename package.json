@@ -1,10 +1,11 @@
 {
-  "name": "codex-workflow-toolkit",
+  "name": "@dharmax/ai-workflow",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
-  "description": "Reusable Codex CLI workflow toolkit for JS/TS repositories.",
+  "description": "Workflow skill and ai-workflow CLI for token-efficient JS/TS repository work.",
   "bin": {
+    "ai-workflow": "./cli/ai-workflow.mjs",
     "codex-workflow-init": "./scripts/init-project.mjs",
     "codex-workflow-ticket": "./runtime/scripts/codex-workflow/kanban-ticket.mjs",
     "codex-workflow-new-ticket": "./runtime/scripts/codex-workflow/kanban-new.mjs",
@@ -31,6 +32,7 @@
     "review": "node runtime/scripts/codex-workflow/review-summary.mjs",
     "audit:guidelines": "node runtime/scripts/codex-workflow/guideline-audit.mjs",
     "audit": "node runtime/scripts/codex-workflow/workflow-audit.mjs",
+    "ai-workflow": "node cli/ai-workflow.mjs",
     "test": "node --test"
   },
   "engines": {

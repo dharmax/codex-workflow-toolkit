@@ -1,0 +1,8 @@
+{
+  "id": "audit",
+  "stability": "stable",
+  "category": "verification",
+  "summary": "Run the workflow and guideline audit rather than rereading policy docs manually.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/codex-workflow/workflow-audit.mjs"
+}
