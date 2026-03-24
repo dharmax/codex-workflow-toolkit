@@ -65,7 +65,8 @@ export async function configureOllamaHardware({
   plannerModel = null,
   maxModelSizeB = null,
   printProbeCmd = false,
-  interactive = false
+  interactive = false,
+  rl = null
 } = {}) {
   if (printProbeCmd && !interactive && !host && !probe && !gpu && cpu == null && vramGb == null && ramGb == null && !hardwareClass && !plannerModel && maxModelSizeB == null) {
     return {
@@ -102,7 +103,8 @@ export async function configureOllamaHardware({
   if (interactive && process.stdin.isTTY && process.stdout.isTTY) {
     const prompted = await promptForOllamaHardware({
       host: startingHost,
-      probeCommand: buildOllamaHardwareProbeCommand()
+      probeCommand: buildOllamaHardwareProbeCommand(),
+      rl
     });
     resolvedProbe = resolvedProbe ?? prompted.probe ?? null;
     resolvedFields = pickHardwareFields(resolvedFields, prompted.fields);
@@ -199,8 +201,8 @@ function hardwareFieldsToProbe(fields) {
   };
 }
 
-async function promptForOllamaHardware({ host, probeCommand }) {
-  const rl = readline.createInterface({ input, output });
+async function promptForOllamaHardware({ host, probeCommand, rl = null }) {
+  const localRl = rl ?? readline.createInterface({ input, output });
   try {
     output.write([
       "Configure remote Ollama hardware for shell planning.",
@@ -210,12 +212,12 @@ async function promptForOllamaHardware({ host, probeCommand }) {
       ""
     ].join("\n"));
 
-    const nextHost = (await rl.question(`Ollama host${host ? ` [${host}]` : ""}: `)).trim() || host || null;
-    const gpu = (await rl.question("GPU model (or none): ")).trim() || null;
-    const cpu = normalizeSize((await rl.question("CPU cores: ")).trim());
-    const vramGb = normalizeSize((await rl.question("GPU VRAM in GB (0 if none): ")).trim());
-    const ramGb = normalizeSize((await rl.question("System RAM in GB: ")).trim());
-    const probe = (await rl.question("Optional compact probe line (press Enter to skip): ")).trim();
+    const nextHost = (await localRl.question(`Ollama host${host ? ` [${host}]` : ""}: `)).trim() || host || null;
+    const gpu = (await localRl.question("GPU model (or none): ")).trim() || null;
+    const cpu = normalizeSize((await localRl.question("CPU cores: ")).trim());
+    const vramGb = normalizeSize((await localRl.question("GPU VRAM in GB (0 if none): ")).trim());
+    const ramGb = normalizeSize((await localRl.question("System RAM in GB: ")).trim());
+    const probe = (await localRl.question("Optional compact probe line (press Enter to skip): ")).trim();
     if (probe) {
       return {
         host: nextHost,
@@ -224,9 +226,9 @@ async function promptForOllamaHardware({ host, probeCommand }) {
       };
     }
 
-    const hardwareClass = normalizeHardwareClass((await rl.question("Hardware class override [tiny/small/medium/large] (optional): ")).trim());
-    const plannerModel = (await rl.question("Planner model override (optional): ")).trim() || null;
-    const maxModelSizeRaw = (await rl.question("Planner max model size in B (optional): ")).trim();
+    const hardwareClass = normalizeHardwareClass((await localRl.question("Hardware class override [tiny/small/medium/large] (optional): ")).trim());
+    const plannerModel = (await localRl.question("Planner model override (optional): ")).trim() || null;
+    const maxModelSizeRaw = (await localRl.question("Planner max model size in B (optional): ")).trim();
     return {
       host: nextHost,
       fields: normalizeHardwareFields({ gpu, cpu, vramGb, ramGb }),
@@ -235,7 +237,9 @@ async function promptForOllamaHardware({ host, probeCommand }) {
       maxModelSizeB: normalizeSize(maxModelSizeRaw)
     };
   } finally {
-    rl.close();
+    if (!rl) {
+      localRl.close();
+    }
   }
 }
 

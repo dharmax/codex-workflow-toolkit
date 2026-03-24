@@ -1,5 +1,7 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
+import * as readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
 import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/lib/cli.mjs";
 import { getToolkitCodelet, getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
@@ -20,6 +22,7 @@ const HELP = `Usage:
   ai-workflow install codex|claude|gemini|all [--project <path>]
   ai-workflow doctor [--json]
   ai-workflow set-ollama-hw [options]
+  ai-workflow set-provider-key <provider-id> [--global]
   ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]
   ai-workflow sync [--write-projections] [--json]
   ai-workflow list [--json]
@@ -65,6 +68,8 @@ export async function main(argv) {
       return 0;
     case "set-ollama-hw":
       return handleSetOllamaHw(rest, { root: process.cwd() });
+    case "set-provider-key":
+      return handleSetProviderKey(rest);
     case "shell":
       return handleShell(rest, { cliPath: path.resolve(toolkitRoot, "cli", "ai-workflow.mjs") });
     case "sync":
@@ -495,6 +500,36 @@ async function handleInstall(rest) {
     target
   });
   process.stdout.write(`${JSON.stringify({ toolkitRoot, projectRoot, results }, null, 2)}\n`);
+  return 0;
+}
+
+async function handleSetProviderKey(rest) {
+  const [providerId] = rest;
+  if (!providerId) {
+    printAndExit("Usage: ai-workflow set-provider-key <provider-id> [--global]", 1);
+  }
+  const args = parseArgs(rest);
+  const scope = args.global ? "global" : "project";
+  const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(process.cwd());
+
+  const rl = readline.createInterface({ input, output });
+  const prompt = providerId === "google"
+    ? `Enter Gemini API key (from https://aistudio.google.com/): `
+    : `Enter ${providerId} API key: `;
+  
+  if (providerId === "google") {
+    process.stdout.write("Pro-tip: You can get a free Gemini API key at https://aistudio.google.com/\n");
+  }
+
+  const key = (await rl.question(prompt) ?? "").trim();
+  rl.close();
+
+  if (!key) {
+    printAndExit("API key is required.", 1);
+  }
+
+  await writeConfigValue(configPath, `providers.${providerId}.apiKey`, key);
+  process.stdout.write(`Successfully saved API key for ${providerId} to ${scope} config.\n`);
   return 0;
 }
 

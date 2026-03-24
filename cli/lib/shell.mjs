@@ -8,11 +8,12 @@ import { stdin as input, stdout as output } from "node:process";
 import { listToolkitCodelets } from "./codelets.mjs";
 import { listProjectCodelets } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
-import { discoverProviderState, generateWithOllama } from "../../core/services/providers.mjs";
+import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
 import { addManualNote, createTicket, getProjectSummary, searchProject, syncProject } from "../../core/services/sync.mjs";
 import { buildTicketEntity } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/lib/cli.mjs";
+import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
 import { buildDoctorReport, renderDoctorReport } from "./doctor.mjs";
 import { configureOllamaHardware } from "./ollama-hw.mjs";
 
@@ -33,7 +34,8 @@ const KNOWN_TASK_CLASSES = [
   "architectural-reasoning",
   "risky-planning",
   "code-generation",
-  "review"
+  "review",
+  "shell-planning"
 ];
 
 export async function handleShell(rest, { cliPath } = {}) {
@@ -44,7 +46,7 @@ export async function handleShell(rest, { cliPath } = {}) {
 
   const root = process.cwd();
   const plannerContext = await buildShellContext(root);
-  const planner = await resolveShellPlanner(root);
+  const planners = await resolveShellPlanners(root);
   const options = {
     root,
     json: Boolean(args.json),
@@ -53,7 +55,7 @@ export async function handleShell(rest, { cliPath } = {}) {
     planOnly: Boolean(args["plan-only"]),
     cliPath: cliPath ?? path.resolve(root, "cli", "ai-workflow.mjs"),
     plannerContext,
-    planner
+    planners
   };
 
   const prompt = args._.join(" ").trim();
@@ -80,62 +82,88 @@ export async function buildShellContext(root = process.cwd()) {
   };
 }
 
-export async function resolveShellPlanner(root = process.cwd()) {
-  const providerState = await discoverProviderState({ root });
-  const ollama = providerState.providers.ollama;
-  if (!ollama?.available || !ollama.models.length) {
-    return {
-      mode: "heuristic",
-      reason: "No available Ollama models for shell planning."
-    };
+export async function resolveShellPlanners(root = process.cwd()) {
+  const route = await routeTask({ root, taskClass: "shell-planning" });
+  const planners = [];
+
+  if (route.recommended) {
+    planners.push(mapRouteCandidateToPlanner(route.recommended, route.providers));
   }
 
-  const selected = chooseShellPlannerModel(ollama);
+  for (const candidate of route.fallbackChain) {
+    planners.push(mapRouteCandidateToPlanner(candidate, route.providers));
+  }
 
   return {
-    mode: "ollama",
-    providerId: "ollama",
-    modelId: selected.id,
-    host: ollama.host,
-    configWarnings: providerState.configWarnings ?? [],
-    needsHardwareHint: selected.needsHardwareHint,
-    reason: selected.reason
+    planners,
+    heuristic: {
+      mode: "heuristic",
+      reason: "No available AI models for shell planning."
+    }
+  };
+}
+
+function mapRouteCandidateToPlanner(candidate, providers) {
+  const provider = providers[candidate.providerId];
+  return {
+    mode: provider.local ? "ollama" : "agentic",
+    providerId: candidate.providerId,
+    modelId: candidate.modelId,
+    apiKey: provider.apiKey,
+    baseUrl: provider.baseUrl,
+    host: provider.host,
+    needsHardwareHint: provider.local && !provider.hardwareClass && !provider.maxModelSizeB && !provider.plannerMaxQuality,
+    reason: candidate.reason
   };
 }
 
 export async function planShellRequest(inputText, options) {
   const heuristic = planShellRequestHeuristically(inputText, options.plannerContext);
-  if (options.noAi || heuristic.confidence >= 0.92 || options.planner.mode !== "ollama") {
+  const useHeuristicOnly = options.noAi || !options.planners.planners.length;
+
+  if (useHeuristicOnly || heuristic.confidence >= 0.92) {
     return {
       ...heuristic,
       planner: {
-        mode: options.noAi ? "heuristic-forced" : options.planner.mode,
+        mode: options.noAi ? "heuristic-forced" : "heuristic",
         reason: heuristic.reason
       }
     };
   }
 
-  try {
-    const aiPlan = await planShellRequestWithOllama(inputText, options);
-    return {
-      ...aiPlan,
-      planner: {
-        mode: "ollama",
-        providerId: options.planner.providerId,
-        modelId: options.planner.modelId,
-        host: options.planner.host,
-        reason: options.planner.reason
+  const errors = [];
+  for (const planner of options.planners.planners) {
+    // Skip providers that have already failed in this session
+    if (options.blacklist?.has(planner.providerId)) {
+      continue;
+    }
+
+    try {
+      const aiPlan = await planShellRequestWithAgent(inputText, { ...options, planner });
+      return {
+        ...aiPlan,
+        planner
+      };
+    } catch (error) {
+      const isFatal = String(error).includes("403") || String(error).includes("PERMISSION_DENIED") || String(error).includes("invalid_key");
+      if (isFatal) {
+        options.blacklist ??= new Set();
+        options.blacklist.add(planner.providerId);
+        if (!options.json) {
+          output.write(`Planner ${planner.providerId} failed: ${error.message}. Switching to fallback...\n`);
+        }
       }
-    };
-  } catch {
-    return {
-      ...heuristic,
-      planner: {
-        mode: "heuristic-fallback",
-        reason: heuristic.reason
-      }
-    };
+      errors.push(`${planner.providerId}: ${error.message ?? String(error)}`);
+    }
   }
+
+  return {
+    ...heuristic,
+    planner: {
+      mode: "heuristic-fallback",
+      reason: errors.join("; ")
+    }
+  };
 }
 
 export function planShellRequestHeuristically(inputText, plannerContext) {
@@ -192,7 +220,29 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     return actionPlan([{
       type: "set_ollama_hw",
       global: /\s--global\b/.test(ollamaHwMatch[1])
-    }], 0.99, "Explicit Ollama hardware setup request.");
+    }], 1.0, "Explicit Ollama hardware setup request.");
+  }
+
+  const providerKeyMatch = text.match(/^set-provider-key\s+([a-z0-9_-]+)(.*)$/i);
+  if (providerKeyMatch) {
+    return actionPlan([{
+      type: "set_provider_key",
+      providerId: providerKeyMatch[1].toLowerCase(),
+      global: /\s--global\b/.test(providerKeyMatch[2])
+    }], 1.0, "Explicit provider key setup request.");
+  }
+
+  const configMatch = text.match(/^config\s+(get|set|unset|clear)\b(.*)$/i);
+  if (configMatch) {
+    const action = configMatch[1].toLowerCase();
+    const args = configMatch[2].trim().split(/\s+/).filter(Boolean);
+    return actionPlan([{
+      type: "config",
+      action,
+      key: args[0] ?? null,
+      value: args[1] ?? null,
+      global: configMatch[2].includes("--global")
+    }], 1.0, "Explicit config request.");
   }
 
   const routeMatch = text.match(/^(?:route|pick model for)\s+(.+)$/i);
@@ -242,63 +292,84 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
   ].join("\n"), 0.45, "No high-confidence heuristic match.");
 }
 
-export async function planShellRequestWithOllama(inputText, options) {
+export async function planShellRequestWithAgent(inputText, options) {
   const catalog = buildActionCatalog(options.plannerContext);
+  const summary = options.plannerContext.summary ?? {};
+
   const system = [
-    "You are a strict command planner for ai-workflow.",
-    "Return JSON only. No markdown, no explanation.",
-    "Choose from the allowed action types only.",
-    "Prefer deterministic ai-workflow commands over freeform replies.",
-    "Use at most 3 actions.",
-    "If the request is ambiguous, return kind=reply with a short clarification question."
-  ].join(" ");
-  const prompt = [
-    "Allowed action schema:",
-    JSON.stringify({
-      kind: "plan|reply|exit",
-      confidence: 0.0,
-      reason: "short string",
-      reply: "only when kind=reply",
-      actions: [
-        {
-          type: "project_summary|doctor|sync|run_review|search|extract_ticket|extract_guidelines|route|telegram_preview|add_note|create_ticket|run_codelet",
-          query: "for search",
-          ticketId: "for extract_ticket/extract_guidelines",
-          changed: true,
-          taskClass: "for route",
-          noteType: "NOTE|TODO|FIXME|HACK|BUG|RISK",
-          body: "for add_note",
-          filePath: "optional",
-          line: 12,
-          id: "for create_ticket",
-          title: "for create_ticket",
-          lane: "optional",
-          epicId: "optional",
-          summary: "optional",
-          codeletId: "for run_codelet",
-          args: ["optional", "args"]
-        }
-      ]
-    }, null, 2),
+    "You are the expert persona for 'ai-workflow', a high-performance CLI for software development.",
+    "Your goal is to help the developer manage their project workflow efficiently.",
+    "You are friendly, robust, and reliable.",
     "",
-    "Available codelets:",
-    catalog,
+    "## Project Status",
+    `- Indexed Files: ${summary.fileCount ?? 0}`,
+    `- Active Tickets: ${summary.activeTickets?.length ?? 0}`,
+    `- Unprocessed Notes: ${summary.noteCount ?? 0}`,
+    `- Candidates: ${summary.candidates?.length ?? 0}`,
     "",
-    "Project summary context:",
-    JSON.stringify(options.plannerContext.summary ?? {}, null, 2),
-    "",
-    `User request: ${JSON.stringify(String(inputText))}`
+    "## Instructions",
+    "1. Analyze the user intent.",
+    "2. If the user is just chatting or asking about status, use kind=reply.",
+    "3. If the user wants to perform a task, use kind=plan and map it to available actions.",
+    "4. Return ONLY JSON. No markdown, no filler.",
+    "5. Use at most 3 actions per plan."
   ].join("\n");
 
-  const completion = await generateWithOllama({
-    host: options.planner.host,
-    model: options.planner.modelId,
+  const prompt = [
+    "Available Actions:",
+    catalog,
+    "",
+    "Allowed JSON Schema:",
+    JSON.stringify({
+      kind: "plan|reply|exit",
+      confidence: 0.8,
+      reason: "thinking process",
+      reply: "human-friendly message (use when kind=reply)",
+      actions: [{
+        type: "project_summary|doctor|sync|run_review|search|extract_ticket|extract_guidelines|route|telegram_preview|add_note|create_ticket|run_codelet",
+        query: "for search",
+        ticketId: "for extract_ticket/extract_guidelines",
+        changed: true,
+        taskClass: "for route",
+        noteType: "NOTE|TODO|FIXME|HACK|BUG|RISK",
+        body: "for add_note",
+        filePath: "optional",
+        line: 12,
+        id: "for create_ticket",
+        title: "for create_ticket",
+        lane: "optional",
+        epicId: "optional",
+        summary: "optional",
+        codeletId: "for run_codelet",
+        args: ["optional", "args"]
+      }]
+    }, null, 2),
+    "",
+    `User Request: "${inputText}"`
+  ].join("\n");
+
+  const completion = await generateCompletion({
+    providerId: options.planner.providerId,
+    modelId: options.planner.modelId,
     system,
     prompt,
-    format: "json"
+    config: {
+      apiKey: options.planner.apiKey,
+      baseUrl: options.planner.baseUrl,
+      host: options.planner.host,
+      format: "json"
+    }
   });
-  const parsed = JSON.parse(completion.response);
-  return validateShellPlan(parsed, options.plannerContext);
+
+  try {
+    const parsed = JSON.parse(completion.response);
+    return validateShellPlan(parsed, options.plannerContext);
+  } catch (error) {
+    if (completion.response.length > 10 && !completion.response.trim().startsWith("{")) {
+      return replyPlan(completion.response, 0.5, "Model returned non-JSON text; treating as reply.");
+    }
+    throw error;
+  }
 }
 
 export function validateShellPlan(plan, plannerContext) {
@@ -455,12 +526,14 @@ export async function runShellTurn(inputText, options) {
 
   const failed = executed.find((item) => item.ok === false);
   let recovery = null;
-  if (failed && options.planner.mode === "ollama" && !options.noAi) {
+  const anyAiPlanner = options.planners.planners[0];
+  if (failed && anyAiPlanner && !options.noAi) {
     recovery = await attemptShellRecovery({
       inputText,
       plan,
       failed,
-      options
+      options,
+      planner: anyAiPlanner
     });
   }
 
@@ -524,6 +597,16 @@ export function compileShellAction(action, { json = false } = {}) {
       return cliCommand(["telegram", "preview", ...(json ? ["--json"] : [])], false);
     case "set_ollama_hw":
       return cliCommand(["set-ollama-hw", ...(action.global ? ["--global"] : [])], true);
+    case "set_provider_key":
+      return cliCommand(["set-provider-key", action.providerId, "--global"], true);
+    case "config":
+      return cliCommand([
+        "config",
+        action.action,
+        ...(action.key ? [action.key] : []),
+        ...(action.value ? [action.value] : []),
+        ...(action.global ? ["--global"] : [])
+      ], action.action !== "get");
     case "add_note":
       return cliCommand([
         "project",
@@ -560,18 +643,32 @@ export function compileShellAction(action, { json = false } = {}) {
 
 export async function runInteractiveShell(options) {
   const rl = readline.createInterface({ input, output });
+  options.rl = rl;
+  options.blacklist = new Set();
   try {
-    output.write(`ai-workflow shell\n${renderPlannerLine(options.planner)}\nType 'help' for examples. Type 'exit' to quit.\n\n`);
-    for (const warning of options.planner.configWarnings ?? []) {
+    const primary = options.planners.planners[0] ?? options.planners.heuristic;
+    output.write(`ai-workflow shell\n${renderPlannerLine(primary)}\nType 'help' for examples. Type 'exit' to quit.\n\n`);
+
+    if (!options.planners.planners.length) {
+      output.write([
+        "Planner note: No AI models configured. Shell is running in limited regex-only mode.",
+        "To enable full agentic reasoning, you can:",
+        "- Configure local Ollama hardware: \`set-ollama-hw --global\`",
+        "- Set up a high-power remote provider (recommended): \`set-provider-key google\` (Gemini)",
+        ""
+      ].join("\n"));
+    }
+
+    for (const warning of primary.configWarnings ?? []) {
       output.write(`config warning: ${warning}\n`);
     }
-    if ((options.planner.configWarnings ?? []).length) {
+    if ((primary.configWarnings ?? []).length) {
       output.write("\n");
     }
-    if (options.planner.needsHardwareHint) {
+    if (primary.needsHardwareHint) {
       output.write([
         "Planner note: Ollama hardware is not configured, so the shell is defaulting to a smaller model.",
-        "You can configure it now, or later with `ai-workflow set-ollama-hw`.",
+        "You can configure it now, or later with \`ai-workflow set-ollama-hw\`.",
         ""
       ].join("\n"));
       const answer = (await promptShellQuestion(rl, "Configure Ollama hardware now? [Y/n] ") ?? "").trim().toLowerCase();
@@ -579,11 +676,12 @@ export async function runInteractiveShell(options) {
         rl.pause();
         await configureOllamaHardware({
           root: options.root,
-          interactive: true
+          interactive: true,
+          rl
         });
         rl.resume();
-        options.planner = await resolveShellPlanner(options.root);
-        output.write(`\nUpdated planner: ${renderPlannerLine(options.planner)}\n\n`);
+        options.planners = await resolveShellPlanners(options.root);
+        output.write(`\nUpdated planner: ${renderPlannerLine(options.planners.planners[0] ?? options.planners.heuristic)}\n\n`);
       } else {
         output.write("\n");
       }
@@ -602,6 +700,15 @@ export async function runInteractiveShell(options) {
         if (result.plan.kind === "exit") {
           break;
         }
+
+        const mutated = result.executed.some(e => e.mutation);
+        if (mutated) {
+          options.planners = await resolveShellPlanners(options.root);
+          if (!options.json) {
+            output.write(`Planners updated: ${renderPlannerLine(options.planners.planners[0] ?? options.planners.heuristic)}\n\n`);
+          }
+        }
+
         if (options.json) {
           output.write(`${JSON.stringify(result, null, 2)}\n`);
           continue;
@@ -622,13 +729,15 @@ async function confirmPlan(plan, options) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return false;
   }
-  const rl = readline.createInterface({ input, output });
+  const rl = options.rl ?? readline.createInterface({ input, output });
   try {
     output.write(`Planned actions:\n${renderActionList(plan.actions)}\n`);
     const answer = (await promptShellQuestion(rl, "Run mutating actions? [y/N] ") ?? "").trim().toLowerCase();
     return answer === "y" || answer === "yes";
   } finally {
-    rl.close();
+    if (!options.rl) {
+      rl.close();
+    }
   }
 }
 
@@ -678,6 +787,46 @@ async function runShellActionDirect(action, options) {
         interactive: true
       });
       return options.json ? `${JSON.stringify(result, null, 2)}\n` : renderConfiguredOllamaHardware(result);
+    }
+    case "set_provider_key": {
+      const rl = options.rl ?? readline.createInterface({ input, output });
+      const prompt = action.providerId === "google"
+        ? `Enter Gemini API key (from https://aistudio.google.com/): `
+        : `Enter ${action.providerId} API key: `;
+      const key = (await promptShellQuestion(rl, prompt) ?? "").trim();
+      if (!options.rl) {
+        rl.close();
+      }
+      if (!key) {
+        throw new Error("API key is required.");
+      }
+      const filePath = getGlobalConfigPath();
+      await writeConfigValue(filePath, `providers.${action.providerId}.apiKey`, key);
+      return `Successfully saved API key for ${action.providerId} to global config.\n`;
+    }
+    case "config": {
+      const scope = action.global ? "global" : "project";
+      const configPath = action.global ? getGlobalConfigPath() : getProjectConfigPath(options.root);
+      if (action.action === "get") {
+        const config = await readConfig(configPath);
+        const resolved = getConfigValue(config, action.key);
+        return resolved === undefined ? "undefined\n" : (typeof resolved === "string" ? `${resolved}\n` : `${JSON.stringify(resolved, null, 2)}\n`);
+      }
+      if (action.action === "set") {
+        if (!action.key || action.value === undefined) throw new Error("Key and value required.");
+        const config = await writeConfigValue(configPath, action.key, action.value);
+        return `${JSON.stringify({ path: configPath, value: getConfigValue(config, action.key) }, null, 2)}\n`;
+      }
+      if (action.action === "unset") {
+        if (!action.key) throw new Error("Key required.");
+        await removeConfigValue(configPath, action.key);
+        return `Removed ${action.key} from ${scope} config.\n`;
+      }
+      if (action.action === "clear") {
+        await removeConfigFile(configPath);
+        return `Cleared ${scope} config.\n`;
+      }
+      throw new Error(`Unsupported config action: ${action.action}`);
     }
     case "add_note": {
       const note = await addManualNote({
@@ -1143,7 +1292,14 @@ Usage:
   ai-workflow shell <request...> [--yes] [--plan-only] [--no-ai] [--json]
 
 Notes:
-  - The shell turns natural-language requests into known ai-workflow actions.
-  - It prefers a local Ollama planner when available.
+  - The shell turns natural-language requests into workflow actions.
+  - It uses a high-power remote planner (Gemini/OpenAI) if available, falling back to local Ollama.
+  - It can now "chat" and answer general project questions if a smart model is configured.
   - Mutating actions ask for confirmation unless --yes is passed.
+
+Examples:
+  - "are we synched?"
+  - "what tickets are in Todo?"
+  - "sync and show review hotspots"
+  - "set-provider-key google"
 `;

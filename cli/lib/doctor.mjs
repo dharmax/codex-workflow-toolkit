@@ -2,7 +2,7 @@ import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "./config-store.mjs";
-import { probeOllama, resolveOllamaConfig } from "../../core/services/providers.mjs";
+import { discoverProviderState, probeOllama, resolveOllamaConfig } from "../../core/services/providers.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,24 +17,25 @@ export async function runDoctor({ root = process.cwd(), json = false } = {}) {
 }
 
 export async function buildDoctorReport({ root = process.cwd() } = {}) {
-  const [projectConfigState, globalConfigState] = await Promise.all([
+  const [projectConfigState, globalConfigState, providerState] = await Promise.all([
     readConfigSafe(getProjectConfigPath(root)),
-    readConfigSafe(getGlobalConfigPath())
+    readConfigSafe(getGlobalConfigPath()),
+    discoverProviderState({ root })
   ]);
   const projectConfig = projectConfigState.config;
   const globalConfig = globalConfigState.config;
   const ollamaConfig = resolveOllamaConfig({ projectConfig, globalConfig });
-  const [git, ollama] = await Promise.all([
-    probeBinary("git", ["--version"]),
-    ollamaConfig.enabled === false
-      ? Promise.resolve({
-        installed: false,
-        models: [],
-        details: "disabled by config",
-        host: ollamaConfig.host
-      })
-      : probeOllama({ host: ollamaConfig.host })
-  ]);
+  const git = await probeBinary("git", ["--version"]);
+
+  const providers = {};
+  for (const [id, p] of Object.entries(providerState.providers)) {
+    providers[id] = {
+      available: p.available,
+      modelCount: p.models.length,
+      local: p.local
+    };
+  }
+
   return {
     cwd: root,
     platform: process.platform,
@@ -46,15 +47,16 @@ export async function buildDoctorReport({ root = process.cwd() } = {}) {
       installed: git.ok,
       details: git.output
     },
+    providers,
     ollama: {
-      installed: ollama.installed,
-      host: ollama.host,
+      installed: providerState.providers.ollama.available,
+      host: providerState.providers.ollama.host,
       hardwareClass: ollamaConfig.hardwareClass ?? null,
       plannerModel: ollamaConfig.plannerModel ?? null,
       plannerMaxQuality: ollamaConfig.plannerMaxQuality ?? null,
       maxModelSizeB: ollamaConfig.maxModelSizeB ?? null,
-      models: ollama.models,
-      details: ollama.details
+      models: providerState.providers.ollama.models.map(m => m.id),
+      details: providerState.providers.ollama.details
     },
     config: {
       projectPath: getProjectConfigPath(root),
@@ -64,7 +66,6 @@ export async function buildDoctorReport({ root = process.cwd() } = {}) {
       globalKeys: Object.keys(globalConfig)
     }
   };
-
 }
 
 export function renderDoctorReport(report) {
@@ -74,9 +75,15 @@ export function renderDoctorReport(report) {
     `node: ${report.node}`,
     `cpu: ${report.cpuCount} cores`,
     `memory: ${report.totalMemoryGb} GB`,
-    `git: ${report.git.installed ? "installed" : "missing"}`,
-    `ollama: ${report.ollama.installed ? "installed" : "missing"}`
+    `git: ${report.git.installed ? "installed" : "missing"}`
   ];
+
+  for (const [id, p] of Object.entries(report.providers)) {
+    if (id === "ollama") continue;
+    lines.push(`${id}: ${p.available ? "available" : "missing key/config"} (${p.modelCount} models)`);
+  }
+
+  lines.push(`ollama: ${report.ollama.installed ? "installed" : "missing"}`);
 
   if (report.ollama.host) {
     lines.push(`ollama host: ${report.ollama.host}`);

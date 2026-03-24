@@ -38,12 +38,22 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
   const configuredProviders = mergeProviderConfig(globalConfig.providers, projectConfig.providers);
   const providers = {};
 
-  for (const [providerId, config] of Object.entries(configuredProviders)) {
+  const allProviderIds = new Set([...Object.keys(STATIC_MODEL_CATALOG), ...Object.keys(configuredProviders)]);
+
+  for (const providerId of allProviderIds) {
+    if (providerId === "ollama") {
+      continue;
+    }
+
+    const config = configuredProviders[providerId] ?? {};
+    const apiKey = config.apiKey ?? getEnvKey(providerId);
     const models = normalizeConfiguredModels(providerId, config);
     providers[providerId] = {
-      available: config.enabled !== false && models.length > 0,
+      available: config.enabled !== false && models.length > 0 && !!apiKey,
       local: false,
-      configured: true,
+      configured: !!configuredProviders[providerId],
+      apiKey: apiKey ?? null,
+      baseUrl: config.baseUrl ?? null,
       models
     };
   }
@@ -83,8 +93,9 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
         "architectural-reasoning": "high",
         "risky-planning": "high",
         "code-generation": "high",
-        review: "high"
-      },
+        "review": "high",
+        "shell-planning": "low"
+        },
       ...(globalConfig.routing ?? {}),
       ...(projectConfig.routing ?? {})
     },
@@ -197,6 +208,7 @@ export async function generateWithOllama({ model, prompt, system = "", host, for
 
   const payload = await response.json();
   return {
+    providerId: "ollama",
     host: resolvedHost,
     model,
     response: String(payload.response ?? "").trim(),
@@ -204,21 +216,114 @@ export async function generateWithOllama({ model, prompt, system = "", host, for
   };
 }
 
+export async function generateWithGemini({ model, prompt, system = "", apiKey } = {}) {
+  const key = apiKey ?? process.env.GOOGLE_API_KEY;
+  if (!key) {
+    throw new Error("Gemini API key is required (GOOGLE_API_KEY or config)");
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      systemInstruction: system ? { parts: [{ text: system }] } : undefined,
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 2048
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Gemini request failed (${response.status}): ${errorBody}`);
+  }
+
+  const payload = await response.json();
+  const text = payload.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  return {
+    providerId: "google",
+    model,
+    response: text.trim(),
+    raw: payload
+  };
+}
+
+export async function generateWithOpenAI({ model, prompt, system = "", apiKey, baseUrl } = {}) {
+  const key = apiKey ?? process.env.OPENAI_API_KEY;
+  if (!key) {
+    throw new Error("OpenAI API key is required (OPENAI_API_KEY or config)");
+  }
+
+  const url = `${baseUrl ?? "https://api.openai.com/v1"}/chat/completions`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${key}`
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        ...(system ? [{ role: "system", content: system }] : []),
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.1
+    })
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`OpenAI request failed (${response.status}): ${errorBody}`);
+  }
+
+  const payload = await response.json();
+  const text = payload.choices?.[0]?.message?.content ?? "";
+  return {
+    providerId: "openai",
+    model,
+    response: text.trim(),
+    raw: payload
+  };
+}
+
+export async function generateCompletion({ providerId, modelId, prompt, system, config = {} } = {}) {
+  switch (providerId) {
+    case "ollama":
+      return generateWithOllama({ model: modelId, prompt, system, host: config.host, format: config.format });
+    case "google":
+      return generateWithGemini({ model: modelId, prompt, system, apiKey: config.apiKey });
+    case "openai":
+      return generateWithOpenAI({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl });
+    default:
+      throw new Error(`Unsupported provider for completion: ${providerId}`);
+  }
+}
+
 function normalizeOllamaHost(host) {
   if (!host) {
     return null;
   }
 
-  const trimmed = String(host).trim().replace(/\/+$/, "");
+  let trimmed = String(host).trim().replace(/\/+$/, "");
   if (!trimmed) {
     return null;
   }
 
-  if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed;
+  if (!/^https?:\/\//i.test(trimmed)) {
+    trimmed = `http://${trimmed}`;
   }
 
-  return `http://${trimmed}`;
+  const url = new URL(trimmed);
+  if (!url.port && url.protocol === "http:") {
+    return `${trimmed}:11434`;
+  }
+
+  return trimmed;
 }
 
 function mergeProviderConfig(globalProviders = {}, projectProviders = {}) {
@@ -267,6 +372,19 @@ function normalizeHardwareClass(value) {
 function normalizeQuality(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
   return ["low", "medium", "high"].includes(normalized) ? normalized : null;
+}
+
+function getEnvKey(providerId) {
+  switch (providerId) {
+    case "google":
+      return process.env.GOOGLE_API_KEY;
+    case "openai":
+      return process.env.OPENAI_API_KEY;
+    case "anthropic":
+      return process.env.ANTHROPIC_API_KEY;
+    default:
+      return null;
+  }
 }
 
 function normalizeModelSize(value) {
