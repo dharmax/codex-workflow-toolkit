@@ -38,6 +38,7 @@ Run the local CLI from this repository:
 ```bash
 node cli/ai-workflow.mjs list
 node cli/ai-workflow.mjs doctor
+node cli/ai-workflow.mjs shell "summary"
 ```
 
 Package direction:
@@ -153,6 +154,24 @@ ai-workflow project summary --json
 ai-workflow project note add --type BUG --body "shared router can break candidate review" --file src/core/router.js
 ai-workflow route review --json
 ai-workflow telegram preview
+ai-workflow shell "sync and show review hotspots"
+```
+
+Configure a remote Ollama host if the planner/model server is on another machine:
+
+```bash
+ai-workflow config set providers.ollama.host http://YOUR-HOST:11434 --global
+ai-workflow doctor --json
+ai-workflow set-ollama-hw --global
+```
+
+Tune the interactive shell planner for the hardware behind that Ollama host:
+
+```bash
+ai-workflow set-ollama-hw --global
+# or manually:
+ai-workflow config set providers.ollama.hardwareClass small --global
+ai-workflow config set providers.ollama.plannerModel qwen2.5:7b --global
 ```
 
 In an initialized target project, the common commands are:

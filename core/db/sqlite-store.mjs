@@ -100,12 +100,12 @@ export class SqliteWorkflowStore {
       );
     }
 
-    for (const fact of parsed.facts ?? []) {
+    for (const [index, fact] of (parsed.facts ?? []).entries()) {
       this.db.prepare(`
         INSERT INTO claims (id, subject_id, predicate, object_id, object_text, kind, confidence, provenance, source_kind, lifecycle_state, file_path, line, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'indexed', ?, ?, ?, ?, ?)
       `).run(
-        stableId("claim", file.relativePath, fact.predicate, fact.objectText ?? fact.objectId),
+        stableId("claim", file.relativePath, fact.predicate, fact.objectText ?? fact.objectId, fact.line ?? index),
         `file:${file.relativePath}`,
         fact.predicate,
         fact.objectId ?? null,

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,6 +96,35 @@ test("ticket entities render into the projection view", async () => {
 
     const summary = await getProjectSummary({ projectRoot: targetRoot });
     assert.equal(summary.activeTickets.some((ticket) => ticket.id === "TKT-222"), true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("syncProject tolerates duplicate facts emitted from the same file", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-duplicate-facts-"));
+
+  try {
+    await writeFile(
+      path.join(targetRoot, "README.md"),
+      [
+        "# Overview",
+        "",
+        "## Shared",
+        "",
+        "Repeated heading to force duplicate has-heading facts.",
+        "",
+        "## Shared"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await syncProject({ projectRoot: targetRoot });
+    assert.equal(result.indexedFiles, 1);
+    assert.equal(result.indexedClaims >= 3, true);
+
+    const summary = await getProjectSummary({ projectRoot: targetRoot });
+    assert.equal(summary.claimCount >= 3, true);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

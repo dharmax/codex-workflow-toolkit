@@ -3,6 +3,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chmod, copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { syncProject } from "../core/services/sync.mjs";
 
 const HELP = `Usage:
   node scripts/init-project.mjs --target /path/to/project
@@ -11,6 +12,7 @@ Options:
   --target <path>    Target project root. Defaults to current directory.
   --force            Overwrite existing non-empty files.
   --dry-run          Show what would change without writing files.
+  --no-sync          Skip the initial workflow DB sync.
 `;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -40,6 +42,7 @@ if (args.help) {
 const targetRoot = path.resolve(String(args.target ?? process.cwd()));
 const force = Boolean(args.force);
 const dryRun = Boolean(args["dry-run"]);
+const runInitialSync = !dryRun && !args["no-sync"];
 
 const plan = [
   {
@@ -135,10 +138,16 @@ if (looksLikeJsProject) {
   await reconcilePackageScripts(targetRoot, summary.packageScripts, { force, dryRun });
 }
 
+let syncResult = null;
+if (runInitialSync) {
+  syncResult = await syncProject({ projectRoot: targetRoot });
+}
+
 const lines = [];
 lines.push(`Target: ${targetRoot}`);
 lines.push(`Mode: ${dryRun ? "dry-run" : "write"}`);
 lines.push(`JS/TS project hint: ${looksLikeJsProject ? "package.json found" : "package.json not found"}`);
+lines.push(`Initial sync: ${dryRun ? "skipped (dry-run)" : args["no-sync"] ? "disabled" : "completed"}`);
 lines.push("");
 lines.push(`Installed: ${summary.installed.length}`);
 for (const item of summary.installed) {
@@ -190,6 +199,15 @@ if (summary.skipped.length) {
 if (summary.packageScripts.skipped.length) {
   lines.push("");
   lines.push("Re-run with --force to overwrite skipped package scripts.");
+}
+
+if (syncResult) {
+  lines.push("");
+  lines.push(`DB: ${syncResult.dbPath}`);
+  lines.push(`Indexed files: ${syncResult.indexedFiles}`);
+  lines.push(`Symbols: ${syncResult.indexedSymbols}`);
+  lines.push(`Claims: ${syncResult.indexedClaims}`);
+  lines.push(`Notes: ${syncResult.indexedNotes}`);
 }
 
 process.stdout.write(`${lines.join("\n")}\n`);

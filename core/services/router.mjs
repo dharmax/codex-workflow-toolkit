@@ -13,6 +13,7 @@ export async function routeTask({ root = process.cwd(), taskClass, preferLocal =
 
   const providerState = await discoverProviderState({ root });
   const minimumQuality = providerState.routingPolicy.minimumQuality[taskClass] ?? "medium";
+  const preferLocalForTask = preferLocal ?? providerState.routingPolicy.preferLocalFor?.includes(taskClass) ?? false;
   const candidates = [];
 
   for (const [providerId, provider] of Object.entries(providerState.providers)) {
@@ -31,7 +32,7 @@ export async function routeTask({ root = process.cwd(), taskClass, preferLocal =
         continue;
       }
 
-      const localPreference = preferLocal && provider.local ? -2 : 0;
+      const localPreference = preferLocalForTask && provider.local ? 2 : 0;
       const suitability = (model.strengths?.includes(taskClass) ? 3 : 1) + QUALITY_ORDER[quality];
       const score = (10 - (model.costTier ?? 5)) + suitability + localPreference;
       candidates.push({

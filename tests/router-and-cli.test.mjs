@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -37,6 +37,34 @@ test("installAgents creates the DB-first project workspace directories and confi
     const config = JSON.parse(await readFile(path.join(targetRoot, ".ai-workflow", "config.json"), "utf8"));
     assert.equal(config.storage.dbPath, ".ai-workflow/state/workflow.db");
     assert.equal(config.lifecycle.candidateReviewIntervalHours, 36);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("routeTask picks up a configured remote Ollama host", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-ollama-host-"));
+
+  try {
+    await mkdir(path.join(targetRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(targetRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          ollama: {
+            host: "http://192.168.1.50:11434"
+          }
+        }
+      }, null, 2) + "\n",
+      "utf8"
+    );
+
+    const route = await routeTask({
+      root: targetRoot,
+      taskClass: "summarization"
+    });
+
+    assert.equal(route.providers.ollama.host, "http://192.168.1.50:11434");
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

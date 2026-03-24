@@ -23,6 +23,20 @@ export async function readConfig(filePath) {
   }
 }
 
+export async function readConfigSafe(filePath) {
+  try {
+    return {
+      config: await readConfig(filePath),
+      warning: null
+    };
+  } catch (error) {
+    return {
+      config: {},
+      warning: error?.message ?? String(error)
+    };
+  }
+}
+
 export async function writeConfigValue(filePath, keyPath, rawValue) {
   const config = await readConfig(filePath);
   const keys = splitKeyPath(keyPath);

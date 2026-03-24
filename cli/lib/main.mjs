@@ -4,6 +4,8 @@ import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/li
 import { getToolkitCodelet, getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
 import { runDoctor } from "./doctor.mjs";
+import { handleSetOllamaHw } from "./ollama-hw.mjs";
+import { handleShell } from "./shell.mjs";
 import { installAgents } from "./install.mjs";
 import { forgeProjectCodelet, getProjectCodelet, listProjectCodelets, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
@@ -17,6 +19,8 @@ const HELP = `Usage:
   ai-workflow init [options]
   ai-workflow install codex|claude|gemini|all [--project <path>]
   ai-workflow doctor [--json]
+  ai-workflow set-ollama-hw [options]
+  ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]
   ai-workflow sync [--write-projections] [--json]
   ai-workflow list [--json]
   ai-workflow info <codelet>
@@ -59,6 +63,10 @@ export async function main(argv) {
     case "doctor":
       await runDoctor({ root: process.cwd(), json: rest.includes("--json") });
       return 0;
+    case "set-ollama-hw":
+      return handleSetOllamaHw(rest, { root: process.cwd() });
+    case "shell":
+      return handleShell(rest, { cliPath: path.resolve(toolkitRoot, "cli", "ai-workflow.mjs") });
     case "sync":
       return handleSync(rest);
     case "list":
@@ -400,7 +408,9 @@ async function handleRoute(rest) {
   const route = await routeTask({
     root: process.cwd(),
     taskClass,
-    preferLocal: args["prefer-local"] !== false
+    preferLocal: args["prefer-local"] === undefined
+      ? undefined
+      : args["prefer-local"] !== false && args["prefer-local"] !== "false"
   });
   if (args.json) {
     process.stdout.write(`${JSON.stringify(route, null, 2)}\n`);

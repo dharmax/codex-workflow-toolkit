@@ -18,6 +18,7 @@ test("installer dry-run reports files without writing them", async () => {
 
     assert.equal(result.code, 0);
     assert.match(result.stdout, /Mode: dry-run/);
+    assert.match(result.stdout, /Initial sync: skipped \(dry-run\)/);
     assert.match(result.stdout, new RegExp(`Installed: ${await countInstallableFiles()}`));
     await assert.rejects(access(path.join(targetRoot, "AGENTS.md")));
   } finally {
@@ -32,6 +33,7 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     await writeFile(path.join(targetRoot, "package.json"), "{\n  \"name\": \"fixture\"\n}\n");
     const firstRun = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
     assert.equal(firstRun.code, 0);
+    assert.match(firstRun.stdout, /Initial sync: completed/);
     assert.match(firstRun.stdout, new RegExp(`Installed: ${await countInstallableFiles()}`));
     assert.match(firstRun.stdout, /Package scripts installed: 11/);
 
@@ -42,6 +44,7 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     const packageJson = JSON.parse(await readFile(path.join(targetRoot, "package.json"), "utf8"));
     assert.equal(packageJson.scripts["workflow:audit"], "node scripts/codex-workflow/workflow-audit.mjs");
     assert.equal(packageJson.scripts["workflow:guideline-audit"], "node scripts/codex-workflow/guideline-audit.mjs");
+    await access(path.join(targetRoot, ".ai-workflow", "state", "workflow.db"));
 
     const ciWorkflow = await readFile(
       path.join(targetRoot, ".github", "workflows", "codex-workflow-audit.yml"),
@@ -55,8 +58,23 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
 
     const secondRun = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
     assert.equal(secondRun.code, 0);
+    assert.match(secondRun.stdout, /Initial sync: completed/);
     assert.match(secondRun.stdout, new RegExp(`Identical: ${await countInstallableFiles()}`));
     assert.match(secondRun.stdout, /Package scripts identical: 11/);
+  } finally {
+    await cleanup(targetRoot);
+  }
+});
+
+test("installer supports opting out of the default initial sync", async () => {
+  const targetRoot = await makeTempDir();
+
+  try {
+    await writeFile(path.join(targetRoot, "package.json"), "{\n  \"name\": \"fixture\"\n}\n");
+    const result = await runNode(["scripts/init-project.mjs", "--target", targetRoot, "--no-sync"]);
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, /Initial sync: disabled/);
+    await assert.rejects(access(path.join(targetRoot, ".ai-workflow", "state", "workflow.db")));
   } finally {
     await cleanup(targetRoot);
   }

@@ -11,7 +11,9 @@ const args = parseArgs(rest);
 const route = await routeTask({
   root: process.cwd(),
   taskClass,
-  preferLocal: args["prefer-local"] !== false
+  preferLocal: args["prefer-local"] === undefined
+    ? undefined
+    : args["prefer-local"] !== false && args["prefer-local"] !== "false"
 });
 
 if (args.json) {

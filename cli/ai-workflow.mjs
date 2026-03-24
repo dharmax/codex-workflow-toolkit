@@ -3,4 +3,4 @@
 import { main } from "./lib/main.mjs";
 
 const code = await main(process.argv.slice(2));
-process.exit(code);
+process.exitCode = code;

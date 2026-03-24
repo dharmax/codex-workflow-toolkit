@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { getGlobalConfigPath, getProjectConfigPath, readConfig } from "../../cli/lib/config-store.mjs";
+import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "../../cli/lib/config-store.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,11 +19,21 @@ const STATIC_MODEL_CATALOG = {
 };
 
 export async function discoverProviderState({ root = process.cwd() } = {}) {
-  const [projectConfig, globalConfig, ollama] = await Promise.all([
-    readConfig(getProjectConfigPath(root)),
-    readConfig(getGlobalConfigPath()),
-    probeOllama()
+  const [projectConfigState, globalConfigState] = await Promise.all([
+    readConfigSafe(getProjectConfigPath(root)),
+    readConfigSafe(getGlobalConfigPath())
   ]);
+  const projectConfig = projectConfigState.config;
+  const globalConfig = globalConfigState.config;
+  const ollamaConfig = resolveOllamaConfig({ projectConfig, globalConfig });
+  const ollama = ollamaConfig.enabled === false
+    ? {
+      installed: false,
+      models: [],
+      details: "disabled by config",
+      host: ollamaConfig.host
+    }
+    : await probeOllama({ host: ollamaConfig.host });
 
   const configuredProviders = mergeProviderConfig(globalConfig.providers, projectConfig.providers);
   const providers = {};
@@ -39,13 +49,19 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
   }
 
   providers.ollama = {
-    available: ollama.installed && ollama.models.length > 0,
+    available: ollamaConfig.enabled !== false && ollama.installed && ollama.models.length > 0,
     local: true,
     configured: true,
+    host: ollama.host,
+    hardwareClass: ollamaConfig.hardwareClass,
+    plannerModel: ollamaConfig.plannerModel,
+    plannerMaxQuality: ollamaConfig.plannerMaxQuality,
+    maxModelSizeB: ollamaConfig.maxModelSizeB,
     models: ollama.models.map((model) => ({
       id: model,
       quality: classifyOllamaModel(model),
       costTier: 1,
+      sizeB: estimateOllamaModelSizeB(model),
       strengths: ["summarization", "extraction", "classification", "clustering", "ranking", "note-normalization"]
     })),
     details: ollama.details
@@ -53,6 +69,7 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
 
   return {
     root,
+    configWarnings: [projectConfigState.warning, globalConfigState.warning].filter(Boolean),
     routingPolicy: {
       preferLocalFor: ["summarization", "extraction", "classification", "clustering", "ranking", "note-normalization"],
       minimumQuality: {
@@ -75,9 +92,43 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
   };
 }
 
-export async function probeOllama() {
+export async function probeOllama({ host } = {}) {
+  const resolvedHost = normalizeOllamaHost(host ?? process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434");
+
   try {
-    const { stdout, stderr } = await execFileAsync("ollama", ["list"], { maxBuffer: 8 * 1024 * 1024 });
+    const response = await fetch(`${resolvedHost}/api/tags`);
+    if (!response.ok) {
+      throw new Error(`ollama tags request failed with ${response.status}`);
+    }
+    const payload = await response.json();
+    const models = Array.isArray(payload.models)
+      ? payload.models
+        .map((model) => model?.name ?? model?.model ?? "")
+        .filter(Boolean)
+      : [];
+    return {
+      installed: true,
+      models,
+      details: JSON.stringify({ host: resolvedHost, modelCount: models.length }),
+      host: resolvedHost
+    };
+  } catch (error) {
+    if (host) {
+      return {
+        installed: false,
+        models: [],
+        details: error?.message ?? String(error),
+        host: resolvedHost
+      };
+    }
+  }
+
+  try {
+    const env = resolvedHost ? { ...process.env, OLLAMA_HOST: resolvedHost } : process.env;
+    const { stdout, stderr } = await execFileAsync("ollama", ["list"], {
+      maxBuffer: 8 * 1024 * 1024,
+      env
+    });
     const output = `${stdout}${stderr}`.trim();
     const models = output
       .split(/\r?\n/)
@@ -87,15 +138,87 @@ export async function probeOllama() {
     return {
       installed: true,
       models,
-      details: output
+      details: output,
+      host: resolvedHost
     };
   } catch (error) {
     return {
       installed: false,
       models: [],
-      details: error?.message ?? String(error)
+      details: error?.message ?? String(error),
+      host: resolvedHost
     };
   }
+}
+
+export function resolveOllamaConfig({ projectConfig = {}, globalConfig = {} } = {}) {
+  const globalOllama = globalConfig.providers?.ollama ?? {};
+  const projectOllama = projectConfig.providers?.ollama ?? {};
+  const merged = {
+    ...globalOllama,
+    ...projectOllama
+  };
+  return {
+    ...merged,
+    host: normalizeOllamaHost(projectOllama.host ?? globalOllama.host ?? process.env.OLLAMA_HOST ?? null),
+    hardwareClass: normalizeHardwareClass(merged.hardwareClass),
+    plannerModel: merged.plannerModel ? String(merged.plannerModel).trim() : null,
+    plannerMaxQuality: normalizeQuality(merged.plannerMaxQuality) ?? null,
+    maxModelSizeB: normalizeModelSize(merged.maxModelSizeB)
+  };
+}
+
+export async function generateWithOllama({ model, prompt, system = "", host, format = null } = {}) {
+  if (!model) {
+    throw new Error("model is required");
+  }
+
+  const resolvedHost = normalizeOllamaHost(host ?? process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434");
+  const response = await fetch(`${resolvedHost}/api/generate`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      model,
+      prompt,
+      system,
+      stream: false,
+      format,
+      options: {
+        temperature: 0.1
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`ollama generate request failed with ${response.status}`);
+  }
+
+  const payload = await response.json();
+  return {
+    host: resolvedHost,
+    model,
+    response: String(payload.response ?? "").trim(),
+    raw: payload
+  };
+}
+
+function normalizeOllamaHost(host) {
+  if (!host) {
+    return null;
+  }
+
+  const trimmed = String(host).trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `http://${trimmed}`;
 }
 
 function mergeProviderConfig(globalProviders = {}, projectProviders = {}) {
@@ -129,4 +252,27 @@ function classifyOllamaModel(model) {
     return "medium";
   }
   return "low";
+}
+
+export function estimateOllamaModelSizeB(model) {
+  const match = String(model ?? "").toLowerCase().match(/(\d+(?:\.\d+)?)b\b/);
+  return match ? Number(match[1]) : null;
+}
+
+function normalizeHardwareClass(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return ["tiny", "small", "medium", "large"].includes(normalized) ? normalized : null;
+}
+
+function normalizeQuality(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return ["low", "medium", "high"].includes(normalized) ? normalized : null;
+}
+
+function normalizeModelSize(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
 }
