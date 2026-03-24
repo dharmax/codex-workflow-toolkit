@@ -1,11 +1,27 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readdir, readFile } from "node:fs/promises";
+import { existsSync, realpathSync } from "node:fs";
 
 const cliDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(cliDir, "../..");
 
 export function getToolkitRoot() {
-  return path.resolve(cliDir, "../..");
+  const fromEnv = process.env.AI_WORKFLOW_TOOLKIT_ROOT;
+  if (fromEnv) {
+    return path.resolve(fromEnv);
+  }
+
+  const homeAlias = path.resolve(process.env.HOME ?? "", "ai-workflow");
+  if (homeAlias && existsSync(homeAlias)) {
+    try {
+      if (realpathSync(homeAlias) === realpathSync(repoRoot)) {
+        return homeAlias;
+      }
+    } catch {}
+  }
+
+  return repoRoot;
 }
 
 export function getSharedCodeletsDir() {

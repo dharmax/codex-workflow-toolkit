@@ -6,6 +6,7 @@ Reusable workflow system for JS/TS repositories. It provides a shared `ai-workfl
 
 - `SKILL.md`: local development copy of the Codex-facing orchestration skill
 - `cli/`: `ai-workflow` command surface and project-local codelet routing
+- `core/`: DB-first store, deterministic parsers, sync/index/query services, lifecycle, routing, and integration helpers
 - `shared/codelets/`: toolkit-owned reusable codelets
 - `shared/templates/`: long-term shared template location
 - `shared/scripts/`: long-term shared script location
@@ -70,12 +71,18 @@ npx @dharmax/ai-workflow doctor
 ├── scripts/
 │   └── init-project.mjs
 ├── templates/
+├── core/
+│   ├── db/
+│   ├── lib/
+│   ├── parsers/
+│   └── services/
 └── tests/
 ```
 
 ## Architecture
 
 - The shared toolkit is the source of truth. It owns the CLI, toolkit codelets, templates, and thin agent adapters.
+- The workflow DB under `.ai-workflow/state/workflow.db` is the project-local source of truth for indexed facts, notes, candidates, entities, and projections.
 - The agent skills stay thin. They route into `ai-workflow` instead of embedding heavyweight logic in `SKILL.md`.
 - Project-local codelets live under `.ai-workflow/codelets` and override toolkit codelets with the same id.
 - The copied runtime scripts remain the project-local substrate for initialized repos and compatibility.
@@ -91,6 +98,7 @@ ai-workflow install all
 ```
 
 This creates project-local agent folders such as `.codex/skills` that symlink back to the central toolkit and initializes `.ai-workflow/config.json` without overwriting unrelated existing content.
+It also prepares `.ai-workflow/cache`, `.ai-workflow/generated`, `.ai-workflow/notes`, and `.ai-workflow/state`.
 
 The installer copies:
 
@@ -140,6 +148,11 @@ ai-workflow run review
 ai-workflow verify --cmd "pnpm test"
 ai-workflow run context-pack --ticket TKT-001 --changed
 ai-workflow install codex
+ai-workflow sync --write-projections
+ai-workflow project summary --json
+ai-workflow project note add --type BUG --body "shared router can break candidate review" --file src/core/router.js
+ai-workflow route review --json
+ai-workflow telegram preview
 ```
 
 In an initialized target project, the common commands are:
@@ -160,7 +173,9 @@ pnpm -s workflow:audit
 
 ## Next Planned Step
 
-Add tests/fixtures-based end-to-end fixture repo matrix coverage for initialized target repos, including strict-default pass cases and project-specific audit-extension allowlist pass/fail scenarios with workflow script and CI workflow validation.
+Deepen the parser/query layer with stronger AST-backed symbol and dependency extraction while keeping the SQLite schema, projection model, and routing interfaces stable.
+
+The DB-first architecture and phased rollout are documented in [docs/db-first-architecture.md](docs/db-first-architecture.md).
 
 ## Command Notes
 

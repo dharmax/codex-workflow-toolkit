@@ -6,6 +6,10 @@ import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, 
 import { runDoctor } from "./doctor.mjs";
 import { installAgents } from "./install.mjs";
 import { forgeProjectCodelet, getProjectCodelet, listProjectCodelets, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
+import { routeTask } from "../../core/services/router.mjs";
+import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection } from "../../core/services/projections.mjs";
+import { addManualNote, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 
 const toolkitRoot = getToolkitRoot();
 
@@ -13,16 +17,24 @@ const HELP = `Usage:
   ai-workflow init [options]
   ai-workflow install codex|claude|gemini|all [--project <path>]
   ai-workflow doctor [--json]
+  ai-workflow sync [--write-projections] [--json]
   ai-workflow list [--json]
   ai-workflow info <codelet>
   ai-workflow run <codelet> [args]
   ai-workflow add <codelet> <file>
   ai-workflow update <codelet> <file>
   ai-workflow remove <codelet>
+  ai-workflow project summary [--json]
+  ai-workflow project search <text> [--json]
+  ai-workflow project ticket create --id <id> --title <title> [--lane <lane>] [--epic <epic-id>] [--summary <text>] [--json]
+  ai-workflow project note add --type <NOTE|TODO|FIXME|HACK|BUG|RISK> --body <text> [--file <path>] [--line <n>] [--symbol <name>] [--json]
+  ai-workflow project review-candidates [--json]
   ai-workflow extract ticket <id> [options]
   ai-workflow extract guidelines [options]
   ai-workflow verify <workflow|guidelines> [options]
   ai-workflow forge codelet <name>
+  ai-workflow route <task-class> [--json]
+  ai-workflow telegram preview [--json]
   ai-workflow config get [key]
   ai-workflow config set <key> <value>
 
@@ -47,6 +59,8 @@ export async function main(argv) {
     case "doctor":
       await runDoctor({ root: process.cwd(), json: rest.includes("--json") });
       return 0;
+    case "sync":
+      return handleSync(rest);
     case "list":
       return handleList(rest);
     case "info":
@@ -59,12 +73,18 @@ export async function main(argv) {
       return handleAdd(rest, "update");
     case "remove":
       return handleRemove(rest);
+    case "project":
+      return handleProject(rest);
     case "extract":
       return handleExtract(rest);
     case "verify":
       return handleVerify(rest);
     case "forge":
       return handleForge(rest);
+    case "route":
+      return handleRoute(rest);
+    case "telegram":
+      return handleTelegram(rest);
     case "config":
       return handleConfig(rest);
     default:
@@ -92,6 +112,34 @@ async function handleList(rest) {
     lines.push(`- ${codelet.id} [${codelet.status}] ${codelet.summary}`);
   }
 
+  process.stdout.write(`${lines.join("\n")}\n`);
+  return 0;
+}
+
+async function handleSync(rest) {
+  const args = parseArgs(rest);
+  const result = await syncProject({
+    projectRoot: process.cwd(),
+    writeProjections: Boolean(args["write-projections"])
+  });
+
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+
+  const lines = [
+    `DB: ${result.dbPath}`,
+    `Indexed files: ${result.indexedFiles}`,
+    `Symbols: ${result.indexedSymbols}`,
+    `Claims: ${result.indexedClaims}`,
+    `Notes: ${result.indexedNotes}`,
+    `Imported tickets: ${result.importSummary.importedTickets}`,
+    `Reviewed candidates: ${result.lifecycle.reviewed.length}`
+  ];
+  if (result.projections) {
+    lines.push(`Wrote projections: ${result.projections.kanbanPath}, ${result.projections.epicsPath}`);
+  }
   process.stdout.write(`${lines.join("\n")}\n`);
   return 0;
 }
@@ -205,6 +253,179 @@ async function handleForge(rest) {
 
   const forged = await forgeProjectCodelet(process.cwd(), name);
   process.stdout.write(`${JSON.stringify(forged, null, 2)}\n`);
+  return 0;
+}
+
+async function handleProject(rest) {
+  const [subcommand, ...extras] = rest;
+  const args = parseArgs(extras);
+
+  if (subcommand === "summary") {
+    const summary = await getProjectSummary({ projectRoot: process.cwd() });
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write([
+      `Files indexed: ${summary.fileCount}`,
+      `Symbols indexed: ${summary.symbolCount}`,
+      `Notes tracked: ${summary.noteCount}`,
+      `Tickets: ${summary.activeTickets.length}`,
+      `Candidates: ${summary.candidates.length}`
+    ].join("\n") + "\n");
+    return 0;
+  }
+
+  if (subcommand === "search") {
+    const query = args._.join(" ");
+    if (!query) {
+      printAndExit("Usage: ai-workflow project search <text> [--json]", 1);
+    }
+    const results = await searchProject({ projectRoot: process.cwd(), query });
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(results, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(`${results.map((item) => `- [${item.scope}] ${item.title}`).join("\n")}\n`);
+    return 0;
+  }
+
+  if (subcommand === "ticket" && args._[0] === "create") {
+    const id = args.id;
+    const title = args.title;
+    if (!id || !title) {
+      printAndExit("Usage: ai-workflow project ticket create --id <id> --title <title> [--lane <lane>] [--epic <epic-id>] [--summary <text>] [--json]", 1);
+    }
+
+    const ticket = buildTicketEntity({
+      id,
+      title,
+      lane: String(args.lane ?? "Todo"),
+      epicId: args.epic ? String(args.epic) : null,
+      summary: args.summary ? String(args.summary) : ""
+    });
+    await withWorkflowStore(process.cwd(), async (store) => {
+      if (args.epic) {
+        store.upsertEntity({
+          id: String(args.epic),
+          entityType: "epic",
+          title: String(args.epic),
+          lane: null,
+          state: "open",
+          confidence: 1,
+          provenance: "manual",
+          sourceKind: "manual",
+          reviewState: "active",
+          data: {}
+        });
+      }
+      store.upsertEntity(ticket);
+      store.db.prepare(`
+        INSERT INTO search_index (id, scope, ref_id, title, body, tags, updated_at)
+        VALUES (?, 'entity', ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          body = excluded.body,
+          tags = excluded.tags,
+          updated_at = excluded.updated_at
+      `).run(`entity:${ticket.id}`, ticket.id, ticket.title, JSON.stringify(ticket.data), `ticket,${ticket.lane}`, new Date().toISOString());
+    });
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(ticket, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(`${ticket.id} ${ticket.title} [${ticket.lane}]\n`);
+    return 0;
+  }
+
+  if (subcommand === "note" && args._[0] === "add") {
+    if (!args.type || !args.body) {
+      printAndExit("Usage: ai-workflow project note add --type <NOTE|TODO|FIXME|HACK|BUG|RISK> --body <text> [--file <path>] [--line <n>] [--symbol <name>] [--json]", 1);
+    }
+    const note = await addManualNote({
+      projectRoot: process.cwd(),
+      note: {
+        noteType: String(args.type).toUpperCase(),
+        body: String(args.body),
+        filePath: args.file ? String(args.file) : null,
+        line: args.line ? Number(args.line) : null,
+        symbolName: args.symbol ? String(args.symbol) : null
+      }
+    });
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(note, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(`${note.noteType} ${note.body}\n`);
+    return 0;
+  }
+
+  if (subcommand === "review-candidates") {
+    const result = await reviewProjectCandidates({ projectRoot: process.cwd() });
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(`${result.reviewed.length} candidates reviewed\n`);
+    return 0;
+  }
+
+  if (subcommand === "render") {
+    const target = args._[0];
+    if (!target || !["kanban", "epics"].includes(target)) {
+      printAndExit("Usage: ai-workflow project render <kanban|epics>", 1);
+    }
+    const output = await withWorkflowStore(process.cwd(), async (store) => target === "kanban"
+      ? renderKanbanProjection(store)
+      : renderEpicsProjection(store));
+    process.stdout.write(output);
+    return 0;
+  }
+
+  if (subcommand === "import-projections") {
+    const result = await withWorkflowStore(process.cwd(), async (store) => importLegacyProjections(store, { projectRoot: process.cwd() }));
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+
+  printAndExit("Usage: ai-workflow project <summary|search|ticket|note|review-candidates|render|import-projections> ...", 1);
+}
+
+async function handleRoute(rest) {
+  const [taskClass, ...extras] = rest;
+  if (!taskClass) {
+    printAndExit("Usage: ai-workflow route <task-class> [--json]", 1);
+  }
+  const args = parseArgs(extras);
+  const route = await routeTask({
+    root: process.cwd(),
+    taskClass,
+    preferLocal: args["prefer-local"] !== false
+  });
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(route, null, 2)}\n`);
+    return 0;
+  }
+  if (!route.recommended) {
+    process.stdout.write(`No route available for ${taskClass}\n`);
+    return 0;
+  }
+  process.stdout.write(`${route.recommended.providerId}:${route.recommended.modelId}\n${route.recommended.reason}\n`);
+  return 0;
+}
+
+async function handleTelegram(rest) {
+  const [subcommand, ...extras] = rest;
+  const args = parseArgs(extras);
+  if (subcommand !== "preview") {
+    printAndExit("Usage: ai-workflow telegram preview [--json]", 1);
+  }
+  const preview = await buildTelegramPreview({ projectRoot: process.cwd() });
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(preview, null, 2)}\n`);
+    return 0;
+  }
+  process.stdout.write(preview.text);
   return 0;
 }
 

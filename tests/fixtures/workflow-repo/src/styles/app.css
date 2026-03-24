@@ -1,0 +1,5 @@
+/* RISK: shared layout token is duplicated and should move into a central theme */
+.app-shell,
+.app-shell .title {
+  color: #102030;
+}

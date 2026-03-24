@@ -1,0 +1,8 @@
+{
+  "id": "sync",
+  "stability": "stable",
+  "category": "indexing",
+  "summary": "Index the repository into the local workflow DB and optionally refresh projections.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/sync.mjs"
+}
