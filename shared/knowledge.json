@@ -1,116 +1,51 @@
 {
   "version": "2026.03.24",
   "tasks": [
-    "summarization",
-    "extraction",
-    "classification",
-    "clustering",
-    "ranking",
-    "note-normalization",
-    "candidate-review",
-    "naming",
-    "architectural-reasoning",
-    "risky-planning",
-    "code-generation",
-    "review",
-    "shell-planning",
-    "task-decomposition",
-    "architectural-design",
-    "ui-styling",
-    "ui-layout",
-    "templating",
-    "pure-function",
-    "refactoring",
-    "bug-hunting",
-    "prose-composition",
-    "ideation",
-    "stylistic-polishing",
-    "creative-thinking",
-    "graphic-scaffolding",
-    "design-tokens"
+    "summarization", "extraction", "classification", "clustering", "ranking", 
+    "note-normalization", "candidate-review", "naming", "architectural-reasoning", 
+    "risky-planning", "code-generation", "review", "shell-planning", 
+    "task-decomposition", "architectural-design", "ui-styling", "ui-layout", 
+    "templating", "pure-function", "refactoring", "bug-hunting", "prose-composition", 
+    "ideation", "stylistic-polishing", "creative-thinking", "graphic-scaffolding", "design-tokens"
   ],
   "capabilityMapping": {
-    "pure-function": "logic",
-    "refactoring": "logic",
-    "debugging": "logic",
-    "architectural-reasoning": "logic",
-    "code-generation": "logic",
-    "bug-hunting": "logic",
-    "prose-composition": "prose",
-    "ideation": "creative",
-    "stylistic-polishing": "prose",
-    "creative-thinking": "creative",
-    "ui-layout": "visual",
-    "ui-styling": "visual",
-    "graphic-scaffolding": "visual",
-    "design-tokens": "visual",
-    "task-decomposition": "strategy",
-    "note-normalization": "data",
-    "extraction": "data",
-    "shell-planning": "strategy",
+    "pure-function": "logic", "refactoring": "logic", "debugging": "logic", 
+    "architectural-reasoning": "logic", "code-generation": "logic", "bug-hunting": "logic",
+    "prose-composition": "prose", "ideation": "creative", "stylistic-polishing": "prose", 
+    "creative-thinking": "creative", "ui-layout": "visual", "ui-styling": "visual", 
+    "graphic-scaffolding": "visual", "design-tokens": "visual", "task-decomposition": "strategy", 
+    "note-normalization": "data", "extraction": "data", "shell-planning": "strategy", 
     "summarization": "data"
   },
   "minimumQuality": {
-    "pure-function": "low",
-    "refactoring": "medium",
-    "debugging": "medium",
-    "architectural-reasoning": "high",
-    "code-generation": "high",
-    "prose-composition": "medium",
-    "ideation": "medium",
-    "stylistic-polishing": "low",
-    "creative-thinking": "high",
-    "ui-layout": "low",
-    "ui-styling": "low",
-    "graphic-scaffolding": "medium",
-    "design-tokens": "low",
-    "task-decomposition": "low",
-    "note-normalization": "low",
-    "extraction": "medium",
-    "shell-planning": "low"
+    "pure-function": "low", "refactoring": "medium", "debugging": "medium", 
+    "architectural-reasoning": "high", "code-generation": "high", "prose-composition": "medium", 
+    "ideation": "medium", "stylistic-polishing": "low", "creative-thinking": "high", 
+    "ui-layout": "low", "ui-styling": "low", "graphic-scaffolding": "medium", 
+    "design-tokens": "low", "task-decomposition": "low", "note-normalization": "low", 
+    "extraction": "medium", "shell-planning": "low"
+  },
+  "inferenceHeuristics": {
+    "logic": { "keywords": ["coder", "code", "stheno", "math"], "bonus": 2, "base": 2 },
+    "prose": { "keywords": ["llama", "gemma", "prose", "chat"], "bonus": 1, "base": 3 },
+    "visual": { "keywords": ["visual", "layout", "css", "svg"], "bonus": 2, "base": 2 },
+    "data": { "base": 3 },
+    "strategy": { "base": 3 },
+    "creative": { "keywords": ["creative", "hermes", "dolphin"], "bonus": 2, "base": 2 },
+    "sizeThresholds": { "large": 30, "medium": 12 }
   },
   "models": {
     "openai": [
-      { 
-        "id": "gpt-4o-mini", 
-        "quality": "medium", 
-        "costTier": 2, 
-        "capabilities": { "logic": 3, "prose": 3, "creative": 2, "visual": 2, "data": 5, "strategy": 3 } 
-      },
-      { 
-        "id": "gpt-4o", 
-        "quality": "high", 
-        "costTier": 5, 
-        "capabilities": { "logic": 5, "prose": 4, "creative": 4, "visual": 4, "data": 5, "strategy": 5 } 
-      }
+      { "id": "gpt-4o-mini", "quality": "medium", "costTier": 2, "capabilities": { "logic": 3, "prose": 3, "creative": 2, "visual": 2, "data": 5, "strategy": 3 } },
+      { "id": "gpt-4o", "quality": "high", "costTier": 5, "capabilities": { "logic": 5, "prose": 4, "creative": 4, "visual": 4, "data": 5, "strategy": 5 } }
     ],
     "anthropic": [
-      { 
-        "id": "claude-3-5-sonnet", 
-        "quality": "high", 
-        "costTier": 4, 
-        "capabilities": { "logic": 5, "prose": 5, "creative": 5, "visual": 3, "data": 4, "strategy": 5 } 
-      },
-      { 
-        "id": "claude-3-5-haiku", 
-        "quality": "medium", 
-        "costTier": 2, 
-        "capabilities": { "logic": 4, "prose": 3, "creative": 2, "visual": 2, "data": 5, "strategy": 3 } 
-      }
+      { "id": "claude-3-5-sonnet", "quality": "high", "costTier": 4, "capabilities": { "logic": 5, "prose": 5, "creative": 5, "visual": 3, "data": 4, "strategy": 5 } },
+      { "id": "claude-3-5-haiku", "quality": "medium", "costTier": 2, "capabilities": { "logic": 4, "prose": 3, "creative": 2, "visual": 2, "data": 5, "strategy": 3 } }
     ],
     "google": [
-      { 
-        "id": "gemini-2.0-flash", 
-        "quality": "medium", 
-        "costTier": 2, 
-        "capabilities": { "logic": 3, "prose": 3, "creative": 3, "visual": 4, "data": 5, "strategy": 3 } 
-      },
-      { 
-        "id": "gemini-2.0-pro-exp", 
-        "quality": "high", 
-        "costTier": 4, 
-        "capabilities": { "logic": 5, "prose": 4, "creative": 5, "visual": 4, "data": 4, "strategy": 5 } 
-      }
+      { "id": "gemini-2.0-flash", "quality": "medium", "costTier": 2, "capabilities": { "logic": 3, "prose": 3, "creative": 3, "visual": 4, "data": 5, "strategy": 3 } },
+      { "id": "gemini-2.0-pro-exp", "quality": "high", "costTier": 4, "capabilities": { "logic": 5, "prose": 4, "creative": 5, "visual": 4, "data": 4, "strategy": 5 } }
     ]
   }
 }

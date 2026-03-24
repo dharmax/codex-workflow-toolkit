@@ -57,13 +57,17 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
     plannerModel: ollamaConfig.plannerModel,
     plannerMaxQuality: ollamaConfig.plannerMaxQuality,
     maxModelSizeB: ollamaConfig.maxModelSizeB,
-    models: ollama.models.map((model) => ({
-      id: model,
-      quality: classifyOllamaModel(model),
-      costTier: 1,
-      sizeB: estimateOllamaModelSizeB(model),
-      strengths: ["summarization", "extraction", "classification", "clustering", "ranking", "note-normalization"]
-    })),
+    models: ollama.models.map((model) => {
+      const id = typeof model === "string" ? model : model.id;
+      const sizeB = (typeof model === "object" && model.sizeB) ? model.sizeB : estimateOllamaModelSizeB(id);
+      return {
+        id,
+        quality: classifyOllamaModel(id),
+        costTier: 1,
+        sizeB,
+        strengths: ["summarization", "extraction", "classification", "clustering", "ranking", "note-normalization"]
+      };
+    }),
     details: ollama.details
   };
 
@@ -73,7 +77,7 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
     configWarnings: [projectConfigState.warning, globalConfigState.warning].filter(Boolean),
     routingPolicy: {
       capabilityMapping: knowledge.capabilityMapping,
-      preferLocalFor: ["data", "summarization", "extraction", "note-normalization"],
+      preferLocalFor: ["data", "summarization", "extraction", "note-normalization", "strategy"],
       minimumQuality: knowledge.minimumQuality,
       ...(globalConfig.routing ?? {}),
       ...(projectConfig.routing ?? {})
@@ -93,8 +97,11 @@ export async function probeOllama({ host } = {}) {
     const payload = await response.json();
     const models = Array.isArray(payload.models)
       ? payload.models
-        .map((model) => model?.name ?? model?.model ?? "")
-        .filter(Boolean)
+        .map((model) => ({
+          id: model?.name ?? model?.model ?? "",
+          sizeB: model?.size ? Number((model.size / (1024 ** 3)).toFixed(1)) : null
+        }))
+        .filter((m) => !!m.id)
       : [];
     return {
       installed: true,
@@ -123,7 +130,10 @@ export async function probeOllama({ host } = {}) {
     const models = output
       .split(/\r?\n/)
       .slice(1)
-      .map((line) => line.trim().split(/\s+/)[0])
+      .map((line) => {
+        const id = line.trim().split(/\s+/)[0];
+        return id ? { id, sizeB: estimateOllamaModelSizeB(id) } : null;
+      })
       .filter(Boolean);
     return {
       installed: true,

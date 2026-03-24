@@ -12,8 +12,9 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
   }
 
   const providerState = await discoverProviderState({ root });
-  const capability = providerState.routingPolicy.capabilityMapping[taskClass] ?? domain ?? "logic";
-  const minimumQuality = providerState.routingPolicy.minimumQuality[taskClass] ?? "medium";
+  const knowledge = providerState.knowledge;
+  const capability = knowledge.capabilityMapping[taskClass] ?? domain ?? "logic";
+  const minimumQuality = knowledge.minimumQuality[taskClass] ?? "medium";
   const preferLocalForTask = preferLocal ?? providerState.routingPolicy.preferLocalFor?.includes(taskClass) ?? providerState.routingPolicy.preferLocalFor?.includes(capability) ?? false;
   const candidates = [];
 
@@ -28,16 +29,25 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
         continue;
       }
 
-      // 0-5 competency score
-      const competency = model.capabilities?.[capability] ?? inferCompetency(model, capability);
+      // Check hardware limits for local models
+      if (provider.local && provider.maxModelSizeB && model.sizeB && model.sizeB > provider.maxModelSizeB) {
+        continue;
+      }
+
+      // 0-5 competency score (Data-driven inference)
+      const competency = model.capabilities?.[capability] ?? inferCompetency(model, capability, knowledge.inferenceHeuristics);
       
-      if (competency < 3 && QUALITY_ORDER[quality] < QUALITY_ORDER.high) {
-        // Skip incompetent models unless they are high-tier generalists
+      if (competency < 2 || (competency < 3 && QUALITY_ORDER[minimumQuality] > QUALITY_ORDER.low)) {
         continue;
       }
 
       const localPreference = preferLocalForTask && provider.local ? 3 : 0;
-      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference;
+      
+      // Snappiness bonus for very small models on simple tasks (heuristic from knowledge soon?)
+      const isTinyModel = (model.sizeB ?? 0) > 0 && (model.sizeB ?? 0) <= 4;
+      const snappinessBonus = (isTinyModel && minimumQuality === "low") ? 5 : 0;
+
+      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + snappinessBonus;
       
       candidates.push({
         providerId,
@@ -84,23 +94,31 @@ function buildReason(candidate, taskClass, minimumQuality, capability) {
   return parts.join(", ");
 }
 
-function inferCompetency(model, capability) {
-  // Heuristic for Ollama models or unmapped remote models
-  const lower = model.id.toLowerCase();
-  const isCoder = lower.includes("coder") || lower.includes("code");
-  const isLarge = (model.sizeB ?? 0) >= 30 || model.quality === "high";
-  const isMedium = (model.sizeB ?? 0) >= 12 || model.quality === "medium";
+function inferCompetency(model, capability, heuristics) {
+  if (!heuristics) return 3; // Neutral default
 
-  switch (capability) {
-    case "logic":
-      return isCoder ? 5 : (isLarge ? 4 : (isMedium ? 3 : 2));
-    case "data":
-      return isLarge ? 5 : (isMedium ? 4 : 3);
-    case "prose":
-      return lower.includes("llama") || lower.includes("gemma") ? (isLarge ? 5 : 4) : 3;
-    case "strategy":
-      return isLarge ? 5 : (isMedium ? 3 : 2);
-    default:
-      return isLarge ? 4 : 3;
+  const h = heuristics[capability] ?? { base: 3 };
+  const lowerId = model.id.toLowerCase();
+  
+  let score = h.base ?? 3;
+
+  // Keyword Matching
+  if (h.keywords) {
+    for (const kw of h.keywords) {
+      if (lowerId.includes(kw)) {
+        score += (h.bonus ?? 1);
+        break; 
+      }
+    }
   }
+
+  // Size Multiplier (Larger models are generally more capable generalists)
+  const thresholds = heuristics.sizeThresholds ?? { large: 30, medium: 12 };
+  if ((model.sizeB ?? 0) >= thresholds.large) {
+    score += 1;
+  } else if ((model.sizeB ?? 0) < 4) {
+    score -= 1; // Penalty for ultra-tiny models on complex domains
+  }
+
+  return Math.max(0, Math.min(5, score));
 }

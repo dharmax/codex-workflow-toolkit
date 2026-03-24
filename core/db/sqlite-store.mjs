@@ -50,6 +50,27 @@ export class SqliteWorkflowStore {
     `).run(key, asJson(value));
   }
 
+  getEntity(id) {
+    const row = this.db.prepare("SELECT * FROM entities WHERE id = ?").get(id);
+    if (!row) return null;
+    return {
+      id: row.id,
+      entityType: row.entity_type,
+      title: row.title,
+      lane: row.lane,
+      state: row.state,
+      confidence: row.confidence,
+      provenance: row.provenance,
+      sourceKind: row.source_kind,
+      reviewState: row.review_state,
+      parentId: row.parent_id,
+      relevantUntil: row.relevant_until,
+      data: parseJson(row.data_json),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
   getMeta(key, fallback = null) {
     const row = this.db.prepare("SELECT value_json FROM workspace_meta WHERE key = ?").get(key);
     return row ? parseJson(row.value_json, fallback) : fallback;

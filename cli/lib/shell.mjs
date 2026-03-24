@@ -9,7 +9,7 @@ import { listToolkitCodelets } from "./codelets.mjs";
 import { listProjectCodelets } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
 import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
-import { decomposeTicket } from "../../core/services/orchestrator.mjs";
+import { decomposeTicket, ideateFeature, sweepBugs } from "../../core/services/orchestrator.mjs";
 import { addManualNote, createTicket, getProjectSummary, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTicketEntity } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
@@ -76,17 +76,19 @@ export async function handleShell(rest, { cliPath } = {}) {
 }
 
 export async function buildShellContext(root = process.cwd()) {
-  const [toolkitCodelets, projectCodelets, summary] = await Promise.all([
+  const [toolkitCodelets, projectCodelets, summary, providerState] = await Promise.all([
     listToolkitCodelets(),
     listProjectCodelets(root),
-    safeGetProjectSummary(root)
+    safeGetProjectSummary(root),
+    discoverProviderState({ root })
   ]);
 
   return {
     root,
     toolkitCodelets,
     projectCodelets,
-    summary
+    summary,
+    knowledge: providerState.knowledge
   };
 }
 
@@ -270,6 +272,18 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
       type: isDecompose ? "decompose_ticket" : "extract_ticket",
       ticketId: ticketMatch[1].toUpperCase()
     }], 0.94, `Explicit ticket ${isDecompose ? "decomposition" : "extraction"} request.`);
+  }
+
+  const featureMatch = text.match(/^(?:add|create|new)\s+(?:feature|epic|big task)\b\s*(.*)$/i);
+  if (featureMatch) {
+    return actionPlan([{
+      type: "ideate_feature",
+      intent: featureMatch[1].trim()
+    }], 0.95, "New feature ideation request.");
+  }
+
+  if (text.match(/^(?:sweep|fix|handle)\s+(?:top\s+)?bugs\b/i)) {
+    return actionPlan([{ type: "sweep_bugs" }], 0.98, "Automated bug sweeping request.");
   }
 
   const guidelinesMatch = text.match(/(?:extract\s+guidelines|guidelines)(?:\s+for)?(?:\s+([A-Z]+-\d+))?/i);
@@ -527,7 +541,8 @@ export async function runShellTurn(inputText, options) {
 
   let preRendered = false;
   if (!options.json) {
-    output.write(`${renderPlannerLine(plan.planner)}\n${renderActionList(plan.actions)}\n`);
+    const activePlanner = plan.planner ?? options.planners.planners[0] ?? options.planners.heuristic;
+    output.write(`${renderPlannerLine(activePlanner)}\n${renderActionList(plan.actions)}\n`);
     preRendered = true;
   }
 
@@ -598,6 +613,10 @@ export function compileShellAction(action, { json = false } = {}) {
       return cliCommand(["extract", "ticket", action.ticketId], false);
     case "decompose_ticket":
       return cliCommand(["decompose", "ticket", action.ticketId], false);
+    case "ideate_feature":
+      return cliCommand(["ideate", "feature", action.intent], true);
+    case "sweep_bugs":
+      return cliCommand(["sweep", "bugs"], true);
     case "extract_guidelines":
       return cliCommand([
         "extract",
@@ -875,6 +894,10 @@ async function runShellActionDirect(action, options) {
         ? `${JSON.stringify(plan, null, 2)}\n` 
         : `Decomposition plan for ${action.ticketId}:\n${plan.map((t, i) => `${i + 1}. [${t.class}] ${t.summary}${t.file ? ` (${t.file})` : ""}`).join("\n")}\n`;
     }
+    case "ideate_feature":
+      return ideateFeature(action.intent, options);
+    case "sweep_bugs":
+      return sweepBugs(options);
     case "extract_guidelines":
       return runCodeletById("guidelines", [
         ...(action.ticketId ? ["--ticket", action.ticketId] : []),
@@ -973,11 +996,11 @@ function renderPlannerLine(planner) {
     return "planner: unavailable";
   }
 
-  if (planner.mode === "ollama") {
-    return `planner: ollama:${planner.modelId} @ ${planner.host ?? "default"} (${planner.reason})`;
-  }
+  const identity = planner.mode === "ollama" 
+    ? `ollama:${planner.modelId} @ ${planner.host ?? "default"}`
+    : `${planner.providerId}:${planner.modelId}`;
 
-  return `planner: ${planner.mode} (${planner.reason})`;
+  return `planner: ${identity} (${planner.reason})`;
 }
 
 function buildActionCatalog(plannerContext) {
@@ -1024,7 +1047,7 @@ function isMutatingAction(action) {
 
 function normalizeTaskClass(value, plannerContext) {
   const normalized = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "-");
-  const tasks = plannerContext?.summary?.knowledge?.tasks ?? [];
+  const tasks = plannerContext?.knowledge?.tasks ?? [];
   return tasks.includes(normalized) ? normalized : "classification";
 }
 
