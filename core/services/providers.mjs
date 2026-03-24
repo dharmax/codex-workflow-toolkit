@@ -1,22 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "../../cli/lib/config-store.mjs";
+import { loadKnowledge } from "./knowledge.mjs";
 
 const execFileAsync = promisify(execFile);
-
-const STATIC_MODEL_CATALOG = {
-  openai: [
-    { id: "gpt-5.4-mini", quality: "medium", costTier: 2, strengths: ["extraction", "summarization", "classification", "clustering", "ranking"] },
-    { id: "gpt-5.4", quality: "high", costTier: 5, strengths: ["architectural-reasoning", "risky-planning", "code-generation", "review"] }
-  ],
-  anthropic: [
-    { id: "claude-sonnet", quality: "high", costTier: 4, strengths: ["summarization", "architectural-reasoning", "review", "naming"] }
-  ],
-  google: [
-    { id: "gemini-flash", quality: "medium", costTier: 2, strengths: ["extraction", "classification", "summarization"] },
-    { id: "gemini-pro", quality: "high", costTier: 4, strengths: ["architectural-reasoning", "review", "code-generation"] }
-  ]
-};
 
 export async function discoverProviderState({ root = process.cwd() } = {}) {
   const [projectConfigState, globalConfigState] = await Promise.all([
@@ -25,6 +12,9 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
   ]);
   const projectConfig = projectConfigState.config;
   const globalConfig = globalConfigState.config;
+
+  const knowledge = await loadKnowledge({ root, projectConfig, globalConfig });
+
   const ollamaConfig = resolveOllamaConfig({ projectConfig, globalConfig });
   const ollama = ollamaConfig.enabled === false
     ? {
@@ -38,7 +28,7 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
   const configuredProviders = mergeProviderConfig(globalConfig.providers, projectConfig.providers);
   const providers = {};
 
-  const allProviderIds = new Set([...Object.keys(STATIC_MODEL_CATALOG), ...Object.keys(configuredProviders)]);
+  const allProviderIds = new Set([...Object.keys(knowledge.models), ...Object.keys(configuredProviders)]);
 
   for (const providerId of allProviderIds) {
     if (providerId === "ollama") {
@@ -47,7 +37,7 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
 
     const config = configuredProviders[providerId] ?? {};
     const apiKey = config.apiKey ?? getEnvKey(providerId);
-    const models = normalizeConfiguredModels(providerId, config);
+    const models = normalizeConfiguredModels(providerId, config, knowledge.models[providerId] ?? []);
     providers[providerId] = {
       available: config.enabled !== false && models.length > 0 && !!apiKey,
       local: false,
@@ -79,23 +69,12 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
 
   return {
     root,
+    knowledge,
     configWarnings: [projectConfigState.warning, globalConfigState.warning].filter(Boolean),
     routingPolicy: {
-      preferLocalFor: ["summarization", "extraction", "classification", "clustering", "ranking", "note-normalization"],
-      minimumQuality: {
-        extraction: "medium",
-        summarization: "medium",
-        classification: "medium",
-        clustering: "medium",
-        ranking: "medium",
-        "candidate-review": "medium",
-        naming: "medium",
-        "architectural-reasoning": "high",
-        "risky-planning": "high",
-        "code-generation": "high",
-        "review": "high",
-        "shell-planning": "low"
-        },
+      capabilityMapping: knowledge.capabilityMapping,
+      preferLocalFor: ["data", "summarization", "extraction", "note-normalization"],
+      minimumQuality: knowledge.minimumQuality,
       ...(globalConfig.routing ?? {}),
       ...(projectConfig.routing ?? {})
     },
@@ -318,9 +297,13 @@ function normalizeOllamaHost(host) {
     trimmed = `http://${trimmed}`;
   }
 
-  const url = new URL(trimmed);
-  if (!url.port && url.protocol === "http:") {
-    return `${trimmed}:11434`;
+  try {
+    const url = new URL(trimmed);
+    if (!url.port && url.protocol === "http:") {
+      return `${trimmed}:11434`;
+    }
+  } catch {
+    // Fallback if URL is invalid
   }
 
   return trimmed;
@@ -335,8 +318,8 @@ function mergeProviderConfig(globalProviders = {}, projectProviders = {}) {
   };
 }
 
-function normalizeConfiguredModels(providerId, config) {
-  const configured = Array.isArray(config.models) ? config.models : STATIC_MODEL_CATALOG[providerId] ?? [];
+function normalizeConfiguredModels(providerId, config, builtinModels = []) {
+  const configured = Array.isArray(config.models) ? config.models : builtinModels;
   return configured.map((model) => typeof model === "string"
     ? {
       id: model,

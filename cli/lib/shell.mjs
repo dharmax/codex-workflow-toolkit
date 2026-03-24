@@ -9,7 +9,8 @@ import { listToolkitCodelets } from "./codelets.mjs";
 import { listProjectCodelets } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
 import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
-import { addManualNote, createTicket, getProjectSummary, searchProject, syncProject } from "../../core/services/sync.mjs";
+import { decomposeTicket } from "../../core/services/orchestrator.mjs";
+import { addManualNote, createTicket, getProjectSummary, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTicketEntity } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/lib/cli.mjs";
@@ -35,7 +36,14 @@ const KNOWN_TASK_CLASSES = [
   "risky-planning",
   "code-generation",
   "review",
-  "shell-planning"
+  "shell-planning",
+  "task-decomposition",
+  "architectural-design",
+  "ui-styling",
+  "templating",
+  "pure-function",
+  "refactoring",
+  "bug-hunting"
 ];
 
 export async function handleShell(rest, { cliPath } = {}) {
@@ -247,7 +255,7 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
 
   const routeMatch = text.match(/^(?:route|pick model for)\s+(.+)$/i);
   if (routeMatch) {
-    return actionPlan([{ type: "route", taskClass: normalizeTaskClass(routeMatch[1]) }], 0.93, "Explicit routing request.");
+    return actionPlan([{ type: "route", taskClass: normalizeTaskClass(routeMatch[1], plannerContext) }], 0.93, "Explicit routing request.");
   }
 
   const searchMatch = text.match(/^(?:search|find)\s+(.+)$/i);
@@ -257,7 +265,11 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
 
   const ticketMatch = text.match(/(?:extract\s+ticket|show\s+ticket|ticket)\s+([A-Z]+-\d+)/i);
   if (ticketMatch) {
-    return actionPlan([{ type: "extract_ticket", ticketId: ticketMatch[1].toUpperCase() }], 0.94, "Explicit ticket extraction request.");
+    const isDecompose = /\b(?:decompose|break down|split)\b/i.test(text);
+    return actionPlan([{
+      type: isDecompose ? "decompose_ticket" : "extract_ticket",
+      ticketId: ticketMatch[1].toUpperCase()
+    }], 0.94, `Explicit ticket ${isDecompose ? "decomposition" : "extraction"} request.`);
   }
 
   const guidelinesMatch = text.match(/(?:extract\s+guidelines|guidelines)(?:\s+for)?(?:\s+([A-Z]+-\d+))?/i);
@@ -432,7 +444,7 @@ function validateShellAction(action, plannerContext) {
         changed: Boolean(action.changed)
       };
     case "route":
-      return { type, taskClass: normalizeTaskClass(action.taskClass) };
+      return { type, taskClass: normalizeTaskClass(action.taskClass, plannerContext) };
     case "add_note":
       if (!String(action.body ?? "").trim()) {
         throw new Error("add_note action requires body");
@@ -584,6 +596,8 @@ export function compileShellAction(action, { json = false } = {}) {
       return cliCommand(["project", "search", action.query, ...(json ? ["--json"] : [])], false);
     case "extract_ticket":
       return cliCommand(["extract", "ticket", action.ticketId], false);
+    case "decompose_ticket":
+      return cliCommand(["decompose", "ticket", action.ticketId], false);
     case "extract_guidelines":
       return cliCommand([
         "extract",
@@ -853,6 +867,14 @@ async function runShellActionDirect(action, options) {
     }
     case "extract_ticket":
       return runCodeletById("ticket", ["--id", action.ticketId], options);
+    case "decompose_ticket": {
+      const ticket = await withWorkflowStore(options.root, async (store) => store.getEntity(action.ticketId));
+      if (!ticket) throw new Error(`Ticket ${action.ticketId} not found.`);
+      const plan = await decomposeTicket(ticket, { root: options.root });
+      return options.json 
+        ? `${JSON.stringify(plan, null, 2)}\n` 
+        : `Decomposition plan for ${action.ticketId}:\n${plan.map((t, i) => `${i + 1}. [${t.class}] ${t.summary}${t.file ? ` (${t.file})` : ""}`).join("\n")}\n`;
+    }
     case "extract_guidelines":
       return runCodeletById("guidelines", [
         ...(action.ticketId ? ["--ticket", action.ticketId] : []),
@@ -1000,9 +1022,10 @@ function isMutatingAction(action) {
   return MUTATING_ACTIONS.has(action.type);
 }
 
-function normalizeTaskClass(value) {
+function normalizeTaskClass(value, plannerContext) {
   const normalized = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "-");
-  return KNOWN_TASK_CLASSES.includes(normalized) ? normalized : "classification";
+  const tasks = plannerContext?.summary?.knowledge?.tasks ?? [];
+  return tasks.includes(normalized) ? normalized : "classification";
 }
 
 function normalizeNoteType(value) {
