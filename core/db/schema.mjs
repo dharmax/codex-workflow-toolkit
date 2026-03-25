@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS entities (
   review_state TEXT NOT NULL,
   parent_id TEXT,
   relevant_until TEXT,
+  consultation_question TEXT,
   data_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -118,6 +119,33 @@ CREATE TABLE IF NOT EXISTS search_index (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS modules (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  responsibility TEXT,
+  api_paradigm TEXT NOT NULL DEFAULT 'method-calls',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS features (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS architectural_graph (
+  id TEXT PRIMARY KEY,
+  subject_id TEXT NOT NULL,
+  predicate TEXT NOT NULL,
+  object_id TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS metrics (
   id TEXT PRIMARY KEY,
   task_class TEXT NOT NULL,
@@ -141,4 +169,7 @@ CREATE INDEX IF NOT EXISTS idx_entities_type_lane ON entities(entity_type, lane)
 CREATE INDEX IF NOT EXISTS idx_notes_file_path ON notes(file_path);
 CREATE INDEX IF NOT EXISTS idx_candidates_status_review ON candidates(status, next_review_at);
 CREATE INDEX IF NOT EXISTS idx_search_scope_ref ON search_index(scope, ref_id);
+CREATE INDEX IF NOT EXISTS idx_arch_graph_subject ON architectural_graph(subject_id);
+CREATE INDEX IF NOT EXISTS idx_arch_graph_object ON architectural_graph(object_id);
+CREATE INDEX IF NOT EXISTS idx_arch_graph_predicate ON architectural_graph(predicate);
 `;

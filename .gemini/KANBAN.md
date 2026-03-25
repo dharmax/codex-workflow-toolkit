@@ -1,17 +1,19 @@
 # Tactical KANBAN
 
 ## 🚀 Active Tasks
-- [ ] Next feature...
+## 🚀 Active Tasks
+- [ ] Phase 5: Dogfooding with real project changes.
 
 ## 🐛 Bugs
 - [ ] None yet.
 
 ## ✅ Done
+- [x] **Architectural Foundation:** Schema updated with modules, features, and graph tables. Heuristic mapping added to sync.
+- [x] **Progressive Refiner:** Orchestrator now emits and processes architectural refinements from AI logic.
+- [x] **Architectural Critic:** SQL-based audit system for circular deps, leaky abstractions, and zombie code.
+- [x] **Consultation Loop:** Asynchronous Q&A system with `ai-workflow consult` command.
 - [x] **TKT-SUPERGIT:** Implement `supergit` codelet with strict Auto-Stash -> Temp Branch -> Test -> Merge -> Auto-Pop pipeline to prevent working tree corruption.
-- [x] **TKT-ASYNC-PATCH:** Upgrade patch engine to feed parsing errors back to the *original* model for a retry, rather than guessing. Add async deferral to a "Blocked" lane if retry fails.
-- [x] **TKT-SMART-INPUT:** Implement `ai-workflow ingest <file>` command to safely handle PRDs and avoid TTY paste buffer overflows.
-- [x] **TKT-INGESTION:** Build Artifact Digestor pipeline that forces a human approval gate on the high-level outline before generating DB entities.
-- [x] **TKT-DOGFOOD-TEST:** Develop a mini mock project using the tool. ALL new features must be tested using the local HTTP mock server pattern.
+
 - [x] **TKT-PATCH-FILE:** Unified Patch Engine: parse and apply SEARCH/REPLACE blocks with `File:` extraction to prevent hardcoded files.
 - [x] **TKT-CTX-LIMIT:** Graph-Powered Context Packer: Implement `core/services/context-packer.mjs` with strict line limits.
 - [x] **TKT-TEST-ORCH:** Add profound test suite for patch engine, context packer, and orchestrator using mock HTTP providers.

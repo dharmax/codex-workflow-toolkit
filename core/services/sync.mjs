@@ -36,6 +36,10 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
     }
 
     const importSummary = await importLegacyProjections(store, { projectRoot });
+    
+    // Architectural Mapping (Heuristic Phase 1)
+    await syncArchitecture(projectRoot, store);
+
     store.cleanupDerivedState();
     for (const note of store.listNotes()) {
       const candidate = deriveCandidateFromNote(note);
@@ -138,6 +142,41 @@ export async function addManualNote({ projectRoot = process.cwd(), note }) {
 
 export async function reviewProjectCandidates({ projectRoot = process.cwd() } = {}) {
   return withWorkflowStore(projectRoot, async (store) => reviewCandidates(store));
+}
+
+async function syncArchitecture(projectRoot, store) {
+  const files = store.db.prepare("SELECT path FROM files").all();
+  const modules = new Map();
+
+  // Clear old architectural graph before rebuilding heuristic map
+  store.db.prepare("DELETE FROM architectural_graph WHERE predicate = 'belongs_to'").run();
+
+  for (const file of files) {
+    const parts = file.path.split("/");
+    if (parts.length < 2) continue;
+
+    // Heuristic: first two segments as module name (e.g. core/db, cli/lib)
+    const moduleName = (parts[0] === "src" || parts[0] === "core" || parts[0] === "cli") 
+      ? parts.slice(0, 2).join("/") 
+      : parts[0];
+
+    if (!modules.has(moduleName)) {
+      const moduleId = `MOD-${moduleName.toUpperCase().replace(/\//g, "-")}`;
+      modules.set(moduleName, moduleId);
+      store.upsertModule({
+        id: moduleId,
+        name: moduleName,
+        responsibility: `Heuristic module for ${moduleName}`
+      });
+    }
+
+    const moduleId = modules.get(moduleName);
+    store.appendArchitecturalPredicate({
+      subjectId: file.path,
+      predicate: "belongs_to",
+      objectId: moduleId
+    });
+  }
 }
 
 function deriveCandidateScores(note, filePath) {

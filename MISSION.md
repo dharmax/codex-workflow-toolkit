@@ -4,19 +4,27 @@
 
 ### Phase 1: The "Surgical Strike" Foundation 🛠️
 **Goal:** Eliminate file rewrites, reduce token cost by 80%, and prevent regressions via strict patching.
-- [ ] **Unified Patch Engine:** Implement `SEARCH/REPLACE` block parser and applicator.
-- [ ] **Graph-Powered Context Packer:** Use SQLite graph to build surgical prompts (symbol-only context).
-- [ ] **AST Verification:** Run syntax checks/linting on patched files before saving.
-- [ ] **Patch Fallback:** Cheap AI fuzzy-matching for failed patch applications.
+- [x] **Unified Patch Engine:** Implement `SEARCH/REPLACE` block parser and applicator.
+- [x] **Graph-Powered Context Packer:** Use SQLite graph to build surgical prompts (symbol-only context).
+- [x] **AST Verification:** Run syntax checks/linting on patched files before saving.
+- [x] **Patch Fallback:** Cheap AI fuzzy-matching for failed patch applications.
 
 ### Phase 2: The PM/Architect Flow 📝
 **Goal:** Transform vague intent into structured Epics/Tickets without writing code.
-- [ ] **Ideation State Machine:** Q&A loop for feature scoping.
-- [ ] **Epic Scaffolding:** Generate Epic + Ticket hierarchy in SQLite.
-- [ ] **Domain Tagging:** Auto-assign `visual`, `logic`, etc., to tickets.
-- [ ] **Markdown Projection:** Sync DB entities to `kanban.md` and `epics.md`.
+- [x] **Ideation State Machine:** Q&A loop for feature scoping.
+- [x] **Epic Scaffolding:** Generate Epic + Ticket hierarchy in SQLite.
+- [x] **Domain Tagging:** Auto-assign `visual`, `logic`, etc., to tickets.
+- [x] **Markdown Projection:** Sync DB entities to `kanban.md` and `epics.md`.
 
-### Phase 3: The Orchestrator & Dispatcher ⚡
+### Phase 3: Architectural Intelligence & Mapping 🏛️
+**Goal:** Modularize the codebase and automate technical debt management.
+- [x] **Module/Feature Mapping:** First-class DB entities for architectural boundaries and user features.
+- [x] **Heuristic Initializer:** Free, directory-based baseline mapping during sync.
+- [x] **Architectural Critic:** SQL-powered audit for circular dependencies and leaky abstractions.
+- [x] **Progressive Refinement:** AI learns and corrects the architectural map as it works.
+- [x] **Consultation Loop:** Asynchronous Q&A for complex architectural decisions.
+
+### Phase 4: The Orchestrator & Dispatcher ⚡
 **Goal:** Concurrent execution of sub-tasks using the cheapest specialized models.
 - [ ] **Parallel Dispatcher:** Run multiple sub-task models simultaneously.
 - [ ] **Semantic Stitching:** Conflict detection and resolution for concurrent patches.

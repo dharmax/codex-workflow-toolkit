@@ -10,6 +10,7 @@ import { listProjectCodelets } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
 import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
 import { decomposeTicket, ideateFeature, sweepBugs } from "../../core/services/orchestrator.mjs";
+import { auditArchitecture } from "../../core/services/critic.mjs";
 import { addManualNote, createTicket, getProjectMetrics, getProjectSummary, recordMetric, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTicketEntity } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
@@ -204,6 +205,10 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
 
   if (/^(metrics|stats|usage)$/i.test(text)) {
     return actionPlan([{ type: "metrics" }], 0.98, "Usage metrics request.");
+  }
+
+  if (/^(audit\s+architecture|check\s+wiring|arch\s+audit)$/i.test(text)) {
+    return actionPlan([{ type: "audit_architecture" }], 0.98, "Architectural audit request.");
   }
 
   if (/^(doctor|diagnostics)$/i.test(text)) {
@@ -634,6 +639,8 @@ export function compileShellAction(action, { json = false } = {}) {
       return cliCommand(["project", "metrics", ...(json ? ["--json"] : [])], false);
     case "doctor":
       return cliCommand(["doctor", ...(json ? ["--json"] : [])], false);
+    case "audit_architecture":
+      return cliCommand(["audit", "architecture", ...(json ? ["--json"] : [])], false);
     case "sync":
       return cliCommand(["sync", ...(json ? ["--json"] : [])], true);
     case "run_review":
@@ -835,6 +842,12 @@ async function runShellActionDirect(action, options) {
       return options.json
         ? `${JSON.stringify(report, null, 2)}\n`
         : `${renderDoctorReport(report)}\n`;
+    }
+    case "audit_architecture": {
+      const findings = await auditArchitecture(options.root);
+      if (options.json) return `${JSON.stringify(findings, null, 2)}\n`;
+      if (!findings.length) return "No architectural violations detected. Wiring looks clean!\n";
+      return `Architectural Audit Report:\n${findings.map(f => `- [${f.severity.toUpperCase()}] ${f.type}: ${f.summary} (Subject: ${f.subject})`).join("\n")}\n`;
     }
     case "sync":
       return formatSyncResult(await syncProject({ projectRoot: options.root }), options.json);

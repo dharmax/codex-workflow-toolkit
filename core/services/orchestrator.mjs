@@ -36,6 +36,10 @@ exact old code to replace
 ====
 new code
 >>>>
+
+## Architectural Refinement (Optional)
+If you gain insights about the architectural mapping, you may ALSO output a JSON block like this:
+{ "action": "refine_map", "file": "path/to/file.js", "module": "module-name", "features": ["feature-a", "feature-b"] }
 `;
       let prompt = `Context:\n${formatContextForPrompt(context)}\n\nFix this bug.`;
       
@@ -81,6 +85,7 @@ new code
 
         const applyResult = await verifyAndApplyPatch(root, completion.response);
         if (applyResult.success) {
+          await processRefinements(root, completion.response);
           patchSuccess = true;
           break;
         }
@@ -372,4 +377,39 @@ You are a PM. Convert the approved outline into strict JSON Epic and Tickets.
   const finalData = JSON.parse(genCompletion.response);
   await saveEpicsAndTickets(root, finalData);
   return finalData;
+}
+
+async function processRefinements(root, text) {
+  const regex = /\{ "action": "refine_map"[\s\S]*?\}/g;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    try {
+      const refinement = JSON.parse(match[0]);
+      await withWorkflowStore(root, async (store) => {
+        if (refinement.module && refinement.file) {
+          const moduleId = `MOD-${refinement.module.toUpperCase().replace(/\//g, "-")}`;
+          store.upsertModule({ id: moduleId, name: refinement.module });
+          store.db.prepare("DELETE FROM architectural_graph WHERE subject_id = ? AND predicate = 'belongs_to'").run(refinement.file);
+          store.appendArchitecturalPredicate({
+            subjectId: refinement.file,
+            predicate: "belongs_to",
+            objectId: moduleId
+          });
+        }
+        if (Array.isArray(refinement.features) && refinement.file) {
+          for (const featureName of refinement.features) {
+            const featureId = `FEAT-${featureName.toUpperCase().replace(/\s+/g, "-")}`;
+            store.upsertFeature({ id: featureId, name: featureName });
+            store.appendArchitecturalPredicate({
+              subjectId: refinement.file,
+              predicate: "implements",
+              objectId: featureId
+            });
+          }
+        }
+      });
+    } catch (e) {
+      console.warn("[orchestrator] Failed to parse refinement JSON:", e.message);
+    }
+  }
 }

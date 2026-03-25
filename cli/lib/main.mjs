@@ -26,6 +26,7 @@ const HELP = `Usage:
   ai-workflow set-provider-key <provider-id> [--global]
   ai-workflow metrics [--json]
   ai-workflow ingest <file> [--json]
+  ai-workflow consult
   ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]
   ai-workflow sync [--write-projections] [--json]
   ai-workflow list [--json]
@@ -77,6 +78,8 @@ export async function main(argv) {
       return handleMetrics(rest);
     case "ingest":
       return handleIngest(rest);
+    case "consult":
+      return handleConsult(rest);
     case "shell":
       return handleShell(rest, { cliPath: path.resolve(toolkitRoot, "cli", "ai-workflow.mjs") });
     case "sync":
@@ -577,6 +580,46 @@ async function handleIngest(rest) {
     }
   } catch (error) {
     printAndExit(`Ingestion failed: ${error.message}`, 1);
+  } finally {
+    rl.close();
+  }
+  return 0;
+}
+
+async function handleConsult(rest) {
+  const root = process.cwd();
+  const rl = readline.createInterface({ input, output });
+
+  try {
+    const pending = await withWorkflowStore(root, async (store) => {
+      return store.db.prepare("SELECT * FROM entities WHERE consultation_question IS NOT NULL").all();
+    });
+
+    if (!pending.length) {
+      process.stdout.write("No active consultation requests.\n");
+      return 0;
+    }
+
+    process.stdout.write(`Found ${pending.length} pending consultation(s).\n\n`);
+
+    for (const row of pending) {
+      process.stdout.write(`[${row.id}] ${row.title}\n`);
+      process.stdout.write(`Question: ${row.consultation_question}\n`);
+      const answer = (await rl.question("Your Answer (leave blank to skip): ")).trim();
+      
+      if (answer) {
+        await withWorkflowStore(root, async (store) => {
+          const entity = store.getEntity(row.id);
+          entity.consultationQuestion = null;
+          entity.data.consultationResponse = answer;
+          entity.lane = "Todo"; // Move back to Todo
+          store.upsertEntity(entity);
+        });
+        process.stdout.write("Answer recorded. Ticket moved back to Todo.\n\n");
+      } else {
+        process.stdout.write("Skipped.\n\n");
+      }
+    }
   } finally {
     rl.close();
   }

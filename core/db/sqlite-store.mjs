@@ -65,6 +65,7 @@ export class SqliteWorkflowStore {
       reviewState: row.review_state,
       parentId: row.parent_id,
       relevantUntil: row.relevant_until,
+      consultationQuestion: row.consultation_question,
       data: parseJson(row.data_json),
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -183,8 +184,8 @@ export class SqliteWorkflowStore {
   upsertEntity(entity) {
     const timestamp = entity.updatedAt ?? nowIso();
     this.db.prepare(`
-      INSERT INTO entities (id, entity_type, title, lane, state, confidence, provenance, source_kind, review_state, parent_id, relevant_until, data_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO entities (id, entity_type, title, lane, state, confidence, provenance, source_kind, review_state, parent_id, relevant_until, consultation_question, data_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         lane = excluded.lane,
@@ -195,6 +196,7 @@ export class SqliteWorkflowStore {
         review_state = excluded.review_state,
         parent_id = excluded.parent_id,
         relevant_until = excluded.relevant_until,
+        consultation_question = excluded.consultation_question,
         data_json = excluded.data_json,
         updated_at = excluded.updated_at
     `).run(
@@ -209,10 +211,83 @@ export class SqliteWorkflowStore {
       entity.reviewState ?? "active",
       entity.parentId ?? null,
       entity.relevantUntil ?? null,
+      entity.consultationQuestion ?? null,
       asJson(entity.data),
       entity.createdAt ?? timestamp,
       timestamp
     );
+  }
+
+  upsertModule(module) {
+    const now = nowIso();
+    const existing = this.db.prepare("SELECT created_at FROM modules WHERE id = ?").get(module.id);
+    const createdAt = existing ? existing.created_at : now;
+
+    this.db.prepare(`
+      INSERT INTO modules (id, name, responsibility, api_paradigm, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        responsibility = excluded.responsibility,
+        api_paradigm = excluded.api_paradigm,
+        updated_at = excluded.updated_at
+    `).run(
+      module.id,
+      module.name,
+      module.responsibility ?? null,
+      module.apiParadigm ?? "method-calls",
+      createdAt,
+      now
+    );
+  }
+
+  upsertFeature(feature) {
+    const now = nowIso();
+    const existing = this.db.prepare("SELECT created_at FROM features WHERE id = ?").get(feature.id);
+    const createdAt = existing ? existing.created_at : now;
+
+    this.db.prepare(`
+      INSERT INTO features (id, name, description, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        description = excluded.description,
+        status = excluded.status,
+        updated_at = excluded.updated_at
+    `).run(
+      feature.id,
+      feature.name,
+      feature.description ?? null,
+      feature.status ?? "active",
+      createdAt,
+      now
+    );
+  }
+
+  appendArchitecturalPredicate({ subjectId, predicate, objectId, metadata = {} }) {
+    this.db.prepare(`
+      INSERT INTO architectural_graph (id, subject_id, predicate, object_id, metadata_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      stableId("arch", subjectId, predicate, objectId, Math.random()),
+      subjectId,
+      predicate,
+      objectId,
+      asJson(metadata),
+      nowIso()
+    );
+  }
+
+  listModules() {
+    return this.db.prepare("SELECT * FROM modules").all();
+  }
+
+  listFeatures() {
+    return this.db.prepare("SELECT * FROM features").all();
+  }
+
+  getArchitecturalGraph() {
+    return this.db.prepare("SELECT * FROM architectural_graph").all();
   }
 
   listEntities(filters = {}) {
@@ -253,6 +328,7 @@ export class SqliteWorkflowStore {
       reviewState: row.review_state,
       parentId: row.parent_id,
       relevantUntil: row.relevant_until,
+      consultationQuestion: row.consultation_question,
       data: parseJson(row.data_json),
       createdAt: row.created_at,
       updatedAt: row.updated_at
