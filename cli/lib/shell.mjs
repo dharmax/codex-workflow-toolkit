@@ -365,21 +365,23 @@ export async function planShellRequestWithAgent(inputText, options) {
     "",
     "## Instructions",
     "1. Analyze the user intent. Use the provided Project Status to answer questions accurately.",
-    "2. If the user is just chatting or asking about status, use kind=reply.",
-    "3. If the user wants to perform a task, use kind=plan and map it to available actions.",
-    "4. Return ONLY JSON. No markdown, no filler.",
-    "5. Use at most 3 actions per plan."
+    "2. If the user asks about tickets, ONLY list the tickets shown above. Do not invent tickets.",
+    "3. If the user is just chatting or asking about status, use kind=reply.",
+    "4. If the user wants to perform a task, use kind=plan and map it to available actions.",
+    "5. Return ONLY valid JSON matching the schema.",
+    "6. Use at most 3 actions per plan."
   ].join("\n");
 
   const historyText = history.length > 0
-    ? "\nRecent History:\n" + history.map(h => `${h.role === "user" ? "User" : "AI"}: ${h.content}`).join("\n")
+    ? "## Conversation History\n" + history.map(h => `${h.role === "user" ? "User" : "You"}: ${h.content}`).join("\n") + "\n\n"
     : "";
 
   const prompt = [
-    "Available Actions:",
+    historyText,
+    "## Available Actions:",
     catalog,
     "",
-    "Allowed JSON Schema:",
+    "## Allowed JSON Schema:",
     JSON.stringify({
       kind: "plan|reply|exit",
       confidence: 0.8,
@@ -405,9 +407,8 @@ export async function planShellRequestWithAgent(inputText, options) {
         args: ["optional", "args"]
       }]
     }, null, 2),
-    historyText,
     "",
-    `User Request: "${inputText}"`
+    `## Current Request:\nUser: "${inputText}"\nYou (output JSON only):`
   ].join("\n");
 
   const start = Date.now();
