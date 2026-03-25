@@ -274,7 +274,7 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     return actionPlan([{ type: "search", query: searchMatch[1].trim() }], 0.95, "Explicit search request.");
   }
 
-  const ticketMatch = text.match(/(?:extract\s+ticket|show\s+ticket|ticket)\s+([A-Z]+-\d+)/i);
+  const ticketMatch = text.match(/(?:extract\s+ticket|show\s+ticket|ticket|decompose\s+ticket|break\s+down)\s+([A-Z]+-\d+)/i);
   if (ticketMatch) {
     const isDecompose = /\b(?:decompose|break down|split)\b/i.test(text);
     return actionPlan([{
@@ -283,7 +283,7 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     }], 0.94, `Explicit ticket ${isDecompose ? "decomposition" : "extraction"} request.`);
   }
 
-  const featureMatch = text.match(/^(?:add|create|new)\s+(?:feature|epic|big task)\b\s*(.*)$/i);
+  const featureMatch = text.match(/^(?:add|create|new)\s+(?:new\s+)?(?:feature|epic|big task)\b\s*(?:for\s+)?(.*)$/i);
   if (featureMatch) {
     return actionPlan([{
       type: "ideate_feature",
@@ -291,7 +291,7 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     }], 0.95, "New feature ideation request.");
   }
 
-  if (text.match(/^(?:sweep|fix|handle)\s+(?:top\s+)?bugs\b/i)) {
+  if (text.match(/^(?:sweep|fix|handle)\s+(?:all\s+)?(?:top\s+)?(?:priority\s+)?bugs\b/i)) {
     return actionPlan([{ type: "sweep_bugs" }], 0.98, "Automated bug sweeping request.");
   }
 
@@ -450,17 +450,14 @@ export async function planShellRequestWithAgent(inputText, options) {
 
   try {
     const rawResponse = completion.response.trim();
-    // Strip markdown JSON blocks if present
-    const jsonMatch = rawResponse.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i) || [null, rawResponse];
-    const cleanJson = jsonMatch[1].trim();
+    // Extract JSON block even if there's conversational filler around it
+    const jsonMatch = rawResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const cleanJson = jsonMatch ? jsonMatch[1].trim() : rawResponse;
 
     const parsed = JSON.parse(cleanJson);
     return validateShellPlan(parsed, options.plannerContext);
   } catch (error) {
-    if (completion.response.length > 10 && !completion.response.trim().startsWith("{")) {
-      return replyPlan(completion.response, 0.5, "Model returned non-JSON text; treating as reply.");
-    }
-    throw error;
+    return replyPlan(completion.response, 0.5, "Model returned non-JSON text; treating as reply.");
   }
 }
 
