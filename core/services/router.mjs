@@ -113,11 +113,11 @@ function inferCompetency(model, capability, heuristics) {
   }
 
   // Size Multiplier (Larger models are generally more capable generalists)
-  const thresholds = heuristics.sizeThresholds ?? { large: 30, medium: 12 };
+  const thresholds = heuristics.sizeThresholds ?? { large: 30, medium: 7 };
   if ((model.sizeB ?? 0) >= thresholds.large) {
     score += 1;
-  } else if ((model.sizeB ?? 0) < 4) {
-    score -= 1; // Penalty for ultra-tiny models on complex domains
+  } else if ((model.sizeB ?? 0) < 4 && (capability === "logic" || capability === "strategy")) {
+    score -= 1; // Penalty for ultra-tiny models on complex reasoning
   }
 
   return Math.max(0, Math.min(5, score));

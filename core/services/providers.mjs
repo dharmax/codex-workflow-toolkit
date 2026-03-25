@@ -343,10 +343,10 @@ function normalizeConfiguredModels(providerId, config, builtinModels = []) {
 
 function classifyOllamaModel(model) {
   const lower = model.toLowerCase();
-  if (/(70b|large|coder|qwen3:32b|deepseek-r1|llama3\.3:70b)/.test(lower)) {
+  if (/(70b|large|coder|qwen3:32b|deepseek-r1|llama3\.3:70b|qwen2\.5-coder:32b)/.test(lower)) {
     return "high";
   }
-  if (/(14b|32b|8x7b|mixtral|qwen2\.5:14b|gemma3:12b)/.test(lower)) {
+  if (/(14b|32b|8x7b|mixtral|qwen2\.5:14b|gemma3:12b|llama3\.1:8b|qwen2\.5-coder:7b)/.test(lower)) {
     return "medium";
   }
   return "low";

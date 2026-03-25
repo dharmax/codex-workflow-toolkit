@@ -20,7 +20,7 @@ const toolkitRoot = getToolkitRoot();
 
 const HELP = `Usage:
   ai-workflow init [options]
-  ai-workflow install codex|claude|gemini|all [--project <path>]
+  ai-workflow install [--project <path>]
   ai-workflow doctor [--json]
   ai-workflow set-ollama-hw [options]
   ai-workflow set-provider-key <provider-id> [--global]
@@ -501,15 +501,13 @@ async function handleConfig(rest) {
 }
 
 async function handleInstall(rest) {
-  const [target = "all", ...extras] = rest;
-  const args = parseArgs(extras);
+  const args = parseArgs(rest);
   const projectRoot = path.resolve(String(args.project ?? process.cwd()));
   const results = await installAgents({
     toolkitRoot,
-    projectRoot,
-    target
+    projectRoot
   });
-  process.stdout.write(`${JSON.stringify({ toolkitRoot, projectRoot, results }, null, 2)}\n`);
+  process.stdout.write(`Installation complete in ${projectRoot}\n`);
   return 0;
 }
 

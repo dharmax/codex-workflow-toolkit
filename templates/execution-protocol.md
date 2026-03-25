@@ -82,7 +82,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - Keep live context small: extract the active ticket and relevant guidelines instead of dragging full boards and docs through the hot path.
 - Recommend `/compact` when the current thread still has useful recent state but the working set details are starting to sprawl.
 - Recommend `/new` when a compact handoff artifact exists and continuing in the current thread would mostly carry stale detail.
-- Treat `/clear` as a human/operator action only. Do not pretend the skill can force or verify internal chat-history deletion.
+- Treat `/clear` as a human/operator action only. Do not pretend the tool can force or verify internal chat-history deletion.
 
 ## Validation Examples
 

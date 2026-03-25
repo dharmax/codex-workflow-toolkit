@@ -30,9 +30,9 @@
     "prose": { "keywords": ["llama", "gemma", "prose", "chat"], "bonus": 1, "base": 3 },
     "visual": { "keywords": ["visual", "layout", "css", "svg"], "bonus": 2, "base": 2 },
     "data": { "base": 3 },
-    "strategy": { "base": 3 },
+    "strategy": { "base": 4 },
     "creative": { "keywords": ["creative", "hermes", "dolphin"], "bonus": 2, "base": 2 },
-    "sizeThresholds": { "large": 30, "medium": 12 }
+    "sizeThresholds": { "large": 30, "medium": 7 }
   },
   "models": {
     "openai": [

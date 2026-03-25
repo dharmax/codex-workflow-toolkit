@@ -330,25 +330,50 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
 export async function planShellRequestWithAgent(inputText, options) {
   const catalog = buildActionCatalog(options.plannerContext);
   const summary = options.plannerContext.summary ?? {};
+  const history = options.history ?? [];
+
+  const ticketsSummary = (summary.activeTickets ?? [])
+    .slice(0, 10)
+    .map(t => `- [${t.lane}] ${t.id}: ${t.title}`)
+    .join("\n");
+
+  const candidatesSummary = (summary.candidates ?? [])
+    .slice(0, 5)
+    .map(c => `- Candidate: ${c.title} (Score: ${c.data?.score ?? 0})`)
+    .join("\n");
 
   const system = [
-    "You are the expert persona for 'ai-workflow', a high-performance CLI for software development.",
+    "You are the expert persona for 'ai-workflow', an Autonomous Engineering OS.",
     "Your goal is to help the developer manage their project workflow efficiently.",
     "You are friendly, robust, and reliable.",
     "",
+    "## Project State Definitions",
+    "- Claims: Architectural facts extracted via AST (e.g., 'File A calls Function B').",
+    "- Modules: Architectural boundaries (e.g., 'core/db', 'ui/auth').",
+    "- Features: User-facing capabilities mapped to code.",
+    "- Kanban: The live workplan (Tickets and Epics).",
+    "",
     "## Project Status",
     `- Indexed Files: ${summary.fileCount ?? 0}`,
-    `- Active Tickets: ${summary.activeTickets?.length ?? 0}`,
     `- Unprocessed Notes: ${summary.noteCount ?? 0}`,
-    `- Candidates: ${summary.candidates?.length ?? 0}`,
+    "",
+    "### Active Tickets (Next to handle)",
+    ticketsSummary || "No active tickets.",
+    "",
+    "### Top Review Candidates (Potential bugs/tasks)",
+    candidatesSummary || "No pending review candidates.",
     "",
     "## Instructions",
-    "1. Analyze the user intent.",
+    "1. Analyze the user intent. Use the provided Project Status to answer questions accurately.",
     "2. If the user is just chatting or asking about status, use kind=reply.",
     "3. If the user wants to perform a task, use kind=plan and map it to available actions.",
     "4. Return ONLY JSON. No markdown, no filler.",
     "5. Use at most 3 actions per plan."
   ].join("\n");
+
+  const historyText = history.length > 0
+    ? "\nRecent History:\n" + history.map(h => `${h.role === "user" ? "User" : "AI"}: ${h.content}`).join("\n")
+    : "";
 
   const prompt = [
     "Available Actions:",
@@ -361,9 +386,10 @@ export async function planShellRequestWithAgent(inputText, options) {
       reason: "thinking process",
       reply: "human-friendly message (use when kind=reply)",
       actions: [{
-        type: "project_summary|doctor|sync|run_review|search|extract_ticket|extract_guidelines|route|telegram_preview|add_note|create_ticket|run_codelet",
+        type: "project_summary|metrics|audit_architecture|sync|run_review|search|extract_ticket|decompose_ticket|ideate_feature|sweep_bugs|extract_guidelines|route|telegram_preview|add_note|create_ticket|run_codelet",
         query: "for search",
-        ticketId: "for extract_ticket/extract_guidelines",
+        ticketId: "for extract_ticket/decompose_ticket/extract_guidelines",
+        intent: "for ideate_feature",
         changed: true,
         taskClass: "for route",
         noteType: "NOTE|TODO|FIXME|HACK|BUG|RISK",
@@ -379,6 +405,7 @@ export async function planShellRequestWithAgent(inputText, options) {
         args: ["optional", "args"]
       }]
     }, null, 2),
+    historyText,
     "",
     `User Request: "${inputText}"`
   ].join("\n");
@@ -422,7 +449,12 @@ export async function planShellRequestWithAgent(inputText, options) {
   }
 
   try {
-    const parsed = JSON.parse(completion.response);
+    const rawResponse = completion.response.trim();
+    // Strip markdown JSON blocks if present
+    const jsonMatch = rawResponse.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i) || [null, rawResponse];
+    const cleanJson = jsonMatch[1].trim();
+
+    const parsed = JSON.parse(cleanJson);
     return validateShellPlan(parsed, options.plannerContext);
   } catch (error) {
     if (completion.response.length > 10 && !completion.response.trim().startsWith("{")) {
@@ -538,13 +570,16 @@ function validateShellAction(action, plannerContext) {
 
 export async function runShellTurn(inputText, options) {
   const plan = await planShellRequest(inputText, options);
+  const result = {
+    input: inputText,
+    plan,
+    executed: [],
+    preRendered: false,
+    history: options.history ?? []
+  };
+
   if (plan.kind !== "plan") {
-    return {
-      input: inputText,
-      plan,
-      executed: [],
-      preRendered: false
-    };
+    return result;
   }
 
   if (!options.yes && !options.planOnly && plan.actions.some((action) => isMutatingAction(action))) {
@@ -716,6 +751,7 @@ export async function runInteractiveShell(options) {
   const rl = readline.createInterface({ input, output });
   options.rl = rl;
   options.blacklist = new Set();
+  options.history = [];
   try {
     const primary = options.planners.planners[0] ?? options.planners.heuristic;
     output.write(`ai-workflow shell\n${renderPlannerLine(primary)}\nType 'help' for examples. Type 'exit' to quit.\n\n`);
@@ -771,6 +807,15 @@ export async function runInteractiveShell(options) {
         if (result.plan.kind === "exit") {
           break;
         }
+
+        // Maintain history (max 10 messages)
+        options.history.push({ role: "user", content: line });
+        if (result.plan.reply) {
+          options.history.push({ role: "ai", content: result.plan.reply });
+        } else if (result.plan.actions?.length) {
+          options.history.push({ role: "ai", content: `Executing plan: ${result.plan.actions.map(a => a.type).join(", ")}` });
+        }
+        if (options.history.length > 10) options.history = options.history.slice(-10);
 
         const mutated = result.executed.some(e => e.mutation);
         if (mutated) {
@@ -1042,11 +1087,15 @@ function renderPlannerLine(planner) {
     return "planner: unavailable";
   }
 
-  const identity = planner.mode === "ollama" 
-    ? `ollama:${planner.modelId} @ ${planner.host ?? "default"}`
-    : `${planner.providerId}:${planner.modelId}`;
+  if (planner.mode === "ollama") {
+    return `planner: ollama:${planner.modelId} @ ${planner.host ?? "default"} (${planner.reason})`;
+  }
 
-  return `planner: ${identity} (${planner.reason})`;
+  if (planner.providerId && planner.modelId) {
+    return `planner: ${planner.providerId}:${planner.modelId} (${planner.reason})`;
+  }
+
+  return `planner: ${planner.mode} (${planner.reason})`;
 }
 
 function buildActionCatalog(plannerContext) {

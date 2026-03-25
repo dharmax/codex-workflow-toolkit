@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "Workflow skill and ai-workflow CLI for token-efficient JS/TS repository work.",
+  "description": "Autonomous Engineering OS and ai-workflow CLI for token-efficient JS/TS repository work.",
   "bin": {
     "ai-workflow": "./cli/ai-workflow.mjs",
     "codex-workflow-init": "./scripts/init-project.mjs",
