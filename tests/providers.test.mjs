@@ -24,7 +24,7 @@ test("probeOllama reads models from a configured HTTP host", async () => {
   try {
     const result = await probeOllama({ host: "127.0.0.1:11434" });
     assert.equal(result.installed, true);
-    assert.deepEqual(result.models, ["qwen2.5:14b", "llama3.2:3b"]);
+    assert.deepEqual(result.models, [{ id: "qwen2.5:14b", sizeB: null }, { id: "llama3.2:3b", sizeB: null }]);
     assert.equal(result.host, "http://127.0.0.1:11434");
   } finally {
     globalThis.fetch = originalFetch;

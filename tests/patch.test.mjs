@@ -2,15 +2,16 @@ import assert from "node:assert";
 import { test } from "node:test";
 import { parsePatch, applyPatch } from "../core/lib/patch.mjs";
 
-test("parsePatch extracts blocks correctly", () => {
+test("parsePatch extracts blocks correctly with and without files", () => {
   const text = `
 Here is a change:
+File: src/logic.js
 <<<< SEARCH
 old logic
 ====
 new logic
 >>>>
-And another:
+And another without file:
 <<<< SEARCH
 other stuff
 ====
@@ -19,8 +20,13 @@ better stuff
 `;
   const blocks = parsePatch(text);
   assert.strictEqual(blocks.length, 2);
+  assert.strictEqual(blocks[0].file, "src/logic.js");
   assert.strictEqual(blocks[0].search, "old logic");
   assert.strictEqual(blocks[0].replace, "new logic");
+  
+  assert.strictEqual(blocks[1].file, null);
+  assert.strictEqual(blocks[1].search, "other stuff");
+  assert.strictEqual(blocks[1].replace, "better stuff");
 });
 
 test("applyPatch handles exact match", () => {

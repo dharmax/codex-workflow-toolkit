@@ -23,9 +23,11 @@ export async function buildSurgicalContext(projectRoot, { symbolNames = [], file
     // 2. Pull specified files
     for (const filePath of filePaths) {
       const file = await readProjectFile(projectRoot, filePath);
+      const lines = file.content.split("\n");
+      const truncated = lines.length > 500 ? lines.slice(0, 500).join("\n") + "\n... [TRUNCATED for token efficiency]" : file.content;
       context.files.push({
         path: filePath,
-        content: file.content
+        content: truncated
       });
     }
 
@@ -36,10 +38,14 @@ export async function buildSurgicalContext(projectRoot, { symbolNames = [], file
         const file = await readProjectFile(projectRoot, symbol.file_path);
         // Extract just the symbol's code block from the file
         const snippet = extractSymbolSnippet(file.content, symbol);
+        // Limit snippet size
+        const snippetLines = snippet.split("\n");
+        const truncatedSnippet = snippetLines.length > 200 ? snippetLines.slice(0, 200).join("\n") + "\n... [TRUNCATED]" : snippet;
+
         context.symbols.push({
           name,
           path: symbol.file_path,
-          snippet
+          snippet: truncatedSnippet
         });
 
         // Find dependencies (outgoing edges)

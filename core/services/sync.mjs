@@ -91,6 +91,14 @@ export async function getProjectSummary({ projectRoot = process.cwd() } = {}) {
   return withWorkflowStore(projectRoot, async (store) => buildProjectSummary(store));
 }
 
+export async function getProjectMetrics({ projectRoot = process.cwd() } = {}) {
+  return withWorkflowStore(projectRoot, async (store) => store.getMetricsSummary());
+}
+
+export async function recordMetric({ projectRoot = process.cwd(), metric }) {
+  return withWorkflowStore(projectRoot, async (store) => store.appendMetric(metric));
+}
+
 export async function searchProject({ projectRoot = process.cwd(), query, limit = 20 } = {}) {
   return withWorkflowStore(projectRoot, async (store) => store.search(query, { limit }));
 }

@@ -10,7 +10,7 @@ import { listProjectCodelets } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
 import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
 import { decomposeTicket, ideateFeature, sweepBugs } from "../../core/services/orchestrator.mjs";
-import { addManualNote, createTicket, getProjectSummary, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { addManualNote, createTicket, getProjectMetrics, getProjectSummary, recordMetric, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTicketEntity } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/lib/cli.mjs";
@@ -202,6 +202,10 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     return actionPlan([{ type: "project_summary" }], 0.98, "Explicit summary/status request.");
   }
 
+  if (/^(metrics|stats|usage)$/i.test(text)) {
+    return actionPlan([{ type: "metrics" }], 0.98, "Usage metrics request.");
+  }
+
   if (/^(doctor|diagnostics)$/i.test(text)) {
     return actionPlan([{ type: "doctor" }], 0.98, "Explicit diagnostics request.");
   }
@@ -374,18 +378,43 @@ export async function planShellRequestWithAgent(inputText, options) {
     `User Request: "${inputText}"`
   ].join("\n");
 
-  const completion = await generateCompletion({
-    providerId: options.planner.providerId,
-    modelId: options.planner.modelId,
-    system,
-    prompt,
-    config: {
-      apiKey: options.planner.apiKey,
-      baseUrl: options.planner.baseUrl,
-      host: options.planner.host,
-      format: "json"
-    }
-  });
+  const start = Date.now();
+  let completion;
+  let success = true;
+  let errorMsg = null;
+
+  try {
+    completion = await generateCompletion({
+      providerId: options.planner.providerId,
+      modelId: options.planner.modelId,
+      system,
+      prompt,
+      config: {
+        apiKey: options.planner.apiKey,
+        baseUrl: options.planner.baseUrl,
+        host: options.planner.host,
+        format: "json"
+      }
+    });
+  } catch (error) {
+    success = false;
+    errorMsg = error.message;
+    throw error;
+  } finally {
+    const latencyMs = Date.now() - start;
+    await recordMetric({
+      projectRoot: options.root,
+      metric: {
+        taskClass: "shell-planning",
+        capability: "strategy",
+        providerId: options.planner.providerId,
+        modelId: options.planner.modelId,
+        latencyMs,
+        success,
+        errorMessage: errorMsg
+      }
+    }).catch(() => {}); // Fire and forget
+  }
 
   try {
     const parsed = JSON.parse(completion.response);
@@ -601,6 +630,8 @@ export function compileShellAction(action, { json = false } = {}) {
   switch (action.type) {
     case "project_summary":
       return cliCommand(["project", "summary", ...(json ? ["--json"] : [])], false);
+    case "metrics":
+      return cliCommand(["project", "metrics", ...(json ? ["--json"] : [])], false);
     case "doctor":
       return cliCommand(["doctor", ...(json ? ["--json"] : [])], false);
     case "sync":
@@ -797,6 +828,8 @@ async function runShellActionDirect(action, options) {
   switch (action.type) {
     case "project_summary":
       return formatProjectSummary(await getProjectSummary({ projectRoot: options.root }), options.json);
+    case "metrics":
+      return formatProjectMetrics(await getProjectMetrics({ projectRoot: options.root }), options.json);
     case "doctor": {
       const report = await buildDoctorReport({ root: options.root });
       return options.json
@@ -1298,6 +1331,24 @@ function formatProjectSummary(summary, json) {
     `Tickets: ${summary.activeTickets.length}`,
     `Candidates: ${summary.candidates.length}`
   ].join("\n") + "\n";
+}
+
+function formatProjectMetrics(metrics, json) {
+  if (json) {
+    return `${JSON.stringify(metrics, null, 2)}\n`;
+  }
+  const lines = [
+    `Total AI Calls: ${metrics.totalCalls}`,
+    `Success Rate: ${metrics.successRate}%`,
+    `Avg Latency: ${metrics.avgLatencyMs}ms`,
+    `Total Tokens: ${metrics.totalPromptTokens + metrics.totalCompletionTokens} (P: ${metrics.totalPromptTokens} / C: ${metrics.totalCompletionTokens})`,
+    "",
+    "Usage by Model:"
+  ];
+  for (const m of metrics.byModel) {
+    lines.push(`- ${m.model_id}: ${m.count} calls, ${Math.round(m.success_rate)}% success, ${Math.round(m.avg_latency)}ms avg`);
+  }
+  return lines.join("\n") + "\n";
 }
 
 function formatSyncResult(result, json) {

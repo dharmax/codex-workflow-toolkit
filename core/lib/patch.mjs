@@ -11,13 +11,14 @@
 
 export function parsePatch(text) {
   const blocks = [];
-  const regex = /<<<< SEARCH\r?\n([\s\S]*?)\r?\n====\r?\n([\s\S]*?)\r?\n>>>>/g;
+  const regex = /(?:File:\s*([^\r\n]+)\r?\n)?<<<< SEARCH\r?\n([\s\S]*?)\r?\n====\r?\n([\s\S]*?)\r?\n>>>>/g;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
     blocks.push({
-      search: match[1],
-      replace: match[2]
+      file: match[1] ? match[1].trim() : null,
+      search: match[2],
+      replace: match[3]
     });
   }
 

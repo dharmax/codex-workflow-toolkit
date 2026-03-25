@@ -414,6 +414,45 @@ export class SqliteWorkflowStore {
     );
   }
 
+  appendMetric({ taskClass, capability, providerId, modelId, promptTokens, completionTokens, latencyMs, success, errorMessage = null, createdAt = nowIso() }) {
+    this.db.prepare(`
+      INSERT INTO metrics (id, task_class, capability, provider_id, model_id, prompt_tokens, completion_tokens, latency_ms, success, error_message, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      stableId("metric", taskClass, providerId, modelId, createdAt, Math.random()),
+      taskClass,
+      capability,
+      providerId,
+      modelId,
+      promptTokens,
+      completionTokens,
+      latencyMs,
+      success ? 1 : 0,
+      errorMessage,
+      createdAt
+    );
+  }
+
+  getMetricsSummary() {
+    const total = this.db.prepare("SELECT COUNT(*) as count, SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, AVG(latency_ms) as latency FROM metrics").get();
+    const successRate = this.db.prepare("SELECT AVG(success) * 100 as rate FROM metrics").get().rate;
+    const byModel = this.db.prepare(`
+      SELECT model_id, COUNT(*) as count, AVG(success) * 100 as success_rate, AVG(latency_ms) as avg_latency
+      FROM metrics
+      GROUP BY model_id
+      ORDER BY count DESC
+    `).all();
+
+    return {
+      totalCalls: total.count ?? 0,
+      totalPromptTokens: total.prompt ?? 0,
+      totalCompletionTokens: total.completion ?? 0,
+      avgLatencyMs: Math.round(total.latency ?? 0),
+      successRate: Math.round(successRate ?? 0),
+      byModel
+    };
+  }
+
   cleanupDerivedState() {
     this.db.prepare("DELETE FROM candidates WHERE note_id NOT IN (SELECT id FROM notes)").run();
     this.db.prepare("DELETE FROM entities WHERE entity_type = 'candidate-ticket' AND source_kind = 'proposal'").run();

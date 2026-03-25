@@ -118,7 +118,23 @@ CREATE TABLE IF NOT EXISTS search_index (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS metrics (
+  id TEXT PRIMARY KEY,
+  task_class TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  provider_id TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  prompt_tokens INTEGER,
+  completion_tokens INTEGER,
+  latency_ms INTEGER,
+  success INTEGER NOT NULL,
+  error_message TEXT,
+  created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_symbols_file_path ON symbols(file_path);
+CREATE INDEX IF NOT EXISTS idx_metrics_task ON metrics(task_class);
+CREATE INDEX IF NOT EXISTS idx_metrics_provider ON metrics(provider_id);
 CREATE INDEX IF NOT EXISTS idx_claims_subject ON claims(subject_id);
 CREATE INDEX IF NOT EXISTS idx_claims_file_path ON claims(file_path);
 CREATE INDEX IF NOT EXISTS idx_entities_type_lane ON entities(entity_type, lane);

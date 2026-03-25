@@ -12,7 +12,7 @@ import { installAgents } from "./install.mjs";
 import { forgeProjectCodelet, getProjectCodelet, listProjectCodelets, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
 import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection } from "../../core/services/projections.mjs";
-import { addManualNote, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { addManualNote, getProjectMetrics, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 
 const toolkitRoot = getToolkitRoot();
@@ -23,6 +23,7 @@ const HELP = `Usage:
   ai-workflow doctor [--json]
   ai-workflow set-ollama-hw [options]
   ai-workflow set-provider-key <provider-id> [--global]
+  ai-workflow metrics [--json]
   ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]
   ai-workflow sync [--write-projections] [--json]
   ai-workflow list [--json]
@@ -70,6 +71,8 @@ export async function main(argv) {
       return handleSetOllamaHw(rest, { root: process.cwd() });
     case "set-provider-key":
       return handleSetProviderKey(rest);
+    case "metrics":
+      return handleMetrics(rest);
     case "shell":
       return handleShell(rest, { cliPath: path.resolve(toolkitRoot, "cli", "ai-workflow.mjs") });
     case "sync":
@@ -530,6 +533,25 @@ async function handleSetProviderKey(rest) {
 
   await writeConfigValue(configPath, `providers.${providerId}.apiKey`, key);
   process.stdout.write(`Successfully saved API key for ${providerId} to ${scope} config.\n`);
+  return 0;
+}
+
+async function handleMetrics(rest) {
+  const args = parseArgs(rest);
+  const metrics = await getProjectMetrics({ projectRoot: process.cwd() });
+  
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(metrics, null, 2)}\n`);
+    return 0;
+  }
+
+  process.stdout.write(`Total AI Calls: ${metrics.totalCalls}\n`);
+  process.stdout.write(`Success Rate: ${metrics.successRate}%\n`);
+  process.stdout.write(`Avg Latency: ${metrics.avgLatencyMs}ms\n`);
+  process.stdout.write("\nUsage by Model:\n");
+  for (const m of metrics.byModel) {
+    process.stdout.write(`- ${m.model_id}: ${m.count} calls, ${Math.round(m.success_rate)}% success, ${Math.round(m.avg_latency)}ms avg\n`);
+  }
   return 0;
 }
 

@@ -25,16 +25,48 @@ export async function sweepBugs(options) {
       continue;
     }
 
-    const system = `You are a developer fixing a bug. Output ONLY SEARCH/REPLACE blocks.`;
+    const system = `You are a developer fixing a bug. Output ONLY SEARCH/REPLACE blocks.
+Format each block exactly like this:
+File: path/to/file.js
+<<<< SEARCH
+exact old code to replace
+====
+new code
+>>>>
+`;
     const prompt = `Context:\n${formatContextForPrompt(context)}\n\nFix this bug.`;
     
-    const completion = await generateCompletion({
-      providerId: model.providerId,
-      modelId: model.modelId,
-      system,
-      prompt,
-      config: { host: model.host, apiKey: model.apiKey }
-    });
+    const start = Date.now();
+    let completion;
+    let sweepSuccess = true;
+    let errorMsg = null;
+
+    try {
+      completion = await generateCompletion({
+        providerId: model.providerId,
+        modelId: model.modelId,
+        system,
+        prompt,
+        config: { host: model.host, apiKey: model.apiKey }
+      });
+    } catch (error) {
+      sweepSuccess = false;
+      errorMsg = error.message;
+      throw error;
+    } finally {
+      const latencyMs = Date.now() - start;
+      await withWorkflowStore(root, async (store) => {
+        store.appendMetric({
+          taskClass: "debugging",
+          capability: "logic",
+          providerId: model.providerId,
+          modelId: model.modelId,
+          latencyMs,
+          success: sweepSuccess,
+          errorMessage: errorMsg
+        });
+      }).catch(() => {});
+    }
 
     const result = await verifyAndApplyPatch(root, bug, completion.response);
     report += `- ${bug.id}: ${result.success ? "Fixed" : `Failed (${result.error})`}\n`;
@@ -47,15 +79,32 @@ async function verifyAndApplyPatch(root, ticket, patchText) {
   const blocks = parsePatch(patchText);
   if (!blocks.length) return { success: false, error: "No patch blocks found" };
 
-  const filePath = "cli/lib/shell.mjs"; 
-  const file = await readProjectFile(root, filePath);
-  const patchResult = applyPatch(file.content, blocks);
-
-  if (!patchResult.allApplied) {
-    return { success: false, error: "Patch failed to apply cleanly" };
+  // Group blocks by file
+  const fileBlocks = new Map();
+  for (const block of blocks) {
+    if (!block.file) {
+      return { success: false, error: "A patch block is missing the 'File: path' header" };
+    }
+    const list = fileBlocks.get(block.file) ?? [];
+    list.push(block);
+    fileBlocks.set(block.file, list);
   }
 
-  await writeProjectFile(root, filePath, patchResult.content);
+  for (const [filePath, fileSpecificBlocks] of fileBlocks.entries()) {
+    try {
+      const file = await readProjectFile(root, filePath);
+      const patchResult = applyPatch(file.content, fileSpecificBlocks);
+
+      if (!patchResult.allApplied) {
+        return { success: false, error: `Patch failed to apply cleanly to ${filePath}` };
+      }
+
+      await writeProjectFile(root, filePath, patchResult.content);
+    } catch (error) {
+      return { success: false, error: `Failed to process ${filePath}: ${error.message}` };
+    }
+  }
+
   await withWorkflowStore(root, async (store) => {
     const updated = { ...ticket, lane: "Done" };
     store.upsertEntity(updated);
@@ -155,13 +204,37 @@ async function attemptDecomposition(context, { root, quality }) {
   if (!model) throw new Error("No model for decomposition.");
 
   const system = `You are a Tech Lead. Decompose the ticket into small sub-tasks. Return ONLY JSON array.`;
-  const completion = await generateCompletion({
-    providerId: model.providerId,
-    modelId: model.modelId,
-    system,
-    prompt: context,
-    config: { host: model.host, apiKey: model.apiKey, format: "json" }
-  });
+  const start = Date.now();
+  let completion;
+  let decompSuccess = true;
+  let errorMsg = null;
+
+  try {
+    completion = await generateCompletion({
+      providerId: model.providerId,
+      modelId: model.modelId,
+      system,
+      prompt: context,
+      config: { host: model.host, apiKey: model.apiKey, format: "json" }
+    });
+  } catch (error) {
+    decompSuccess = false;
+    errorMsg = error.message;
+    throw error;
+  } finally {
+    const latencyMs = Date.now() - start;
+    await withWorkflowStore(root, async (store) => {
+      store.appendMetric({
+        taskClass: quality === "high" ? "architectural-design" : "task-decomposition",
+        capability: "strategy",
+        providerId: model.providerId,
+        modelId: model.modelId,
+        latencyMs,
+        success: decompSuccess,
+        errorMessage: errorMsg
+      });
+    }).catch(() => {});
+  }
 
   return JSON.parse(completion.response);
 }

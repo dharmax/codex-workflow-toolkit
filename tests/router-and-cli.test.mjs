@@ -14,13 +14,33 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("routeTask falls back cleanly when only unavailable local providers exist", async () => {
-  const route = await routeTask({
-    root: repoRoot,
-    taskClass: "summarization"
-  });
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-router-unavail-"));
 
-  assert.equal(route.recommended, null);
-  assert.equal(route.providers.ollama.available, false);
+  try {
+    await mkdir(path.join(targetRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(targetRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          ollama: { enabled: false },
+          google: { enabled: false },
+          openai: { enabled: false },
+          anthropic: { enabled: false }
+        }
+      }),
+      "utf8"
+    );
+
+    const route = await routeTask({
+      root: targetRoot,
+      taskClass: "summarization"
+    });
+
+    assert.equal(route.recommended, null);
+    assert.equal(route.providers.ollama.available, false);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
 });
 
 test("installAgents creates the DB-first project workspace directories and config defaults", async () => {
