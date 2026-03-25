@@ -14,6 +14,7 @@ import { routeTask } from "../../core/services/router.mjs";
 import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection } from "../../core/services/projections.mjs";
 import { addManualNote, getProjectMetrics, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
+import { ingestArtifact } from "../../core/services/orchestrator.mjs";
 
 const toolkitRoot = getToolkitRoot();
 
@@ -24,6 +25,7 @@ const HELP = `Usage:
   ai-workflow set-ollama-hw [options]
   ai-workflow set-provider-key <provider-id> [--global]
   ai-workflow metrics [--json]
+  ai-workflow ingest <file> [--json]
   ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]
   ai-workflow sync [--write-projections] [--json]
   ai-workflow list [--json]
@@ -73,6 +75,8 @@ export async function main(argv) {
       return handleSetProviderKey(rest);
     case "metrics":
       return handleMetrics(rest);
+    case "ingest":
+      return handleIngest(rest);
     case "shell":
       return handleShell(rest, { cliPath: path.resolve(toolkitRoot, "cli", "ai-workflow.mjs") });
     case "sync":
@@ -551,6 +555,30 @@ async function handleMetrics(rest) {
   process.stdout.write("\nUsage by Model:\n");
   for (const m of metrics.byModel) {
     process.stdout.write(`- ${m.model_id}: ${m.count} calls, ${Math.round(m.success_rate)}% success, ${Math.round(m.avg_latency)}ms avg\n`);
+  }
+  return 0;
+}
+
+async function handleIngest(rest) {
+  const [filePath] = rest;
+  if (!filePath) {
+    printAndExit("Usage: ai-workflow ingest <file> [--json]", 1);
+  }
+  const args = parseArgs(rest);
+  const rl = readline.createInterface({ input, output });
+
+  try {
+    const targetPath = path.resolve(process.cwd(), filePath);
+    const result = await ingestArtifact(targetPath, { root: process.cwd(), rl });
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      process.stdout.write(`\nIngestion complete. Generated Epic: ${result.epic.id} with ${result.tickets.length} tickets.\n`);
+    }
+  } catch (error) {
+    printAndExit(`Ingestion failed: ${error.message}`, 1);
+  } finally {
+    rl.close();
   }
   return 0;
 }
