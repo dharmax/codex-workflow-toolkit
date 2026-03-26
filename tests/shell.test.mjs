@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chooseShellPlannerModel, compileShellAction, planShellRequestHeuristically, validateShellPlan, buildShellContext, planShellRequestWithAgent } from "../cli/lib/shell.mjs";
+import { chooseShellPlannerModel, compileShellAction, planShellRequestHeuristically, validateShellPlan, buildShellContext, planShellRequestWithAgent, runShellTurn } from "../cli/lib/shell.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
 
 test("buildShellContext reads foundational project files", async (t) => {
@@ -247,6 +247,42 @@ test("heuristic shell planner handles provider status questions without AI plann
   assert.deepEqual(plan.actions, [
     { type: "provider_status" }
   ]);
+});
+
+test("runShellTurn narrates non-mutating tool results through the assistant layer", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-" + Math.random().toString(36).slice(2));
+  await fs.mkdir(root, { recursive: true });
+
+  registerProvider("mock-shell-reply", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async ({ prompt }) => {
+      assert.match(prompt, /Tool results:/);
+      return { response: "Connected providers are ready." };
+    }
+  });
+
+  try {
+    const result = await runShellTurn("what ai providers are you connected to right now?", {
+      root,
+      json: false,
+      yes: false,
+      noAi: false,
+      planOnly: false,
+      plannerContext,
+      planners: {
+        planners: [{ providerId: "mock-shell-reply", modelId: "brain-v1" }],
+        heuristic: { mode: "heuristic", reason: "fallback" }
+      },
+      history: []
+    });
+
+    assert.equal(result.plan.kind, "plan");
+    assert.equal(result.assistantReply, "Connected providers are ready.");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test("compileShellAction produces a safe mutating note command", () => {

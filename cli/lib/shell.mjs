@@ -257,6 +257,11 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     return replyPlan(renderShellHelp(plannerContext));
   }
 
+  const contextualReply = buildContextualShellReply(text, plannerContext);
+  if (contextualReply) {
+    return contextualReply;
+  }
+
   if (["exit", "quit", "/exit", "/quit"].includes(lower)) {
     return {
       kind: "exit",
@@ -432,24 +437,23 @@ export async function planShellRequestWithAgent(inputText, options) {
   const { recentMemory, longTermMemorySummary } = await summarizeHistory(history);
 
   const system = [
-    "You are the expert Brain for 'ai-workflow', an Autonomous Engineering OS.",
-    "Your goal is to satisfy the developer's intent with extreme precision, strategic foresight, and maximum efficiency.",
+    "You are the conversational coding assistant inside ai-workflow.",
+    "Behave like a strong engineer with tools, not like a command classifier.",
+    "Your goal is to satisfy the developer's intent with precision, initiative, and clear judgment.",
     "",
-    "## Operational Protocol (STRATEGIC REASONING MANDATORY)",
-    "Before acting, you MUST perform an internal strategic assessment (Tree of Thought):",
-    "1. **Analyze Intent:** What is the user's core objective?",
-    "2. **Evaluate Paths:** Consider 2-3 sequences of tools. Why is one better?",
-    "3. **Predict Friction:** Identify potential blockers (e.g., stale state, ambiguous IDs).",
-    "4. **Final Strategy:** Explain your logic clearly in the `reason` field using a step-by-step structure.",
+    "## Operating Style",
+    "- Start from the user's real intent, not the nearest command shape.",
+    "- If a direct answer is possible, prefer `kind=reply`.",
+    "- Use actions when they materially improve the answer or are required to carry out work.",
+    "- Ask for clarification only when it is genuinely blocking.",
+    "- Hide tool mechanics unless they matter to the user.",
     "",
-    "   - To pull specific ticket info, use `extract_ticket` with the ID. If you don't have the ID, use `list_tickets` first.",
-    "   - To ensure fresh data, start with `sync`.",
-    "   - To investigate project structure, use `search` or `project_summary`.",
-    "3. **Plan Formulation:** Devise a path that satisfies the user's intent in the fastest, clearest, and most accurate way.",
-    "   - Directive (Action): If the user wants to DO something, provide a multi-step `plan`.",
-    "   - Inquiry (Question): If the user is ASKING something, use tools to gather data, then provide a `reply` with the answer. Do NOT just dump data; synthesize it.",
-    "4. **Information Density:** Provide exactly what's needed. Not too much (avoiding noise), not too little (avoiding extra turns).",
-    "5. **Zero Hallucination:** NEVER invent facts. If a ticket or file is not in your context, find it or ask.",
+    "## Tool Judgment",
+    "- To pull specific ticket info, use `extract_ticket` with the ID. If you don't have the ID, use `list_tickets` first.",
+    "- To ensure fresh data, use `sync` when stale state is the blocker.",
+    "- To investigate project structure, use `search` or `project_summary`.",
+    "- For direct questions, you may answer with `kind=reply` after using tools, but synthesize the answer instead of dumping raw data.",
+    "- Never invent facts. If a ticket or file is not in context, find it or say so.",
     "",
     "## System Philosophy",
     "- We use a 'Database-First' architecture where the Kanban and Epics are the source of truth.",
@@ -468,9 +472,10 @@ export async function planShellRequestWithAgent(inputText, options) {
     catalog,
     "",
     "## Interaction Rules",
-    "- Vague Request: Use `kind=reply` to ask clarifying questions. Reference existing state to show you're 'alive'.",
-    "- Multi-step Strategy: If a complex task is requested, use `strategy` to explain the long-term plan, and `actions` for the immediate steps.",
+    "- Vague Request: Use `kind=reply` to ask clarifying questions. Reference existing state when helpful.",
+    "- Multi-step Strategy: If a complex task is requested, use `strategy` to explain the next concrete approach, and `actions` for immediate steps.",
     "- Directives: If the user says 'go ahead', 'do it', or 'proceed', execute the next logical steps of your previously proposed strategy.",
+    "- Sound like a serious assistant. Do not sound like a router, planner, or bureaucrat.",
     "- JSON only: Your output must be valid JSON matching the schema.",
   ].join("\n");
 
@@ -622,6 +627,92 @@ export function validateShellPlan(plan, plannerContext) {
   };
 }
 
+function shouldAutoNarratePlan(actions, options) {
+  if (options.json || options.planOnly || options.yes) {
+    return false;
+  }
+  if (!Array.isArray(actions) || !actions.length) {
+    return false;
+  }
+  return actions.every((action) => !isMutatingAction(action));
+}
+
+async function synthesizeShellExecutionReply({ inputText, plan, executed, options, planner }) {
+  const renderedOutputs = executed
+    .map((item) => {
+      const text = String(item.ok ? item.stdout : `${item.stdout}${item.stderr}`).trim();
+      if (!text || text === STREAMED_STDIO) {
+        return null;
+      }
+      return `Action: ${item.action.type}\nOutput:\n${text}`;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
+  if (!renderedOutputs) {
+    return null;
+  }
+
+  if (!planner || options.noAi) {
+    return renderFallbackAssistantReply({ inputText, plan, executed });
+  }
+
+  try {
+    const completion = await generateCompletion({
+      providerId: planner.providerId,
+      modelId: planner.modelId,
+      system: [
+        "You are the conversational shell for ai-workflow.",
+        "Speak like a strong coding assistant, not a command router.",
+        "You already have tool results. Answer the user's request directly and naturally.",
+        "Do not mention JSON, schemas, planners, or internal routing.",
+        "If tool output is partial or uncertain, say that briefly and concretely.",
+        "Keep the answer concise but useful."
+      ].join("\n"),
+      prompt: [
+        `User request:\n${inputText}`,
+        "",
+        `Planned actions:\n${plan.actions.map((action) => action.type).join(", ")}`,
+        "",
+        `Tool results:\n${renderedOutputs}`,
+        "",
+        "Write the final assistant reply:"
+      ].join("\n"),
+      config: {
+        apiKey: planner.apiKey,
+        baseUrl: planner.baseUrl,
+        host: planner.host
+      }
+    });
+    const text = String(completion.response ?? "").trim();
+    return text || renderFallbackAssistantReply({ inputText, plan, executed });
+  } catch {
+    return renderFallbackAssistantReply({ inputText, plan, executed });
+  }
+}
+
+function renderFallbackAssistantReply({ inputText, plan, executed }) {
+  const first = executed[0];
+  const raw = String(first?.ok ? first?.stdout : `${first?.stdout ?? ""}${first?.stderr ?? ""}`).trim();
+  if (!raw) {
+    return null;
+  }
+  const actionType = plan.actions[0]?.type;
+  if (actionType === "provider_status") {
+    return raw;
+  }
+  if (actionType === "project_summary") {
+    return `Here is the current project status:\n${raw}`;
+  }
+  if (actionType === "metrics") {
+    return `Here are the current workflow metrics:\n${raw}`;
+  }
+  if (actionType === "doctor") {
+    return `Here is the current diagnostics report:\n${raw}`;
+  }
+  return raw;
+}
+
 function validateShellAction(action, plannerContext) {
   if (!action || typeof action !== "object") {
     throw new Error("shell action must be an object");
@@ -766,7 +857,8 @@ export async function runShellTurn(inputText, options) {
   }
 
   let preRendered = false;
-  if (!options.json) {
+  const shouldRenderRawPlan = !options.json && !shouldAutoNarratePlan(plan.actions, options);
+  if (shouldRenderRawPlan) {
     const activePlanner = plan.planner ?? options.planners.planners[0] ?? options.planners.heuristic;
     output.write(`${renderPlannerLine(activePlanner)}\n${renderActionList(plan.actions)}\n`);
     preRendered = true;
@@ -793,12 +885,25 @@ export async function runShellTurn(inputText, options) {
     });
   }
 
+  const narrationPlanner = plan.planner?.providerId ? plan.planner : (anyAiPlanner ?? null);
+  let assistantReply = null;
+  if (!failed && !recovery && shouldAutoNarratePlan(plan.actions, options)) {
+    assistantReply = await synthesizeShellExecutionReply({
+      inputText,
+      plan,
+      executed,
+      options,
+      planner: narrationPlanner
+    });
+  }
+
   return {
     input: inputText,
     plan,
     executed,
     preRendered,
-    recovery
+    recovery,
+    assistantReply
   };
 }
 
@@ -1310,7 +1415,7 @@ function emitShellResult(result, options) {
 }
 
 function renderHumanShellResult(result) {
-  if (!result.preRendered && result.plan.planner) {
+  if (!result.preRendered && result.plan.planner && !result.assistantReply && result.plan.kind !== "reply") {
     output.write(`${renderPlannerLine(result.plan.planner)}\n`);
   }
   if (result.plan.strategy && !result.options?.json) {
@@ -1322,7 +1427,16 @@ function renderHumanShellResult(result) {
   }
 
   if (!result.preRendered) {
-    output.write(`${renderActionList(result.plan.actions)}\n`);
+    if (!result.assistantReply) {
+      output.write(`${renderActionList(result.plan.actions)}\n`);
+    }
+  }
+  if (result.assistantReply) {
+    output.write(`${String(result.assistantReply).trim()}\n`);
+    if (result.recovery) {
+      output.write(`\nAI recovery:\n${renderRecovery(result.recovery)}`);
+    }
+    return;
   }
   for (const execution of result.executed) {
     const streamText = execution.ok ? execution.stdout : `${execution.stdout}${execution.stderr}`;
@@ -1554,6 +1668,42 @@ function renderConfiguredOllamaHardware(result) {
     lines.push(`Planner model: ${result.applied.plannerModel}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function buildContextualShellReply(inputText, plannerContext) {
+  const text = String(inputText ?? "").trim();
+  const normalized = text.toLowerCase().replace(/[?!.\s]+$/g, "");
+  const summary = plannerContext?.summary ?? {};
+  const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
+  const modules = Array.isArray(summary.modules) ? summary.modules : [];
+
+  if (["what are the next tickets", "what are the active tickets", "can you list the active tickets"].includes(normalized)) {
+    if (!activeTickets.length) {
+      return replyPlan("There are no active tickets right now.", 0.9, "Answered from current summary.");
+    }
+    const lines = ["Current active tickets:"];
+    for (const ticket of activeTickets.slice(0, 8)) {
+      lines.push(`- [${ticket.lane}] ${ticket.id}: ${ticket.title}`);
+    }
+    return replyPlan(lines.join("\n"), 0.9, "Answered from current summary.");
+  }
+
+  if (["what are my modules", "what modules do i have"].includes(normalized)) {
+    if (!modules.length) {
+      return replyPlan("I do not have module data yet. Run `sync` first if the index is stale.", 0.82, "Module summary unavailable.");
+    }
+    return replyPlan(`Current modules: ${modules.slice(0, 10).map((item) => item.name).join(", ")}.`, 0.88, "Answered from project summary.");
+  }
+
+  if (["what does claims mean", "what do claims mean"].includes(normalized)) {
+    return replyPlan("Claims are extracted relationships and facts in the workflow DB, such as imports, calls, ownership, and ticket-linked evidence.", 0.9, "Explained built-in terminology.");
+  }
+
+  if (["how are you", "tell me a joke"].includes(normalized)) {
+    return replyPlan("Ready. Point me at the code or the problem and I’ll work it through.", 0.45, "Light conversational reply.");
+  }
+
+  return null;
 }
 
 import { attemptActionCorrection } from "../../core/lib/self-correction.mjs";

@@ -105,12 +105,9 @@ test("Heuristic Planner 50-Case Coverage", () => {
 
 const CHAT_TEST_CASES = [
   "how are you?",
-  "what are the next tickets?",
   "what do you think about that?",
   "tell me a joke",
-  "what does claims mean?",
-  "what are my modules?",
-  "can you list the active tickets?"
+  "what do you think about the codebase?"
 ];
 
 test("Heuristic Planner gracefully falls back for conversational input", () => {
@@ -125,4 +122,30 @@ test("Heuristic Planner gracefully falls back for conversational input", () => {
   if (failures.length > 0) {
     assert.fail(`Heuristic planner falsely matched conversational input:\n${failures.join("\n")}`);
   }
+});
+
+test("Heuristic Planner can answer a few grounded shell questions directly", () => {
+  const nextTickets = planShellRequestHeuristically("what are the next tickets?", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [{ id: "TKT-001", title: "Example", lane: "Todo" }]
+    }
+  });
+  assert.equal(nextTickets.kind, "reply");
+  assert.match(nextTickets.reply, /Current active tickets:/);
+
+  const modules = planShellRequestHeuristically("what are my modules?", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      modules: [{ name: "src/ui" }, { name: "src/engine" }]
+    }
+  });
+  assert.equal(modules.kind, "reply");
+  assert.match(modules.reply, /src\/ui, src\/engine/);
+
+  const claims = planShellRequestHeuristically("what does claims mean?", plannerContext);
+  assert.equal(claims.kind, "reply");
+  assert.match(claims.reply, /workflow DB/i);
 });
