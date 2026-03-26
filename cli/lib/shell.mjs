@@ -11,7 +11,7 @@ import { routeTask } from "../../core/services/router.mjs";
 import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
 import { decomposeTicket, ideateFeature, sweepBugs } from "../../core/services/orchestrator.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
-import { addManualNote, createTicket, getProjectMetrics, getProjectSummary, recordMetric, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { addManualNote, createTicket, getProjectMetrics, getProjectSummary, getSmartProjectStatus, recordMetric, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTicketEntity } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/lib/cli.mjs";
@@ -22,7 +22,7 @@ import { configureOllamaHardware } from "./ollama-hw.mjs";
 const execFileAsync = promisify(execFile);
 const STREAMED_STDIO = "__STREAMED_STDIO__";
 
-const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw"]);
+const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw", "ideate_feature", "sweep_bugs", "ingest_artifact"]);
 const NOTE_TYPES = ["NOTE", "TODO", "FIXME", "HACK", "BUG", "RISK"];
 const KNOWN_TASK_CLASSES = [
   "summarization",
@@ -77,11 +77,27 @@ export async function handleShell(rest, { cliPath } = {}) {
 }
 
 export async function buildShellContext(root = process.cwd()) {
-  const [toolkitCodelets, projectCodelets, summary, providerState] = await Promise.all([
+  const [toolkitCodelets, projectCodelets, summary, providerState, smartStatus] = await Promise.all([
     listToolkitCodelets(),
     listProjectCodelets(root),
     safeGetProjectSummary(root),
-    discoverProviderState({ root })
+    discoverProviderState({ root }),
+    getSmartProjectStatus({ projectRoot: root }).catch(() => "Status unavailable.")
+  ]);
+
+  const [mission, kanban, gemini, guidelines] = await Promise.all([
+    readFileIfExists(path.resolve(root, "MISSION.md")),
+    (async () => {
+      const gK = await readFileIfExists(path.resolve(root, ".gemini", "KANBAN.md"));
+      if (gK) return gK;
+      return readFileIfExists(path.resolve(root, "KANBAN.md"));
+    })(),
+    (async () => {
+      const gG = await readFileIfExists(path.resolve(root, ".gemini", "GEMINI.md"));
+      if (gG) return gG;
+      return readFileIfExists(path.resolve(root, "GEMINI.md"));
+    })(),
+    readFileIfExists(path.resolve(root, "templates", "project-guidelines.md"))
   ]);
 
   return {
@@ -89,8 +105,22 @@ export async function buildShellContext(root = process.cwd()) {
     toolkitCodelets,
     projectCodelets,
     summary,
-    knowledge: providerState.knowledge
+    smartStatus,
+    knowledge: providerState.knowledge,
+    mission,
+    kanban,
+    gemini,
+    guidelines
   };
+}
+
+async function readFileIfExists(filePath) {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    return await readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 export async function resolveShellPlanners(root = process.cwd()) {
@@ -199,8 +229,8 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     };
   }
 
-  if (/^(status|summary|project summary|show status)$/i.test(text)) {
-    return actionPlan([{ type: "project_summary" }], 0.98, "Explicit summary/status request.");
+  if (/^(status|summary|project summary|show status|show tickets|list tickets)$/i.test(text)) {
+    return actionPlan([{ type: "project_summary" }], 0.98, "Explicit summary/status/tickets request.");
   }
 
   if (/^(metrics|stats|usage)$/i.test(text)) {
@@ -327,76 +357,95 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
   ].join("\n"), 0.45, "No high-confidence heuristic match.");
 }
 
+export async function summarizeHistory(history) {
+  if (!history.length) return { recentMemory: null, longTermMemorySummary: null };
+
+  const recent = history.slice(-2);
+  const older = history.slice(0, -2);
+
+  const recentMemory = recent.map(h => `${h.role === "user" ? "User" : "Brain"}: ${h.content}`).join("\n");
+  
+  if (!older.length) return { recentMemory, longTermMemorySummary: null };
+
+  const longTermMemorySummary = older.map(h => `- ${h.role === "user" ? "User" : "Brain"}: ${h.content.slice(0, 200)}${h.content.length > 200 ? "..." : ""}`).join("\n");
+
+  return { recentMemory, longTermMemorySummary };
+}
+
 export async function planShellRequestWithAgent(inputText, options) {
   const catalog = buildActionCatalog(options.plannerContext);
-  const summary = options.plannerContext.summary ?? {};
+  const { summary = {}, smartStatus, mission, kanban, gemini, guidelines } = options.plannerContext;
   const history = options.history ?? [];
 
-  const ticketsSummary = (summary.activeTickets ?? [])
-    .slice(0, 10)
-    .map(t => `- [${t.lane}] ${t.id}: ${t.title}`)
-    .join("\n");
-
-  const candidatesSummary = (summary.candidates ?? [])
-    .slice(0, 5)
-    .map(c => `- Candidate: ${c.title} (Score: ${c.data?.score ?? 0})`)
-    .join("\n");
+  // Memory Strategy:
+  // 1. One interaction back (User + AI Result)
+  // 2. Summary of older history
+  const { recentMemory, longTermMemorySummary } = await summarizeHistory(history);
 
   const system = [
-    "You are the expert persona for 'ai-workflow', an Autonomous Engineering OS.",
-    "Your goal is to help the developer manage their project workflow efficiently.",
-    "You are friendly, robust, and reliable.",
+    "You are the expert Brain for 'ai-workflow', an Autonomous Engineering OS.",
+    "Your goal is to satisfy the developer's intent with extreme precision, strategic foresight, and maximum efficiency.",
     "",
-    "## Project State Definitions",
-    "- Claims: Architectural facts extracted via AST (e.g., 'File A calls Function B').",
-    "- Modules: Architectural boundaries (e.g., 'core/db', 'ui/auth').",
-    "- Features: User-facing capabilities mapped to code.",
-    "- Kanban: The live workplan (Tickets and Epics).",
+    "## Operational Protocol (STRATEGIC REASONING MANDATORY)",
+    "Before acting, you MUST perform an internal strategic assessment:",
+    "1. **Deconstruct Intent:** What is the user's core objective? (e.g., 'see status' vs 'fix a bug').",
+    "2. **Tool Enablement:** Map the intent to the most effective sequence of actions. You have a suite of tools (catalog below). Use them like a pro.",
+    "   - To pull specific ticket info, use `extract_ticket` with the ID. If you don't have the ID, use `list_tickets` first.",
+    "   - To ensure fresh data, start with `sync`.",
+    "   - To investigate project structure, use `search` or `project_summary`.",
+    "3. **Plan Formulation:** Devise a path that satisfies the user's intent in the fastest, clearest, and most accurate way.",
+    "   - Directive (Action): If the user wants to DO something, provide a multi-step `plan`.",
+    "   - Inquiry (Question): If the user is ASKING something, use tools to gather data, then provide a `reply` with the answer. Do NOT just dump data; synthesize it.",
+    "4. **Information Density:** Provide exactly what's needed. Not too much (avoiding noise), not too little (avoiding extra turns).",
+    "5. **Zero Hallucination:** NEVER invent facts. If a ticket or file is not in your context, find it or ask.",
     "",
-    "## Project Status",
-    `- Indexed Files: ${summary.fileCount ?? 0}`,
-    `- Unprocessed Notes: ${summary.noteCount ?? 0}`,
+    "## System Philosophy",
+    "- We use a 'Database-First' architecture where the Kanban and Epics are the source of truth.",
+    "- We perform 'Surgical Strikes' using SEARCH/REPLACE blocks (in the main OS) to minimize token usage.",
     "",
-    "### Active Tickets (Next to handle)",
-    ticketsSummary || "No active tickets.",
+    "## Project Foundation",
+    mission ? `### MISSION.md\n${mission}\n` : "",
+    gemini ? `### GEMINI.md\n${gemini}\n` : "",
+    kanban ? `### KANBAN.md\n${kanban}\n` : "",
+    guidelines ? `### GUIDELINES\n${guidelines}\n` : "",
     "",
-    "### Top Review Candidates (Potential bugs/tasks)",
-    candidatesSummary || "No pending review candidates.",
+    "## Project Current Status (Smart Summary)",
+    smartStatus || "Status unavailable.",
     "",
-    "## Instructions",
-    "1. Analyze the user intent. Use the provided Project Status to answer questions accurately.",
-    "2. If the user asks about tickets, ONLY list the tickets shown above. Do not invent tickets.",
-    "3. If the user is just chatting or asking about status, use kind=reply.",
-    "4. If the user wants to perform a task, use kind=plan and map it to available actions.",
-    "5. Return ONLY valid JSON matching the schema.",
-    "6. Use at most 3 actions per plan."
-  ].join("\n");
-
-  const historyText = history.length > 0
-    ? "## Conversation History\n" + history.map(h => `${h.role === "user" ? "User" : "You"}: ${h.content}`).join("\n") + "\n\n"
-    : "";
-
-  const prompt = [
-    historyText,
-    "## Available Actions:",
+    "## Available Actions (Your Capabilities):",
     catalog,
     "",
+    "## Interaction Rules",
+    "- Vague Request: Use `kind=reply` to ask clarifying questions. Reference existing state to show you're 'alive'.",
+    "- Multi-step Strategy: If a complex task is requested, use `strategy` to explain the long-term plan, and `actions` for the immediate steps.",
+    "- Directives: If the user says 'go ahead', 'do it', or 'proceed', execute the next logical steps of your previously proposed strategy.",
+    "- JSON only: Your output must be valid JSON matching the schema.",
+  ].join("\n");
+
+  const memoryBlock = [
+    longTermMemorySummary ? `### Contextual Summary (Past Interactions):\n${longTermMemorySummary}\n` : "",
+    recentMemory ? `### Recent Interaction (Last Turn):\n${recentMemory}\n` : ""
+  ].filter(Boolean).join("\n");
+
+  const prompt = [
+    memoryBlock,
     "## Allowed JSON Schema:",
     JSON.stringify({
       kind: "plan|reply|exit",
       confidence: 0.8,
-      reason: "thinking process",
-      reply: "human-friendly message (use when kind=reply)",
+      reason: "Your internal strategic reasoning (mandatory)",
+      strategy: "The long-term plan or next steps for the developer",
+      reply: "human-friendly message (mandatory if kind=reply, optional if kind=plan)",
       actions: [{
-        type: "project_summary|metrics|audit_architecture|sync|run_review|search|extract_ticket|decompose_ticket|ideate_feature|sweep_bugs|extract_guidelines|route|telegram_preview|add_note|create_ticket|run_codelet",
+        type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|search|extract_ticket|decompose_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|telegram_preview|add_note|create_ticket|run_codelet",
         query: "for search",
         ticketId: "for extract_ticket/decompose_ticket/extract_guidelines",
         intent: "for ideate_feature",
+        filePath: "for ingest_artifact/add_note",
         changed: true,
         taskClass: "for route",
         noteType: "NOTE|TODO|FIXME|HACK|BUG|RISK",
         body: "for add_note",
-        filePath: "optional",
         line: 12,
         id: "for create_ticket",
         title: "for create_ticket",
@@ -408,7 +457,7 @@ export async function planShellRequestWithAgent(inputText, options) {
       }]
     }, null, 2),
     "",
-    `## Current Request:\nUser: "${inputText}"\nYou (output JSON only):`
+    `## Current User Request:\n"${inputText}"\n\nYour Response (JSON):`
   ].join("\n");
 
   const start = Date.now();
@@ -455,10 +504,31 @@ export async function planShellRequestWithAgent(inputText, options) {
     const jsonMatch = rawResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
     const cleanJson = jsonMatch ? jsonMatch[1].trim() : rawResponse;
 
-    const parsed = JSON.parse(cleanJson);
-    return validateShellPlan(parsed, options.plannerContext);
+    let parsed;
+    try {
+      parsed = JSON.parse(cleanJson);
+    } catch {
+      return replyPlan(completion.response, 0.5, "Model returned non-JSON text; treating as reply.");
+    }
+
+    try {
+      return validateShellPlan(parsed, options.plannerContext);
+    } catch (validationError) {
+      // If the model gave a strategy but failed action mapping, salvage the strategy
+      if (parsed && typeof parsed === "object" && parsed.strategy) {
+        return {
+          ...replyPlan(
+            `I understood your strategy: "${parsed.strategy}", but I couldn't map it to CLI actions. Try being more specific or using a different command.`,
+            0.4,
+            `Validation failed: ${validationError.message}`
+          ),
+          strategy: String(parsed.strategy)
+        };
+      }
+      throw validationError;
+    }
   } catch (error) {
-    return replyPlan(completion.response, 0.5, "Model returned non-JSON text; treating as reply.");
+    return replyPlan(completion.response, 0.4, `Structural error: ${error.message}`);
   }
 }
 
@@ -468,7 +538,10 @@ export function validateShellPlan(plan, plannerContext) {
   }
 
   if (plan.kind === "reply") {
-    return replyPlan(String(plan.reply ?? "I need a clearer request."), Number(plan.confidence ?? 0.5), String(plan.reason ?? "Planner reply."));
+    return {
+      ...replyPlan(String(plan.reply ?? "I need a clearer request."), Number(plan.confidence ?? 0.5), String(plan.reason ?? "Planner reply.")),
+      strategy: plan.strategy ? String(plan.strategy) : null
+    };
   }
 
   if (plan.kind === "exit") {
@@ -476,7 +549,8 @@ export function validateShellPlan(plan, plannerContext) {
       kind: "exit",
       actions: [],
       confidence: Number(plan.confidence ?? 1),
-      reason: String(plan.reason ?? "Planner exit.")
+      reason: String(plan.reason ?? "Planner exit."),
+      strategy: plan.strategy ? String(plan.strategy) : null
     };
   }
 
@@ -489,7 +563,8 @@ export function validateShellPlan(plan, plannerContext) {
     kind: "plan",
     actions,
     confidence: Number(plan.confidence ?? 0.7),
-    reason: String(plan.reason ?? "Planner produced a valid action plan.")
+    reason: String(plan.reason ?? "Planner produced a valid action plan."),
+    strategy: plan.strategy ? String(plan.strategy) : null
   };
 }
 
@@ -501,6 +576,8 @@ function validateShellAction(action, plannerContext) {
   const type = String(action.type ?? "");
   switch (type) {
     case "project_summary":
+    case "list_tickets":
+    case "next_ticket":
     case "doctor":
     case "sync":
     case "run_review":
@@ -515,6 +592,20 @@ function validateShellAction(action, plannerContext) {
       return { type, query: String(action.query).trim() };
     case "extract_ticket":
       return { type, ticketId: requireTicketId(action.ticketId) };
+    case "decompose_ticket":
+      return { type, ticketId: requireTicketId(action.ticketId) };
+    case "ideate_feature":
+      if (!String(action.intent ?? "").trim()) {
+        throw new Error("ideate_feature action requires intent");
+      }
+      return { type, intent: String(action.intent).trim() };
+    case "sweep_bugs":
+      return { type };
+    case "ingest_artifact":
+      if (!String(action.filePath ?? "").trim()) {
+        throw new Error("ingest_artifact action requires filePath");
+      }
+      return { type, filePath: String(action.filePath).trim() };
     case "extract_guidelines":
       return {
         type,
@@ -573,7 +664,8 @@ export async function runShellTurn(inputText, options) {
     plan,
     executed: [],
     preRendered: false,
-    history: options.history ?? []
+    history: options.history ?? [],
+    options
   };
 
   if (plan.kind !== "plan") {
@@ -667,7 +759,10 @@ export async function executeShellAction(action, options) {
 export function compileShellAction(action, { json = false } = {}) {
   switch (action.type) {
     case "project_summary":
+    case "list_tickets":
       return cliCommand(["project", "summary", ...(json ? ["--json"] : [])], false);
+    case "next_ticket":
+      return cliCommand(["project", "ticket", "next", ...(json ? ["--json"] : [])], false);
     case "metrics":
       return cliCommand(["project", "metrics", ...(json ? ["--json"] : [])], false);
     case "doctor":
@@ -688,6 +783,8 @@ export function compileShellAction(action, { json = false } = {}) {
       return cliCommand(["ideate", "feature", action.intent], true);
     case "sweep_bugs":
       return cliCommand(["sweep", "bugs"], true);
+    case "ingest_artifact":
+      return cliCommand(["ingest", action.filePath], true);
     case "extract_guidelines":
       return cliCommand([
         "extract",
@@ -801,17 +898,31 @@ export async function runInteractiveShell(options) {
         if (!line) {
           continue;
         }
+
+        // 1. Refresh context before every turn so the Brain sees the latest state
+        options.plannerContext = await buildShellContext(options.root);
+
         const result = await runShellTurn(line, options);
         if (result.plan.kind === "exit") {
           break;
         }
 
-        // Maintain history (max 10 messages)
+        // 2. Maintain high-signal history (max 10 messages)
         options.history.push({ role: "user", content: line });
         if (result.plan.reply) {
           options.history.push({ role: "ai", content: result.plan.reply });
         } else if (result.plan.actions?.length) {
-          options.history.push({ role: "ai", content: `Executing plan: ${result.plan.actions.map(a => a.type).join(", ")}` });
+          // Include actual command output in history so the Brain "sees" what happened
+          const executionSummary = result.executed.map(e => {
+            const out = (e.stdout || "").trim();
+            const displayOut = out.length > 500 ? out.slice(0, 500) + "... [truncated]" : out;
+            return `Action [${e.action.type}] output:\n${displayOut || "(no output)"}`;
+          }).join("\n\n");
+          
+          options.history.push({ 
+            role: "ai", 
+            content: `Strategy: ${result.plan.strategy || "Execute actions"}\n\n${executionSummary}` 
+          });
         }
         if (options.history.length > 10) options.history = options.history.slice(-10);
 
@@ -877,7 +988,10 @@ async function promptShellQuestion(rl, prompt) {
 async function runShellActionDirect(action, options) {
   switch (action.type) {
     case "project_summary":
+    case "list_tickets":
       return formatProjectSummary(await getProjectSummary({ projectRoot: options.root }), options.json);
+    case "next_ticket":
+      return runCodeletById("kanban-next", [], options);
     case "metrics":
       return formatProjectMetrics(await getProjectMetrics({ projectRoot: options.root }), options.json);
     case "doctor": {
@@ -987,6 +1101,15 @@ async function runShellActionDirect(action, options) {
       return ideateFeature(action.intent, options);
     case "sweep_bugs":
       return sweepBugs(options);
+    case "ingest_artifact": {
+      const rl = options.rl ?? readline.createInterface({ input, output });
+      try {
+        const result = await ingestArtifact(path.resolve(options.root, action.filePath), { root: options.root, rl });
+        return options.json ? `${JSON.stringify(result, null, 2)}\n` : `Ingested ${action.filePath}: Generated ${result.epic.id} and ${result.tickets.length} tickets.\n`;
+      } finally {
+        if (!options.rl) rl.close();
+      }
+    }
     case "extract_guidelines":
       return runCodeletById("guidelines", [
         ...(action.ticketId ? ["--ticket", action.ticketId] : []),
@@ -1047,6 +1170,9 @@ function renderHumanShellResult(result) {
   if (!result.preRendered && result.plan.planner) {
     output.write(`${renderPlannerLine(result.plan.planner)}\n`);
   }
+  if (result.plan.strategy && !result.options?.json) {
+    output.write(`Strategy: ${result.plan.strategy}\n\n`);
+  }
   if (result.plan.kind === "reply") {
     output.write(`${String(result.plan.reply ?? "").trim()}\n`);
     return;
@@ -1098,12 +1224,18 @@ function renderPlannerLine(planner) {
 
 function buildActionCatalog(plannerContext) {
   const lines = [
-    "- project_summary: project summary/status",
+    "- project_summary: show overall project status, file/symbol counts, and recent friction",
+    "- list_tickets: show all active tickets with summaries",
     "- doctor: local diagnostics and provider visibility",
     "- sync: sync the workflow DB",
     "- run_review: run the review summary codelet",
     "- search: search indexed project data",
     "- extract_ticket: extract a specific ticket",
+    "- next_ticket: find the next priority ticket to work on",
+    "- decompose_ticket: decompose a ticket into sub-tasks",
+    "- ideate_feature: scope a new feature into an Epic and Tickets",
+    "- sweep_bugs: automated bug-fixing loop for Todo lane",
+    "- ingest_artifact: parse a file (e.g. PRD) into Epics/Tickets",
     "- extract_guidelines: extract task guidance",
     "- route: show provider/model routing for a task class",
     "- telegram_preview: render Telegram status text",
@@ -1384,13 +1516,29 @@ function formatProjectSummary(summary, json) {
   if (json) {
     return `${JSON.stringify(summary, null, 2)}\n`;
   }
-  return [
+  const lines = [
     `Files indexed: ${summary.fileCount}`,
     `Symbols indexed: ${summary.symbolCount}`,
     `Notes tracked: ${summary.noteCount}`,
     `Tickets: ${summary.activeTickets.length}`,
     `Candidates: ${summary.candidates.length}`
-  ].join("\n") + "\n";
+  ];
+
+  if (summary.activeTickets.length) {
+    lines.push("\nActive Tickets:");
+    for (const t of summary.activeTickets) {
+      lines.push(`- [${t.lane}] ${t.id}: ${t.title}`);
+    }
+  }
+
+  if (summary.candidates.length) {
+    lines.push("\nRecent Candidates:");
+    for (const c of summary.candidates) {
+      lines.push(`- [${c.status}] ${c.id}: ${c.summary}`);
+    }
+  }
+
+  return lines.join("\n") + "\n";
 }
 
 function formatProjectMetrics(metrics, json) {

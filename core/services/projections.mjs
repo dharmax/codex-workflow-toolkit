@@ -13,11 +13,66 @@ const DEFAULT_TICKET_LANES = [
   "Archived"
 ];
 
+export function buildSmartProjectStatus(store, { auditFindings = [] } = {}) {
+  const counts = store.getSummary();
+  const tickets = store.listEntities({ entityType: "ticket" }).filter(t => t.state !== "archived");
+  const epics = store.listEntities({ entityType: "epic" }).filter(e => e.state !== "archived");
+  const metrics = store.listMetrics({ limit: 50 });
+
+  const activeEpic = epics.find(e => e.state === "open") || epics[0];
+  const inProgress = tickets.filter(t => t.lane === "In Progress");
+  const todo = tickets.filter(t => t.lane === "Todo");
+  const others = tickets.filter(t => t.lane !== "In Progress" && t.lane !== "Todo");
+  const failures = metrics.filter(m => !m.success).slice(0, 5);
+
+  const auditSummary = auditFindings.reduce((acc, f) => {
+    acc[f.severity] = (acc[f.severity] || 0) + 1;
+    return acc;
+  }, {});
+
+  const status = [
+    `Environment: ${process.platform} | CWD: ${store.projectRoot}`,
+    `Project: ${path.basename(store.projectRoot)}`,
+    `Epic: ${activeEpic ? `[${activeEpic.id}] ${activeEpic.title} (${activeEpic.state})` : "None"}`,
+    `Inventory: ${counts.files} files, ${tickets.length} active tickets, ${counts.candidates} candidates`,
+    "",
+    "### ACTIVE PRIORITY QUEUE",
+    inProgress.length ? inProgress.map(t => `- [IN_PROGRESS] ${t.id}: ${t.title}`).join("\n") : "- No tickets currently in progress.",
+    todo.length ? todo.slice(0, 20).map(t => `- [TODO] ${t.id}: ${t.title}`).join("\n") : "",
+    todo.length > 20 ? `... and ${todo.length - 20} more TODOs` : "",
+    others.length ? `\n### BACKLOG / OTHER\n${others.slice(0, 20).map(t => `- [${t.lane}] ${t.id}: ${t.title}`).join("\n")}` : "",
+    others.length > 20 ? `... and ${others.length - 20} more items in backlog` : "",
+    "",
+    "### RECENT FRICTION (SYSTEM HEALTH)",
+    failures.length 
+      ? failures.map(f => `!! FAILURE in ${f.task_class} (${f.created_at}): ${f.error_message}`).join("\n") 
+      : "- System metrics indicate nominal operation (no recent failures).",
+    "",
+    "### ARCHITECTURAL HEALTH",
+    auditFindings.length 
+      ? `Audit Detects: ${auditSummary.high || 0} High, ${auditSummary.medium || 0} Medium issues.` 
+      : "- No architectural audit performed or wiring is clean."
+  ].filter(Boolean).join("\n");
+
+  return status;
+}
+
 export function buildProjectSummary(store) {
   const counts = store.getSummary();
-  const activeTickets = store.listEntities({ entityType: "ticket" }).filter((ticket) => ticket.state !== "archived");
+  const activeTickets = store.listEntities({ entityType: "ticket" })
+    .filter((ticket) => ticket.state !== "archived")
+    .map(t => ({
+      id: t.id,
+      title: t.title,
+      lane: t.lane,
+      summary: t.data?.summary ?? "No description provided.",
+      domain: t.data?.domain ?? "unknown"
+    }));
+
   const candidates = store.listCandidates({ statuses: ["ai-candidate", "doubtful-relevancy", "promoted"] }).slice(0, 10);
-  const notes = store.listNotes().slice(0, 10);
+  const notes = store.listNotes().slice(0, 20);
+  const modules = store.listModules().map(m => ({ name: m.name, responsibility: m.responsibility }));
+
   return {
     fileCount: counts.files,
     noteCount: counts.notes,
@@ -27,7 +82,8 @@ export function buildProjectSummary(store) {
     candidateCount: counts.candidates,
     activeTickets,
     candidates,
-    notes
+    notes,
+    modules
   };
 }
 
@@ -123,13 +179,13 @@ export async function writeProjectProjections(store, { projectRoot }) {
 }
 
 export async function importLegacyProjections(store, { projectRoot }) {
-  const existingTickets = store.listEntities({ entityType: "ticket" });
-  if (existingTickets.length) {
+  const kanbanText = await readText(path.resolve(projectRoot, "kanban.md"), "");
+  const epicsText = await readText(path.resolve(projectRoot, "epics.md"), "");
+  
+  if (!kanbanText.trim() && !epicsText.trim()) {
     return { importedTickets: 0, importedEpics: 0, skipped: true };
   }
 
-  const kanbanText = await readText(path.resolve(projectRoot, "kanban.md"), "");
-  const epicsText = await readText(path.resolve(projectRoot, "epics.md"), "");
   let currentLane = "Todo";
   let importedTickets = 0;
   let importedEpics = 0;
@@ -146,8 +202,11 @@ export async function importLegacyProjections(store, { projectRoot }) {
       continue;
     }
 
+    const ticketId = ticketMatch[1];
+    const existing = store.getEntity(ticketId);
+
     store.upsertEntity({
-      id: ticketMatch[1],
+      id: ticketId,
       entityType: "ticket",
       title: ticketMatch[2].trim(),
       lane: currentLane,
@@ -156,8 +215,10 @@ export async function importLegacyProjections(store, { projectRoot }) {
       provenance: "legacy-kanban-import",
       sourceKind: "projection-import",
       reviewState: "active",
+      createdAt: existing?.createdAt,
       data: {
-        ticketId: ticketMatch[1]
+        ...(existing?.data ?? {}),
+        ticketId
       }
     });
     importedTickets += 1;
@@ -169,8 +230,11 @@ export async function importLegacyProjections(store, { projectRoot }) {
       continue;
     }
 
+    const epicId = epicMatch[1];
+    const existing = store.getEntity(epicId);
+
     store.upsertEntity({
-      id: epicMatch[1],
+      id: epicId,
       entityType: "epic",
       title: epicMatch[2].trim(),
       lane: null,
@@ -179,7 +243,10 @@ export async function importLegacyProjections(store, { projectRoot }) {
       provenance: "legacy-epics-import",
       sourceKind: "projection-import",
       reviewState: "active",
-      data: {}
+      createdAt: existing?.createdAt,
+      data: {
+        ...(existing?.data ?? {})
+      }
     });
     importedEpics += 1;
   }

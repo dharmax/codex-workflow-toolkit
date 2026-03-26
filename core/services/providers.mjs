@@ -60,12 +60,17 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
     models: ollama.models.map((model) => {
       const id = typeof model === "string" ? model : model.id;
       const sizeB = (typeof model === "object" && model.sizeB) ? model.sizeB : estimateOllamaModelSizeB(id);
+      
+      // Dynamic Profiling: Match against reference or infer
+      const profile = profileOllamaModel(id, sizeB, knowledge.modelReference);
+      
       return {
         id,
-        quality: classifyOllamaModel(id),
+        quality: profile.quality,
         costTier: 1,
         sizeB,
-        strengths: ["summarization", "extraction", "classification", "clustering", "ranking", "note-normalization"]
+        capabilities: profile.capabilities,
+        strengths: profile.strengths
       };
     }),
     details: ollama.details
@@ -280,7 +285,18 @@ export async function generateWithOpenAI({ model, prompt, system = "", apiKey, b
   };
 }
 
+const CUSTOM_PROVIDERS = new Map();
+
+export function registerProvider(providerId, implementation) {
+  CUSTOM_PROVIDERS.set(providerId, implementation);
+}
+
 export async function generateCompletion({ providerId, modelId, prompt, system, config = {} } = {}) {
+  const custom = CUSTOM_PROVIDERS.get(providerId);
+  if (custom) {
+    return custom.generate({ modelId, prompt, system, config });
+  }
+
   switch (providerId) {
     case "ollama":
       return generateWithOllama({ model: modelId, prompt, system, host: config.host, format: config.format });
@@ -341,12 +357,51 @@ function normalizeConfiguredModels(providerId, config, builtinModels = []) {
   );
 }
 
-function classifyOllamaModel(model) {
+export function profileOllamaModel(id, sizeB, reference = []) {
+  const lower = id.toLowerCase();
+  
+  // 1. Exact or Prefix Match in Reference
+  const ref = reference.find((m) => lower === m.id || lower.startsWith(`${m.id}:`));
+  if (ref) {
+    const { id: _ignored, speed: _speed, ...capabilities } = ref;
+    return {
+      quality: classifyOllamaModel(id, sizeB),
+      capabilities,
+      strengths: Object.entries(capabilities)
+        .filter(([_, score]) => score >= 3.0)
+        .map(([cap, _]) => cap)
+    };
+  }
+
+  // 2. Heuristic Inference for Unknown Models
+  const quality = classifyOllamaModel(id, sizeB);
+  const base = quality === "high" ? 3.5 : (quality === "medium" ? 2.5 : 1.5);
+  
+  const inferred = {
+    logic: lower.includes("coder") ? base + 1 : base,
+    strategy: lower.includes("r1") || lower.includes("reasoning") ? base + 1.5 : base,
+    prose: lower.includes("llama") || lower.includes("mistral") ? base + 0.5 : base,
+    creative: lower.includes("hermes") || lower.includes("stheno") ? base + 1 : base,
+    visual: lower.includes("vision") ? base + 2 : (lower.includes("moondream") ? 3.5 : 0)
+  };
+
+  return {
+    quality,
+    capabilities: inferred,
+    strengths: Object.entries(inferred)
+      .filter(([_, score]) => score >= 3.0)
+      .map(([cap, _]) => cap)
+  };
+}
+
+function classifyOllamaModel(model, sizeB) {
   const lower = model.toLowerCase();
-  if (/(70b|large|coder|qwen3:32b|deepseek-r1|llama3\.3:70b|qwen2\.5-coder:32b)/.test(lower)) {
+  const effectiveSize = sizeB ?? estimateOllamaModelSizeB(model) ?? 0;
+
+  if (effectiveSize >= 30 || lower.includes("70b") || lower.includes("large")) {
     return "high";
   }
-  if (/(14b|32b|8x7b|mixtral|qwen2\.5:14b|gemma3:12b|llama3\.1:8b|qwen2\.5-coder:7b)/.test(lower)) {
+  if (effectiveSize >= 7 || lower.includes("8b") || lower.includes("12b") || lower.includes("14b")) {
     return "medium";
   }
   return "low";

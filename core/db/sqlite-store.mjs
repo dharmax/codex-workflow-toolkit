@@ -529,6 +529,24 @@ export class SqliteWorkflowStore {
     };
   }
 
+  listMetrics({ limit = 20 } = {}) {
+    return this.db.prepare(`
+      SELECT * FROM metrics ORDER BY created_at DESC LIMIT ?
+    `).all(limit).map(m => ({
+      id: m.id,
+      task_class: m.task_class,
+      capability: m.capability,
+      provider_id: m.provider_id,
+      model_id: m.model_id,
+      prompt_tokens: m.prompt_tokens,
+      completion_tokens: m.completion_tokens,
+      latency_ms: m.latency_ms,
+      success: Boolean(m.success),
+      error_message: m.error_message,
+      created_at: m.created_at
+    }));
+  }
+
   cleanupDerivedState() {
     this.db.prepare("DELETE FROM candidates WHERE note_id NOT IN (SELECT id FROM notes)").run();
     this.db.prepare("DELETE FROM entities WHERE entity_type = 'candidate-ticket' AND source_kind = 'proposal'").run();

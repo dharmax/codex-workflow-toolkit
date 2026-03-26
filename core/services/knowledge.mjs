@@ -5,14 +5,20 @@ import { readText } from "../../runtime/scripts/codex-workflow/lib/fs-utils.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUILTIN_KNOWLEDGE_PATH = path.resolve(__dirname, "../../shared/knowledge.json");
+const MODEL_REFERENCE_PATH = path.resolve(__dirname, "../../shared/model-reference.json");
 
 export async function loadKnowledge({ root = process.cwd(), projectConfig = {}, globalConfig = {} } = {}) {
-  const builtinText = await readText(BUILTIN_KNOWLEDGE_PATH, "{}");
+  const [builtinText, referenceText] = await Promise.all([
+    readText(BUILTIN_KNOWLEDGE_PATH, "{}"),
+    readText(MODEL_REFERENCE_PATH, "{\"models\":[]}")
+  ]);
   const builtin = JSON.parse(builtinText);
+  const reference = JSON.parse(referenceText);
 
   // Merge hierarchy: Builtin < Global < Project
   return {
     version: projectConfig.knowledge?.version ?? builtin.version,
+    modelReference: reference.models,
     tasks: mergeLists(builtin.tasks, globalConfig.knowledge?.tasks, projectConfig.knowledge?.tasks),
     capabilityMapping: {
       ...builtin.capabilityMapping,

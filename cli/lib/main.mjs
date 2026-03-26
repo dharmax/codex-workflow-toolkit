@@ -11,6 +11,7 @@ import { handleShell } from "./shell.mjs";
 import { installAgents } from "./install.mjs";
 import { forgeProjectCodelet, getProjectCodelet, listProjectCodelets, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
+import { auditArchitecture } from "../../core/services/critic.mjs";
 import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection } from "../../core/services/projections.mjs";
 import { addManualNote, getProjectMetrics, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
@@ -22,6 +23,7 @@ const HELP = `Usage:
   ai-workflow init [options]
   ai-workflow install [--project <path>]
   ai-workflow doctor [--json]
+  ai-workflow audit architecture [--json]
   ai-workflow set-ollama-hw [options]
   ai-workflow set-provider-key <provider-id> [--global]
   ai-workflow metrics [--json]
@@ -29,6 +31,7 @@ const HELP = `Usage:
   ai-workflow consult
   ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]
   ai-workflow sync [--write-projections] [--json]
+  ai-workflow reprofile [--json]
   ai-workflow list [--json]
   ai-workflow info <codelet>
   ai-workflow run <codelet> [args]
@@ -70,6 +73,8 @@ export async function main(argv) {
     case "doctor":
       await runDoctor({ root: process.cwd(), json: rest.includes("--json") });
       return 0;
+    case "audit":
+      return handleAudit(rest);
     case "set-ollama-hw":
       return handleSetOllamaHw(rest, { root: process.cwd() });
     case "set-provider-key":
@@ -84,6 +89,9 @@ export async function main(argv) {
       return handleShell(rest, { cliPath: path.resolve(toolkitRoot, "cli", "ai-workflow.mjs") });
     case "sync":
       return handleSync(rest);
+    case "reprofile":
+      await runDoctor({ root: process.cwd(), json: rest.includes("--json") });
+      return 0;
     case "list":
       return handleList(rest);
     case "info":
@@ -509,6 +517,33 @@ async function handleInstall(rest) {
   });
   process.stdout.write(`Installation complete in ${projectRoot}\n`);
   return 0;
+}
+
+async function handleAudit(rest) {
+  const args = parseArgs(rest);
+  const root = process.cwd();
+  const sub = args._[0];
+
+  if (sub === "architecture") {
+    const findings = await auditArchitecture(root);
+    if (args.json) {
+      output.write(`${JSON.stringify(findings, null, 2)}\n`);
+      return 0;
+    }
+
+    if (!findings.length) {
+      output.write("No architectural violations detected. Wiring looks clean!\n");
+      return 0;
+    }
+
+    output.write("Architectural Audit Report:\n");
+    for (const f of findings) {
+      output.write(`- [${f.severity.toUpperCase()}] ${f.type}: ${f.summary} (Subject: ${f.subject})\n`);
+    }
+    return 0;
+  }
+
+  printAndExit("Usage: ai-workflow audit architecture [--json]");
 }
 
 async function handleSetProviderKey(rest) {

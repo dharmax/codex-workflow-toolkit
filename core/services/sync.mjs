@@ -4,7 +4,8 @@ import { collectProjectFiles, readProjectFile } from "../lib/filesystem.mjs";
 import { sha1, stableId } from "../lib/hash.mjs";
 import { parseIndexedFile } from "../parsers/index.mjs";
 import { deriveCandidateFromNote, reviewCandidates } from "./lifecycle.mjs";
-import { buildProjectSummary, createSearchDocumentsForEntities, importLegacyProjections, writeProjectProjections } from "./projections.mjs";
+import { buildProjectSummary, buildSmartProjectStatus, createSearchDocumentsForEntities, importLegacyProjections, writeProjectProjections } from "./projections.mjs";
+import { auditArchitecture } from "./critic.mjs";
 
 export async function syncProject({ projectRoot = process.cwd(), writeProjections = false } = {}) {
   const store = await openWorkflowStore({ projectRoot });
@@ -93,6 +94,11 @@ export async function withWorkflowStore(projectRoot, callback) {
 
 export async function getProjectSummary({ projectRoot = process.cwd() } = {}) {
   return withWorkflowStore(projectRoot, async (store) => buildProjectSummary(store));
+}
+
+export async function getSmartProjectStatus({ projectRoot = process.cwd() } = {}) {
+  const auditFindings = await auditArchitecture(projectRoot);
+  return withWorkflowStore(projectRoot, async (store) => buildSmartProjectStatus(store, { auditFindings }));
 }
 
 export async function getProjectMetrics({ projectRoot = process.cwd() } = {}) {

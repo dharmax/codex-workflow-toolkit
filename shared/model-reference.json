@@ -1,0 +1,14 @@
+{
+  "models": [
+    { "id": "qwen2.5-coder:7b", "logic": 3.9, "strategy": 3.2, "creative": 2.5, "visual": 0, "prose": 3.8, "speed": 4.2 },
+    { "id": "deepseek-r1:8b", "logic": 3, "strategy": 4.2, "creative": 2.2, "visual": 0, "prose": 3.1, "speed": 2.7 },
+    { "id": "stheno-v3.2:8b", "logic": 1.7, "strategy": 2.6, "creative": 4.7, "visual": 0, "prose": 3.6, "speed": 3.7 },
+    { "id": "mistral-nemo:12b", "logic": 3.4, "strategy": 3.5, "creative": 4.1, "visual": 0, "prose": 3.9, "speed": 3.1 },
+    { "id": "llama-3.1:8b", "logic": 2.7, "strategy": 3.1, "creative": 3.6, "visual": 0, "prose": 4.2, "speed": 3.9 },
+    { "id": "llama-3.2-vision:11b", "logic": 2.4, "strategy": 2.9, "creative": 3.4, "visual": 4.2, "prose": 3.8, "speed": 3.2 },
+    { "id": "hermes3:8b", "logic": 2.9, "strategy": 3.2, "creative": 3.9, "visual": 0, "prose": 4.6, "speed": 3.7 },
+    { "id": "phi4:14b", "logic": 2.6, "strategy": 3, "creative": 2, "visual": 0, "prose": 3.4, "speed": 4.9 },
+    { "id": "llama-3.2:3b", "logic": 1.7, "strategy": 2.2, "creative": 2.9, "visual": 0, "prose": 3.6, "speed": 4.8 },
+    { "id": "moondream", "logic": 0.2, "strategy": 0.7, "creative": 1, "visual": 3.5, "prose": 2.2, "speed": 4.9 }
+  ]
+}

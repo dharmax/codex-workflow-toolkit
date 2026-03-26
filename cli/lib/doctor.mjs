@@ -55,7 +55,11 @@ export async function buildDoctorReport({ root = process.cwd() } = {}) {
       plannerModel: ollamaConfig.plannerModel ?? null,
       plannerMaxQuality: ollamaConfig.plannerMaxQuality ?? null,
       maxModelSizeB: ollamaConfig.maxModelSizeB ?? null,
-      models: providerState.providers.ollama.models.map(m => m.id),
+      models: providerState.providers.ollama.models.map(m => ({
+        id: m.id,
+        quality: m.quality,
+        capabilities: m.capabilities
+      })),
       details: providerState.providers.ollama.details
     },
     config: {
@@ -90,7 +94,14 @@ export function renderDoctorReport(report) {
   }
 
   if (report.ollama.installed) {
-    lines.push(`ollama models: ${report.ollama.models.length ? report.ollama.models.join(", ") : "none reported"}`);
+    lines.push("ollama models:");
+    for (const m of report.ollama.models) {
+      const caps = Object.entries(m.capabilities ?? {})
+        .filter(([_, score]) => score > 0)
+        .map(([c, s]) => `${c.charAt(0)}:${s.toFixed(1)}`)
+        .join(" ");
+      lines.push(`- ${m.id} (${m.quality}) [${caps}]`);
+    }
   }
   if (report.ollama.hardwareClass) {
     lines.push(`ollama hardware class: ${report.ollama.hardwareClass}`);
