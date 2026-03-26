@@ -33,6 +33,26 @@ test("tagged note parsing does not treat incidental prose as a note", () => {
   assert.equal(parsed.notes[0].body, "actual tagged note");
 });
 
+test("markdown parser only promotes explicit engineering markers to notes", () => {
+  const parsed = parseIndexedFile({
+    filePath: "docs/kanban.md",
+    content: [
+      "# Planning",
+      "",
+      "- **UI-123**: Add combat vignette transitions.",
+      "BUG: actual tagged markdown note",
+      "- [ ] TODO ship settings migration",
+      "This bug write-up should stay prose, not a note."
+    ].join("\n")
+  });
+
+  assert.equal(parsed.notes.length, 2);
+  assert.deepEqual(parsed.notes.map((item) => item.body), [
+    "actual tagged markdown note",
+    "TODO ship settings migration"
+  ]);
+});
+
 test("Riot parser merges script, style, and template indexing", () => {
   const parsed = parseIndexedFile({
     filePath: "src/ui/panel.riot",

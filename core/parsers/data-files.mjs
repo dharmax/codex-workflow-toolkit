@@ -54,14 +54,7 @@ export function parseMarkdownFile({ filePath, content }) {
     headings.push(match[2].trim());
   }
 
-  // Fuzzy notes from text
-  const fuzzyNotes = findNotesFuzzily(content).map(found => ({
-    noteType: found.type,
-    body: found.body,
-    filePath,
-    line: found.line,
-    column: 1
-  }));
+  const explicitLineNotes = extractExplicitMarkdownNotes(content, filePath);
 
   // Classic tagged notes (comments)
   const taggedNotes = extractTaggedNotes(content, {
@@ -69,7 +62,7 @@ export function parseMarkdownFile({ filePath, content }) {
     filePath
   });
 
-  const notes = [...fuzzyNotes, ...taggedNotes].filter((note, index, self) => 
+  const notes = [...explicitLineNotes, ...taggedNotes].filter((note, index, self) => 
     index === self.findIndex((t) => t.line === note.line && t.body === note.body)
   );
 
@@ -84,4 +77,33 @@ export function parseMarkdownFile({ filePath, content }) {
     },
     searchText: [content, ...headings].join("\n")
   };
+}
+
+function extractExplicitMarkdownNotes(content, filePath) {
+  return findNotesFuzzily(content)
+    .filter((note) => isExplicitMarkdownNote(note.rawLine))
+    .map((note) => ({
+      noteType: note.type,
+      body: note.body,
+      filePath,
+      line: note.line,
+      column: 1
+    }));
+}
+
+function isExplicitMarkdownNote(line) {
+  const trimmed = String(line ?? "").trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (/^(?:[-*]\s+)?(?:\[\s*(?:TODO|FIXME|HACK|BUG|RISK|NOTE)\s*\]|(?:TODO|FIXME|HACK|BUG|RISK|NOTE))[:\-\s]/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/^(?:[-*]\s+)?\[\s\]\s+(?:TODO|FIXME|HACK|BUG|RISK|NOTE)\b/i.test(trimmed)) {
+    return true;
+  }
+
+  return false;
 }

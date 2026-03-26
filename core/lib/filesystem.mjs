@@ -8,12 +8,24 @@ const DEFAULT_IGNORES = new Set([
   "node_modules",
   ".turbo",
   ".next",
+  "artifacts",
   "dist",
   "build",
   "coverage",
+  "playwright-report",
+  "test-results",
+  "output",
   ".idea",
   ".vscode"
 ]);
+
+const GENERATED_FILE_PATTERNS = [
+  /^e2e_.*\.(?:txt|json)$/i,
+  /(?:^|[-_])(debug|output|report)\.(?:txt|json|md)$/i,
+  /^playwright\..*\.json$/i,
+  /^actual-test\.mjs$/i,
+  /^test-.*\.mjs$/i
+];
 
 export function normalizePath(filePath) {
   return filePath.split(path.sep).join("/");
@@ -46,6 +58,10 @@ export async function collectProjectFiles(root, options = {}) {
         continue;
       }
 
+      if (shouldIgnoreFile(entry.name, relativePath)) {
+        continue;
+      }
+
       if (!supported.has(path.extname(entry.name).toLowerCase())) {
         continue;
       }
@@ -56,6 +72,14 @@ export async function collectProjectFiles(root, options = {}) {
 
   await walk(root);
   return files.sort((left, right) => left.localeCompare(right));
+}
+
+function shouldIgnoreFile(name, relativePath) {
+  const normalizedPath = normalizePath(relativePath);
+  if (normalizedPath.startsWith(".ai-workflow/")) {
+    return true;
+  }
+  return GENERATED_FILE_PATTERNS.some((pattern) => pattern.test(name));
 }
 
 export async function readProjectFile(root, relativePath) {

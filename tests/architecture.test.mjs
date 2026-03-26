@@ -30,6 +30,32 @@ test("syncProject generates heuristic architectural map", async () => {
   }
 });
 
+test("syncProject groups top-level source files into stable modules and drops ignored roots", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "arch-modules-"));
+
+  try {
+    await mkdir(path.join(targetRoot, "src"), { recursive: true });
+    await mkdir(path.join(targetRoot, "src", "engine"), { recursive: true });
+    await mkdir(path.join(targetRoot, "artifacts"), { recursive: true });
+    await writeFile(path.join(targetRoot, "src", "main.ts"), "export const main = true;\n", "utf8");
+    await writeFile(path.join(targetRoot, "src", "engine", "combat.ts"), "export const combat = true;\n", "utf8");
+    await writeFile(path.join(targetRoot, "artifacts", "combat-report.json"), "{\"combat\":true}\n", "utf8");
+
+    await syncProject({ projectRoot: targetRoot });
+
+    await withWorkflowStore(targetRoot, async (store) => {
+      const moduleNames = store.listModules().map((module) => module.name).sort();
+      assert.equal(moduleNames.includes("src"), true);
+      assert.equal(moduleNames.includes("src/engine"), true);
+      assert.equal(moduleNames.includes("src/main.ts"), false);
+      assert.equal(moduleNames.includes("README.md"), false);
+      assert.equal(moduleNames.includes("artifacts"), false);
+    });
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("auditArchitecture detects direct circular dependencies", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "arch-audit-"));
 

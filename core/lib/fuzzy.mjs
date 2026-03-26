@@ -23,7 +23,8 @@ export function findNotesFuzzily(text) {
       results.push({
         type,
         body: body.trim(),
-        line: i + 1
+        line: i + 1,
+        rawLine: line
       });
     }
   }

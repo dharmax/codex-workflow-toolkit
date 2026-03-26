@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { addManualNote, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../core/services/sync.mjs";
 import { buildTicketEntity, renderKanbanProjection } from "../core/services/projections.mjs";
+import { openWorkflowStore } from "../core/db/sqlite-store.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureRoot = path.join(repoRoot, "tests", "fixtures", "workflow-repo");
@@ -149,6 +150,65 @@ test("shadow sync does not promote tickets on loose keyword overlap alone", asyn
     const result = await syncProject({ projectRoot: targetRoot });
     const ticket = result.summary.activeTickets.find((item) => item.id === "TKT-555");
     assert.equal(ticket?.lane, "Todo");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("openWorkflowStore tolerates legacy DBs that already contain guarded columns", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-legacy-schema-"));
+
+  try {
+    const dbPath = path.join(targetRoot, "legacy.db");
+    const store = await openWorkflowStore({ projectRoot: targetRoot, dbPath });
+    store.close();
+
+    const reopened = await openWorkflowStore({ projectRoot: targetRoot, dbPath });
+    reopened.close();
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("syncProject ignores generated artifact directories that would pollute search", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-generated-ignore-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "package.json"), "{\n  \"name\": \"fixture\"\n}\n", "utf8");
+    await writeFile(path.join(targetRoot, "README.md"), "# Root\n", "utf8");
+    await writeFile(path.join(targetRoot, "e2e_combat.txt"), "combat transcript\n", "utf8");
+    await mkdir(path.join(targetRoot, "artifacts"), { recursive: true });
+    await writeFile(path.join(targetRoot, "artifacts", "combat-report.json"), "{\"combat\":true}\n", "utf8");
+
+    const result = await syncProject({ projectRoot: targetRoot });
+    assert.equal(result.indexedFiles, 2);
+
+    const search = await searchProject({ projectRoot: targetRoot, query: "combat" });
+    assert.equal(search.some((item) => item.refId === "artifacts/combat-report.json"), false);
+    assert.equal(search.some((item) => item.refId === "e2e_combat.txt"), false);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("syncProject removes stale indexed files that become ignored on later runs", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-stale-index-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "README.md"), "# Root\n", "utf8");
+    await syncProject({ projectRoot: targetRoot });
+
+    await mkdir(path.join(targetRoot, "artifacts"), { recursive: true });
+    await writeFile(path.join(targetRoot, "artifacts", "combat-report.json"), "{\"combat\":true}\n", "utf8");
+    await syncProject({ projectRoot: targetRoot });
+
+    let search = await searchProject({ projectRoot: targetRoot, query: "combat" });
+    assert.equal(search.some((item) => item.refId === "artifacts/combat-report.json"), false);
+
+    await writeFile(path.join(targetRoot, "combat-notes.md"), "combat retained\n", "utf8");
+    await syncProject({ projectRoot: targetRoot });
+    search = await searchProject({ projectRoot: targetRoot, query: "combat" });
+    assert.equal(search.some((item) => item.refId === "combat-notes.md"), true);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

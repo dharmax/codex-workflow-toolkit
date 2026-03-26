@@ -17,6 +17,7 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
 
   try {
     const files = await collectProjectFiles(projectRoot, { ignore: dynamicIgnores });
+    store.pruneIndexedFiles(files);
     let symbolCount = 0;
     let claimCount = 0;
     let noteCount = 0;
@@ -193,17 +194,12 @@ async function syncArchitecture(projectRoot, store) {
   const files = store.db.prepare("SELECT path FROM files").all();
   const modules = new Map();
 
-  // Clear old architectural graph before rebuilding heuristic map
-  store.db.prepare("DELETE FROM architectural_graph WHERE predicate = 'belongs_to'").run();
+  // Rebuild the heuristic module map from the current indexed snapshot only.
+  store.resetArchitecture();
 
   for (const file of files) {
-    const parts = file.path.split("/");
-    if (parts.length < 2) continue;
-
-    // Heuristic: first two segments as module name (e.g. core/db, cli/lib)
-    const moduleName = (parts[0] === "src" || parts[0] === "core" || parts[0] === "cli") 
-      ? parts.slice(0, 2).join("/") 
-      : parts[0];
+    const moduleName = inferModuleName(file.path);
+    if (!moduleName) continue;
 
     if (!modules.has(moduleName)) {
       const moduleId = `MOD-${moduleName.toUpperCase().replace(/\//g, "-")}`;
@@ -222,6 +218,60 @@ async function syncArchitecture(projectRoot, store) {
       objectId: moduleId
     });
   }
+}
+
+function inferModuleName(filePath) {
+  const parts = String(filePath).split("/").filter(Boolean);
+  if (!parts.length) {
+    return null;
+  }
+
+  const [root, second] = parts;
+  const sourceRoots = new Set(["src", "core", "cli", "runtime", "functions"]);
+  const auxiliaryRoots = new Set(["tests", "scripts", "docs", "design", "public"]);
+  const ignoredRoots = new Set([
+    ".ai-workflow",
+    ".claude",
+    ".github",
+    ".obsidian",
+    "artifacts",
+    "playwright-report",
+    "test-results",
+    "coverage",
+    "output"
+  ]);
+
+  if (ignoredRoots.has(root)) {
+    return null;
+  }
+
+  if (parts.length === 1) {
+    return null;
+  }
+
+  if (sourceRoots.has(root)) {
+    if (second && !looksLikeFileName(second)) {
+      return `${root}/${second}`;
+    }
+    return root;
+  }
+
+  if (auxiliaryRoots.has(root)) {
+    if (second && !looksLikeFileName(second)) {
+      return `${root}/${second}`;
+    }
+    return root;
+  }
+
+  if (parts.length >= 2 && !looksLikeFileName(second)) {
+    return `${root}/${second}`;
+  }
+
+  return root;
+}
+
+function looksLikeFileName(segment) {
+  return /\.[A-Za-z0-9]+$/.test(segment);
 }
 
 function deriveCandidateScores(note, filePath) {

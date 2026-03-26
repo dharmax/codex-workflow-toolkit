@@ -35,15 +35,11 @@ export async function openWorkflowStore({ projectRoot, dbPath } = {}) {
 
 export class SqliteWorkflowStore {
   async ensureSchemaConsistency() {
-    // Item 37: SchemaGuardian - Detect and fix missing columns
-    const columns = this.db.prepare("PRAGMA table_info(entities)").all();
-    const names = columns.map(c => c.name);
-    if (!names.includes("consultation_question")) {
-      this.db.exec("ALTER TABLE entities ADD COLUMN consultation_question TEXT;");
-    }
-    if (!names.includes("parent_id")) {
-      this.db.exec("ALTER TABLE entities ADD COLUMN parent_id TEXT;");
-    }
+    // Item 37: SchemaGuardian - Detect and fix missing columns.
+    // Older or externally-mutated DBs can behave inconsistently here; ignore
+    // duplicate-column failures and re-read the schema after each attempt.
+    await this.ensureColumn("entities", "consultation_question", "TEXT");
+    await this.ensureColumn("entities", "parent_id", "TEXT");
   }
 
   constructor({ db, dbPath, projectRoot }) {
@@ -54,6 +50,20 @@ export class SqliteWorkflowStore {
 
   close() {
     this.db.close();
+  }
+
+  async ensureColumn(tableName, columnName, columnType) {
+    const names = this.db.prepare(`PRAGMA table_info(${tableName})`).all().map((column) => column.name);
+    if (names.includes(columnName)) {
+      return;
+    }
+    try {
+      this.db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnType};`);
+    } catch (error) {
+      if (!String(error?.message ?? error).includes("duplicate column name")) {
+        throw error;
+      }
+    }
   }
 
   setMeta(key, value) {
@@ -195,6 +205,44 @@ export class SqliteWorkflowStore {
     );
   }
 
+  pruneIndexedFiles(activePaths = []) {
+    const normalizedPaths = [...new Set(activePaths.filter(Boolean))];
+    if (!normalizedPaths.length) {
+      this.db.prepare("DELETE FROM symbols WHERE source_kind = 'indexed'").run();
+      this.db.prepare("DELETE FROM claims WHERE source_kind = 'indexed'").run();
+      this.db.prepare("DELETE FROM notes WHERE source_kind = 'indexed'").run();
+      this.db.prepare("DELETE FROM search_index WHERE scope = 'file'").run();
+      this.db.prepare("DELETE FROM files").run();
+      return;
+    }
+
+    const placeholders = normalizedPaths.map(() => "?").join(", ");
+    this.db.prepare(`
+      DELETE FROM symbols
+      WHERE source_kind = 'indexed'
+        AND file_path NOT IN (${placeholders})
+    `).run(...normalizedPaths);
+    this.db.prepare(`
+      DELETE FROM claims
+      WHERE source_kind = 'indexed'
+        AND file_path NOT IN (${placeholders})
+    `).run(...normalizedPaths);
+    this.db.prepare(`
+      DELETE FROM notes
+      WHERE source_kind = 'indexed'
+        AND file_path NOT IN (${placeholders})
+    `).run(...normalizedPaths);
+    this.db.prepare(`
+      DELETE FROM search_index
+      WHERE scope = 'file'
+        AND ref_id NOT IN (${placeholders})
+    `).run(...normalizedPaths);
+    this.db.prepare(`
+      DELETE FROM files
+      WHERE path NOT IN (${placeholders})
+    `).run(...normalizedPaths);
+  }
+
   upsertEntity(entity) {
     const timestamp = entity.updatedAt ?? nowIso();
     this.db.prepare(`
@@ -290,6 +338,19 @@ export class SqliteWorkflowStore {
       asJson(metadata),
       nowIso()
     );
+  }
+
+  resetArchitecture() {
+    this.db.prepare("DELETE FROM architectural_graph WHERE predicate = 'belongs_to'").run();
+    this.db.prepare(`
+      DELETE FROM modules
+      WHERE id LIKE 'MOD-%'
+        AND id NOT IN (
+          SELECT object_id
+          FROM architectural_graph
+          WHERE predicate != 'belongs_to'
+        )
+    `).run();
   }
 
   listModules() {
