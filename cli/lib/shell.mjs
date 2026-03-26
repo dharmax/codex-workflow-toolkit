@@ -332,7 +332,7 @@ function shouldSurfacePlannerFailure(inputText, heuristic) {
 export function planShellRequestHeuristically(inputText, plannerContext) {
   const text = String(inputText ?? "").trim();
   const lower = text.toLowerCase();
-  const normalizedQuestion = lower.replace(/[?!.\s]+$/g, "");
+  const normalizedQuestion = normalizeConversationText(text);
 
   if (!text) {
     return replyPlan("Tell me what you want to do. Example: `sync and show review hotspots`.");
@@ -1782,39 +1782,50 @@ function renderConfiguredOllamaHardware(result) {
 
 function buildContextualShellReply(inputText, plannerContext) {
   const text = String(inputText ?? "").trim();
-  const normalized = text.toLowerCase().replace(/[?!.\s]+$/g, "");
+  const normalized = normalizeConversationText(text);
   const summary = plannerContext?.summary ?? {};
   const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
   const modules = Array.isArray(summary.modules) ? summary.modules : [];
   const providerState = plannerContext?.providerState ?? {};
   const providerMap = providerState.providers ?? {};
   const projectName = path.basename(plannerContext?.root ?? process.cwd());
+  const hasProjectQuestion = /\b(project|repo|repository|codebase)\b/.test(normalized);
+  const asksWhere = /\b(where)\b/.test(normalized)
+    || /\bwhich project\b/.test(normalized)
+    || /\bwhat (?:project|repo|repository)\b/.test(normalized);
+  const asksNext = /\b(work on|do next|focus on|start with|next task|next thing)\b/.test(normalized)
+    || /what should i (work on|do) next/.test(normalized)
+    || /\bwhat is next\b/.test(normalized);
+  const asksCapabilities = /\b(what can you do|how can you help|what are you capable of|what do you do here)\b/.test(normalized);
+  const asksGreeting = /\b(how are you|hows it going|how is it going|are you feeling well|ready to help|you there)\b/.test(normalized);
+  const asksStatus = /\b(status|shape|state of the project|how is the project)\b/.test(normalized);
+  const asksCodebaseAssessment = /\bwhat do you think about the codebase\b/.test(normalized)
+    || /\bwhat do you think about this repo\b/.test(normalized);
+  const asksActiveTickets = /\b(next tickets|active tickets|open tickets|current tickets|what tickets)\b/.test(normalized);
+  const asksModules = /\b(modules|areas|major parts|subsystems)\b/.test(normalized);
+  const asksClaims = /\bwhat does claims mean|what do claims mean|what are claims\b/.test(normalized);
+  const asksSetupOpenAiOllama = /\b(set this up|setting this up|set up|setup|configure)\b/.test(normalized) && /\bopenai\b/.test(normalized) && /\bollama\b/.test(normalized);
+  const asksGeminiTroubleshooting = /\bgemini\b/.test(normalized) && /\b(broken|failing|blocked|wrong|problem|issue|investigate)\b/.test(normalized);
 
-  if (normalized === "what project am i in and what should i work on next") {
-    const top = activeTickets[0];
-    if (!top) {
-      return replyPlan(`You are in \`${projectName}\`. I do not see an obvious active ticket yet.`, 0.88, "Answered from project root and summary.");
-    }
+  if (asksCapabilities || ["what can you do here", "what can you do"].includes(normalized)) {
     return replyPlan([
-      `You are in \`${projectName}\`.`,
-      `Start with ${top.id}: ${top.title}. It is currently in ${top.lane}.`
-    ].join("\n"), 0.9, "Compound project grounding reply.");
+      "I can inspect project state, answer questions about the repo, search code and tickets, sync the workflow DB, prepare context, and run guided workflow actions.",
+      "If you want to change code or project state, say that directly and I’ll plan or execute the next step."
+    ].join("\n"), 0.7, "Capability explanation.");
   }
 
-  if (["what project am i in", "which project is this", "what repo is this"].includes(normalized)) {
-    const ticketHint = activeTickets[0] ? ` The top active ticket looks like ${activeTickets[0].id}: ${activeTickets[0].title}.` : "";
-    return replyPlan(`You are in \`${projectName}\`. Indexed modules and tickets are available here.${ticketHint}`, 0.88, "Answered from project root and summary.");
-  }
-
-  if (["what should i work on next", "what should i do next", "what is next"].includes(normalized)) {
+  if (asksActiveTickets || ["what are the next tickets", "what are the active tickets", "can you list the active tickets"].includes(normalized)) {
     if (!activeTickets.length) {
-      return replyPlan("I do not see an obvious active ticket yet. Run `sync` if the board may be stale, or ask me to inspect the project state.", 0.82, "No active tickets in summary.");
+      return replyPlan("There are no active tickets right now.", 0.9, "Answered from current summary.");
     }
-    const top = activeTickets[0];
-    return replyPlan(`Start with ${top.id}: ${top.title}. It is currently in ${top.lane}.`, 0.88, "Suggested next work from active tickets.");
+    const lines = ["Current active tickets:"];
+    for (const ticket of activeTickets.slice(0, 8)) {
+      lines.push(`- [${ticket.lane}] ${ticket.id}: ${ticket.title}`);
+    }
+    return replyPlan(lines.join("\n"), 0.9, "Answered from current summary.");
   }
 
-  if (normalized.includes("help me set this up") && /\bopenai\b/.test(normalized) && /\bollama\b/.test(normalized)) {
+  if (asksSetupOpenAiOllama) {
     const ollama = providerMap.ollama;
     const openai = providerMap.openai;
     const lines = [
@@ -1833,7 +1844,7 @@ function buildContextualShellReply(inputText, plannerContext) {
     return replyPlan(lines.join("\n"), 0.87, "Setup guidance from provider state.");
   }
 
-  if (/\bgemini\b/.test(normalized) && /\b(broken|failing|blocked|wrong)\b/.test(normalized)) {
+  if (asksGeminiTroubleshooting) {
     return replyPlan([
       "Gemini looks unhealthy in this environment.",
       "If you are seeing `API_KEY_SERVICE_BLOCKED`, the Google key is present but blocked for the Generative Language API.",
@@ -1842,40 +1853,75 @@ function buildContextualShellReply(inputText, plannerContext) {
     ].join("\n"), 0.9, "Provider troubleshooting reply.");
   }
 
-  if (["what are the next tickets", "what are the active tickets", "can you list the active tickets"].includes(normalized)) {
-    if (!activeTickets.length) {
-      return replyPlan("There are no active tickets right now.", 0.9, "Answered from current summary.");
-    }
-    const lines = ["Current active tickets:"];
-    for (const ticket of activeTickets.slice(0, 8)) {
-      lines.push(`- [${ticket.lane}] ${ticket.id}: ${ticket.title}`);
-    }
-    return replyPlan(lines.join("\n"), 0.9, "Answered from current summary.");
-  }
-
-  if (["what are my modules", "what modules do i have"].includes(normalized)) {
+  if (asksModules || ["what are my modules", "what modules do i have"].includes(normalized)) {
     if (!modules.length) {
       return replyPlan("I do not have module data yet. Run `sync` first if the index is stale.", 0.82, "Module summary unavailable.");
     }
     return replyPlan(`Current modules: ${modules.slice(0, 10).map((item) => item.name).join(", ")}.`, 0.88, "Answered from project summary.");
   }
 
-  if (["what does claims mean", "what do claims mean"].includes(normalized)) {
+  if (asksCodebaseAssessment) {
+    if (!modules.length) {
+      return replyPlan(`I can ground that better after a fresh sync. Right now I only know you are in \`${projectName}\`.`, 0.7, "Limited codebase assessment without module data.");
+    }
+    return replyPlan([
+      `The codebase looks structured around ${modules.slice(0, 5).map((item) => item.name).join(", ")}.`,
+      activeTickets[0] ? `The most obvious current pressure point is ${activeTickets[0].id}: ${activeTickets[0].title}.` : "I do not see an obvious active ticket yet."
+    ].join("\n"), 0.82, "Grounded codebase assessment reply.");
+  }
+
+  if ((hasProjectQuestion || /\bproject am i in\b/.test(normalized)) && asksNext) {
+    const top = activeTickets[0];
+    if (!top) {
+      return replyPlan(`You are in \`${projectName}\`. I do not see an obvious active ticket yet.`, 0.88, "Answered from project root and summary.");
+    }
+    return replyPlan([
+      `You are in \`${projectName}\`.`,
+      `Start with ${top.id}: ${top.title}. It is currently in ${top.lane}.`
+    ].join("\n"), 0.9, "Compound project grounding reply.");
+  }
+
+  if (asksNext || ["what should i work on next", "what should i do next", "what is next"].includes(normalized)) {
+    if (!activeTickets.length) {
+      return replyPlan("I do not see an obvious active ticket yet. Run `sync` if the board may be stale, or ask me to inspect the project state.", 0.82, "No active tickets in summary.");
+    }
+    const top = activeTickets[0];
+    return replyPlan(`Start with ${top.id}: ${top.title}. It is currently in ${top.lane}.`, 0.88, "Suggested next work from active tickets.");
+  }
+
+  if ((hasProjectQuestion && asksWhere) || ["what project am i in", "which project is this", "what repo is this"].includes(normalized)) {
+    const ticketHint = activeTickets[0] ? ` The top active ticket looks like ${activeTickets[0].id}: ${activeTickets[0].title}.` : "";
+    return replyPlan(`You are in \`${projectName}\`. Indexed modules and tickets are available here.${ticketHint}`, 0.88, "Answered from project root and summary.");
+  }
+
+  if (asksClaims) {
     return replyPlan("Claims are extracted relationships and facts in the workflow DB, such as imports, calls, ownership, and ticket-linked evidence.", 0.9, "Explained built-in terminology.");
   }
 
-  if (["what can you do here", "what can you do"].includes(normalized)) {
-    return replyPlan([
-      "I can inspect project state, answer questions about the repo, search code and tickets, sync the workflow DB, prepare context, and run guided workflow actions.",
-      "If you want to change code or project state, say that directly and I’ll plan or execute the next step."
-    ].join("\n"), 0.7, "Capability explanation.");
-  }
-
-  if (["how are you", "tell me a joke"].includes(normalized) || /\bhow(?:'s| is) it going\b/.test(normalized) || /\bready to help\b/.test(normalized)) {
+  if (asksGreeting || ["how are you", "tell me a joke"].includes(normalized) || /\bhow(?:'s| is) it going\b/.test(normalized) || /\bready to help\b/.test(normalized)) {
     return replyPlan("Ready. Point me at the code or the problem and I’ll work it through.", 0.45, "Light conversational reply.");
   }
 
+  if (asksStatus && hasProjectQuestion) {
+    const ticketHint = activeTickets[0] ? `Top active ticket: ${activeTickets[0].id} (${activeTickets[0].lane}).` : "No active ticket is obvious yet.";
+    const moduleHint = modules.length ? `Main areas: ${modules.slice(0, 5).map((item) => item.name).join(", ")}.` : "Module summary is not available yet.";
+    return replyPlan([
+      `You are in \`${projectName}\`.`,
+      ticketHint,
+      moduleHint
+    ].join("\n"), 0.84, "Project status grounding reply.");
+  }
+
   return null;
+}
+
+function normalizeConversationText(text) {
+  return String(text ?? "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[?!.,;:()\[\]{}]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 import { attemptActionCorrection } from "../../core/lib/self-correction.mjs";

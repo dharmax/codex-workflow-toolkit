@@ -559,28 +559,74 @@ test("tool observe auto-attaches the latest recorded run artifact", { concurrenc
 
 test("tool-dev proving keeps toolkit as repair target and external project as evidence root", { concurrency: false }, async () => {
   const toolkitRoot = repoRoot;
-  const evidenceRoot = path.join(repoRoot, "adventure-machine2-playground");
+  const evidenceRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-tool-dev-evidence-"));
 
-  const result = await runNode(
-    [
-      path.join(repoRoot, "cli", "ai-workflow.mjs"),
-      "run",
-      "ticket-proving-run",
-      "--mode",
-      "tool-dev",
-      "--root",
-      evidenceRoot,
-      "--limit",
-      "1",
-      "--json"
-    ],
-    { cwd: toolkitRoot }
-  );
-  assert.equal(result.code, 0);
-  const payload = JSON.parse(result.stdout);
-  assert.equal(payload.mode, "tool-dev");
-  assert.equal(payload.repairTargetRoot, toolkitRoot);
-  assert.equal(payload.evidenceRoot, evidenceRoot);
-  assert.equal(payload.root, evidenceRoot);
-  assert.equal(typeof payload.runArtifact?.id, "string");
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", evidenceRoot]);
+    await mkdir(path.join(evidenceRoot, "src", "ui", "components", "dialog"), { recursive: true });
+    await mkdir(path.join(evidenceRoot, "tests"), { recursive: true });
+    await writeFile(
+      path.join(evidenceRoot, "package.json"),
+      JSON.stringify({
+        name: "tool-dev-evidence",
+        type: "module",
+        scripts: {
+          "test:e2e": "node -e \"console.log('e2e ok')\"",
+          "test:unit": "node -e \"console.log('unit ok')\""
+        }
+      }, null, 2),
+      "utf8"
+    );
+    await writeFile(path.join(evidenceRoot, "src", "ui", "components", "dialog", "modal.riot"), "<modal><div>modal</div></modal>\n", "utf8");
+    await writeFile(path.join(evidenceRoot, "tests", "modal.e2e.spec.ts"), "test('modal', () => {})\n", "utf8");
+    const syncResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"],
+      { cwd: evidenceRoot }
+    );
+    assert.equal(syncResult.code, 0);
+    const ticketResult = await runNode(
+      [
+        path.join(repoRoot, "cli", "ai-workflow.mjs"),
+        "project",
+        "ticket",
+        "create",
+        "--id",
+        "BUG-OVERLAY-01",
+        "--title",
+        "Restore global overlay handling for non-dialog modals after the app-shell refactor.",
+        "--lane",
+        "Bugs P1",
+        "--summary",
+        "Verification: npm run test:e2e",
+        "--json"
+      ],
+      { cwd: evidenceRoot }
+    );
+    assert.equal(ticketResult.code, 0);
+
+    const result = await runNode(
+      [
+        path.join(repoRoot, "cli", "ai-workflow.mjs"),
+        "run",
+        "ticket-proving-run",
+        "--mode",
+        "tool-dev",
+        "--root",
+        evidenceRoot,
+        "--tickets",
+        "BUG-OVERLAY-01",
+        "--json"
+      ],
+      { cwd: toolkitRoot }
+    );
+    assert.equal(result.code, 0);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.mode, "tool-dev");
+    assert.equal(payload.repairTargetRoot, toolkitRoot);
+    assert.equal(payload.evidenceRoot, evidenceRoot);
+    assert.equal(payload.root, evidenceRoot);
+    assert.equal(typeof payload.runArtifact?.id, "string");
+  } finally {
+    await rm(evidenceRoot, { recursive: true, force: true });
+  }
 });

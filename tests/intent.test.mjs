@@ -106,8 +106,7 @@ test("Heuristic Planner 50-Case Coverage", () => {
 const CHAT_TEST_CASES = [
   "how are you?",
   "what do you think about that?",
-  "tell me a joke",
-  "what do you think about the codebase?"
+  "tell me a joke"
 ];
 
 test("Heuristic Planner gracefully falls back for conversational input", () => {
@@ -148,4 +147,14 @@ test("Heuristic Planner can answer a few grounded shell questions directly", () 
   const claims = planShellRequestHeuristically("what does claims mean?", plannerContext);
   assert.equal(claims.kind, "reply");
   assert.match(claims.reply, /workflow DB/i);
+
+  const codebase = planShellRequestHeuristically("what do you think about the codebase?", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      modules: [{ name: "src/ui" }, { name: "src/engine" }]
+    }
+  });
+  assert.equal(codebase.kind, "reply");
+  assert.match(codebase.reply, /src\/ui, src\/engine/);
 });

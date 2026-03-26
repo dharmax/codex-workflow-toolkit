@@ -348,6 +348,55 @@ test("heuristic shell planner answers capability and greeting prompts like an as
   assert.match(greeting.reply, /Ready\./);
 });
 
+test("shell conversation eval handles broader natural-language prompts", async () => {
+  const cases = [
+    {
+      input: "Can you tell me what project this is and what I should work on next?",
+      patterns: [/example-project/, /TKT-001/]
+    },
+    {
+      input: "I'm new here. What can you do in this repo?",
+      patterns: [/inspect project state/i, /search code and tickets/i]
+    },
+    {
+      input: "How are you feeling? Are you ready to help me debug this thing?",
+      patterns: [/Ready\./]
+    },
+    {
+      input: "Walk me through setting this up with OpenAI and Ollama.",
+      patterns: [/set-provider-key openai --global/, /set-ollama-hw --global/]
+    },
+    {
+      input: "Gemini seems broken. Investigate what is likely wrong and tell me what I should do.",
+      patterns: [/Gemini looks unhealthy/i, /doctor/, /route shell-planning/]
+    },
+    {
+      input: "What shape is this project in right now?",
+      patterns: [/example-project/, /Top active ticket:/]
+    },
+    {
+      input: "What are the major parts of this codebase?",
+      patterns: [/src\/ui, src\/engine/]
+    },
+    {
+      input: "Could you list the current tickets I'm likely to care about?",
+      patterns: [/Current active tickets:/, /TKT-001/]
+    }
+  ];
+
+  for (const item of cases) {
+    const plan = await planShellRequest(item.input, {
+      plannerContext,
+      noAi: true,
+      planners: { planners: [], heuristic: { mode: "heuristic", reason: "fallback" } }
+    });
+    assert.equal(plan.kind, "reply", item.input);
+    for (const pattern of item.patterns) {
+      assert.match(plan.reply, pattern, item.input);
+    }
+  }
+});
+
 test("runShellTurn narrates non-mutating tool results through the assistant layer", async () => {
   const root = path.resolve("/tmp/ai-workflow-shell-" + Math.random().toString(36).slice(2));
   await fs.mkdir(root, { recursive: true });
