@@ -249,6 +249,14 @@ test("heuristic shell planner handles provider status questions without AI plann
   ]);
 });
 
+test("heuristic shell planner handles version requests directly", () => {
+  const plan = planShellRequestHeuristically("version", plannerContext);
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [
+    { type: "version" }
+  ]);
+});
+
 test("runShellTurn narrates non-mutating tool results through the assistant layer", async () => {
   const root = path.resolve("/tmp/ai-workflow-shell-" + Math.random().toString(36).slice(2));
   await fs.mkdir(root, { recursive: true });

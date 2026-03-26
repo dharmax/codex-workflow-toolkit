@@ -265,6 +265,45 @@ test("non-interactive shell answers provider status directly without prompting f
   assert.match(stdout, /AI providers:/);
 });
 
+test("non-interactive shell handles version directly", async () => {
+  const child = spawn(process.execPath, [
+    path.join(repoRoot, "cli", "ai-workflow.mjs"),
+    "shell",
+    "--no-ai"
+  ], {
+    cwd: repoRoot,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  child.stdin.write("version\n");
+  child.stdin.write("exit\n");
+  child.stdin.end();
+
+  const code = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`shell timeout\nstdout: ${stdout}\nstderr: ${stderr}`));
+    }, 10000);
+    child.on("exit", (exitCode) => {
+      clearTimeout(timeout);
+      resolve(exitCode ?? 0);
+    });
+  });
+
+  assert.equal(code, 0, stderr || stdout);
+  assert.match(stdout, /@dharmax\/ai-workflow 0\.1\.0/);
+  assert.match(stdout, new RegExp(repoRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
 test("generated helper scripts work against initialized project state", async () => {
   const targetRoot = await makeTempDir();
 

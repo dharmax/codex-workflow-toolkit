@@ -279,6 +279,10 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     return actionPlan([{ type: "metrics" }], 0.98, "Usage metrics request.");
   }
 
+  if (/^(version|--version|show version)$/i.test(text)) {
+    return actionPlan([{ type: "version" }], 0.99, "Explicit version request.");
+  }
+
   if (
     /\b(?:what|which|show|list)\b.*\b(?:ai\s+)?providers?\b/.test(lower) ||
     /\bproviders?\b.*\b(?:connected|configured|available|active|status)\b/.test(lower)
@@ -701,6 +705,9 @@ function renderFallbackAssistantReply({ inputText, plan, executed }) {
   if (actionType === "provider_status") {
     return raw;
   }
+  if (actionType === "version") {
+    return raw;
+  }
   if (actionType === "project_summary") {
     return `Here is the current project status:\n${raw}`;
   }
@@ -725,6 +732,7 @@ function validateShellAction(action, plannerContext) {
     case "next_ticket":
     case "doctor":
     case "provider_status":
+    case "version":
     case "sync":
     case "run_review":
     case "run_dynamic_codelet":
@@ -940,6 +948,8 @@ export function compileShellAction(action, { json = false } = {}) {
       return cliCommand(["project", "ticket", "next", ...(json ? ["--json"] : [])], false);
     case "metrics":
       return cliCommand(["project", "metrics", ...(json ? ["--json"] : [])], false);
+    case "version":
+      return cliCommand(["version", ...(json ? ["--json"] : [])], false);
     case "doctor":
       return cliCommand(["doctor", ...(json ? ["--json"] : [])], false);
     case "provider_status":
@@ -1192,6 +1202,17 @@ async function runShellActionDirect(action, options) {
       return runCodeletById("kanban-next", [], options);
     case "metrics":
       return formatProjectMetrics(await getProjectMetrics({ projectRoot: options.root }), options.json);
+    case "version": {
+      const packageJson = JSON.parse(await readFileIfExists(path.resolve(getToolkitRoot(), "package.json")));
+      const payload = {
+        name: packageJson.name,
+        version: packageJson.version,
+        toolkitRoot: getToolkitRoot()
+      };
+      return options.json
+        ? `${JSON.stringify(payload, null, 2)}\n`
+        : `${payload.name} ${payload.version}\n${payload.toolkitRoot}\n`;
+    }
     case "doctor": {
       const report = await buildDoctorReport({ root: options.root });
       return options.json
@@ -1545,6 +1566,7 @@ function buildActionCatalog(plannerContext) {
     "- list_tickets: show all active tickets with summaries",
     "- doctor: local diagnostics and provider visibility",
     "- provider_status: show configured and routeable AI providers",
+    "- version: show the current ai-workflow build and toolkit root",
     "- sync: sync the workflow DB",
     "- run_review: run the review summary codelet",
     "- search: search indexed project data",
@@ -1641,6 +1663,7 @@ async function safeGetProjectSummary(root) {
 function renderShellHelp(plannerContext) {
   const examples = [
     "summary",
+    "version",
     "sync and show review hotspots",
     "search router race condition",
     "ticket TKT-001",
