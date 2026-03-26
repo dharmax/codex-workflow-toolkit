@@ -705,6 +705,8 @@ export class SqliteWorkflowStore {
     const rows = this.db.prepare(`
       SELECT *,
         (CASE
+          WHEN scope = 'entity' AND (',' || lower(tags) || ',') LIKE '%,' || ? || ',%' THEN 130
+          WHEN scope = 'entity' AND lower(title) LIKE ? || ' %' THEN 125
           WHEN scope = 'symbol' AND lower(title) LIKE '% ' || ? THEN 120
           WHEN scope = 'symbol' AND lower(tags) LIKE '%' || ? || '%' THEN 110
           WHEN scope = 'symbol' AND lower(title) = ? THEN 105
@@ -718,7 +720,7 @@ export class SqliteWorkflowStore {
         ${scopeClause}
       ORDER BY score DESC, updated_at DESC
       LIMIT ?
-    `).all(trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, ...scopes, limit);
+    `).all(trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, ...scopes, limit);
 
     const indexedResults = rows.map((row) => ({
       id: row.id,

@@ -221,3 +221,72 @@ test("syncProject removes stale indexed files that become ignored on later runs"
     await rm(targetRoot, { recursive: true, force: true });
   }
 });
+
+test("syncProject imports richer docs kanban tickets instead of template root kanban", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-docs-kanban-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "kanban.md"), [
+      "# Kanban",
+      "",
+      "## Backlog",
+      "",
+      "- [ ] TKT-001 Replace this example ticket"
+    ].join("\n"), "utf8");
+    await writeFile(path.join(targetRoot, "epics.md"), "# Epics\n", "utf8");
+    await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+    await writeFile(path.join(targetRoot, "docs", "kanban.md"), [
+      "# Board",
+      "",
+      "## TODO",
+      "",
+      "- [ ] **ADMIN-METRICS-01**: Replace estimated AI spend with real usage metrics.",
+      "  - Outcome: Real metrics replace estimates.",
+      "  - Epic: EPIC-CT-00",
+      "",
+      "## In Progress",
+      "",
+      "- [ ] **REF-APP-SHELL-01**: Continue app-shell hardening.",
+      "",
+      "## Done",
+      "",
+      "- [x] **2026-03-23 DIALOG-RUNTIME-02**: Fixed remaining empty-dialog regressions."
+    ].join("\n"), "utf8");
+    await writeFile(path.join(targetRoot, "docs", "epics.md"), [
+      "# Epics",
+      "",
+      "## 0. Closed-test Consolidation (ACTIVE)",
+      "",
+      "Goal: Harden the product for external testers."
+    ].join("\n"), "utf8");
+
+    const result = await syncProject({ projectRoot: targetRoot });
+    const ticketIds = result.summary.activeTickets.map((ticket) => ticket.id);
+
+    assert.equal(ticketIds.includes("ADMIN-METRICS-01"), true);
+    assert.equal(ticketIds.includes("REF-APP-SHELL-01"), true);
+    assert.equal(ticketIds.includes("DIALOG-RUNTIME-02"), false);
+    assert.equal(ticketIds.includes("TKT-001"), false);
+
+    await withWorkflowStore(targetRoot, async (store) => {
+      const metrics = store.getEntity("ADMIN-METRICS-01");
+      assert.equal(metrics?.lane, "Todo");
+      assert.equal(metrics?.parentId, "EPIC-CT-00");
+      assert.equal(metrics?.data?.outcome, "Real metrics replace estimates.");
+
+      const done = store.getEntity("DIALOG-RUNTIME-02");
+      assert.equal(done?.lane, "Done");
+      assert.equal(done?.state, "archived");
+      assert.equal(store.getEntity("TKT-001"), null);
+
+      const epic = store.listEntities({ entityType: "epic" }).find((item) => item.title === "Closed-test Consolidation");
+      assert.equal(Boolean(epic), true);
+    });
+
+    const exactTicketSearch = await searchProject({ projectRoot: targetRoot, query: "REF-APP-SHELL-01" });
+    assert.equal(exactTicketSearch[0]?.scope, "entity");
+    assert.equal(exactTicketSearch[0]?.refId, "REF-APP-SHELL-01");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});

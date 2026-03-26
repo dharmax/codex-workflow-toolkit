@@ -4,11 +4,18 @@ import { writeProjectFile } from "../lib/filesystem.mjs";
 import { stableId } from "../lib/hash.mjs";
 
 const DEFAULT_TICKET_LANES = [
+  "Deep Backlog",
+  "Backlog",
   "In Progress",
   "Todo",
+  "Bugs P1",
+  "Bugs P2/P3",
+  "Human Inspection",
   "AI Candidates",
   "Doubtful Relevancy",
   "Ideas",
+  "Suggestions",
+  "Done",
   "Risk Watch",
   "Archived"
 ];
@@ -196,8 +203,10 @@ export async function writeProjectProjections(store, { projectRoot }) {
 }
 
 export async function importLegacyProjections(store, { projectRoot }) {
-  const kanbanText = await readText(path.resolve(projectRoot, "kanban.md"), "");
-  const epicsText = await readText(path.resolve(projectRoot, "epics.md"), "");
+  const kanbanSource = await selectProjectionSource(projectRoot, ["docs/kanban.md", "kanban.md"], countKanbanTickets);
+  const epicsSource = await selectProjectionSource(projectRoot, ["docs/epics.md", "epics.md"], countEpicEntries);
+  const kanbanText = kanbanSource.text;
+  const epicsText = epicsSource.text;
   const missionText = await readText(path.resolve(projectRoot, "MISSION.md"), "");
   const geminiText = await readText(path.resolve(projectRoot, ".gemini", "GEMINI.md"), "") || await readText(path.resolve(projectRoot, "GEMINI.md"), "");
   
@@ -215,67 +224,109 @@ export async function importLegacyProjections(store, { projectRoot }) {
   let currentLane = "Todo";
   let importedTickets = 0;
   let importedEpics = 0;
+  let currentTicket = null;
+  const importedTicketIds = new Set();
+  const importedEpicIds = new Set();
 
   for (const line of kanbanText.split(/\r?\n/)) {
     const laneMatch = line.match(/^##\s+(.+)$/);
     if (laneMatch) {
-      currentLane = laneMatch[1].trim();
+      currentLane = normalizeLaneName(laneMatch[1].trim());
+      currentTicket = null;
       continue;
     }
 
-    const ticketMatch = line.match(/^- \[[ xX]\]\s+([A-Z]+-\d+)\s+(.+)$/);
-    if (!ticketMatch) {
+    const ticketMatch = parseKanbanTicketLine(line);
+    if (ticketMatch) {
+      const existing = store.getEntity(ticketMatch.ticketId);
+      const state = ticketMatch.checked || currentLane === "Done" || currentLane === "Archived" ? "archived" : "open";
+      const ticketData = {
+        ...(existing?.data ?? {}),
+        ticketId: ticketMatch.ticketId
+      };
+      if (ticketMatch.completedAt) {
+        ticketData.completedAt = ticketMatch.completedAt;
+      }
+      store.upsertEntity({
+        id: ticketMatch.ticketId,
+        entityType: "ticket",
+        title: ticketMatch.title,
+        lane: currentLane,
+        state,
+        confidence: 1,
+        provenance: `legacy-kanban-import:${kanbanSource.path}`,
+        sourceKind: "projection-import",
+        reviewState: "active",
+        createdAt: existing?.createdAt,
+        parentId: existing?.parentId ?? null,
+        data: ticketData
+      });
+      importedTicketIds.add(ticketMatch.ticketId);
+      currentTicket = ticketMatch.ticketId;
+      importedTickets += 1;
       continue;
     }
 
-    const ticketId = ticketMatch[1];
-    const existing = store.getEntity(ticketId);
+    const fieldMatch = line.match(/^\s{2,}-\s+([A-Za-z][A-Za-z /]+):\s+(.+)$/);
+    if (currentTicket && fieldMatch) {
+      const existing = store.getEntity(currentTicket);
+      const fieldName = normalizeTicketFieldName(fieldMatch[1]);
+      const value = fieldMatch[2].trim();
+      const nextData = {
+        ...(existing?.data ?? {}),
+        ticketId: currentTicket,
+        [fieldName]: value
+      };
+      const nextParentId = fieldName === "epic" ? value : existing?.parentId ?? null;
+      store.upsertEntity({
+        ...existing,
+        id: currentTicket,
+        entityType: "ticket",
+        title: existing?.title ?? currentTicket,
+        lane: existing?.lane ?? currentLane,
+        state: existing?.state ?? "open",
+        confidence: existing?.confidence ?? 1,
+        provenance: existing?.provenance ?? `legacy-kanban-import:${kanbanSource.path}`,
+        sourceKind: existing?.sourceKind ?? "projection-import",
+        reviewState: existing?.reviewState ?? "active",
+        createdAt: existing?.createdAt,
+        parentId: nextParentId,
+        data: nextData
+      });
+    }
+  }
+
+  for (const epic of parseEpicEntries(epicsText)) {
+    const existing = store.getEntity(epic.id);
 
     store.upsertEntity({
-      id: ticketId,
-      entityType: "ticket",
-      title: ticketMatch[2].trim(),
-      lane: currentLane,
-      state: currentLane === "Archived" ? "archived" : "open",
+      id: epic.id,
+      entityType: "epic",
+      title: epic.title,
+      lane: null,
+      state: epic.state,
       confidence: 1,
-      provenance: "legacy-kanban-import",
+      provenance: `legacy-epics-import:${epicsSource.path}`,
       sourceKind: "projection-import",
       reviewState: "active",
       createdAt: existing?.createdAt,
       data: {
         ...(existing?.data ?? {}),
-        ticketId
+        summary: epic.summary ?? existing?.data?.summary ?? ""
       }
     });
-    importedTickets += 1;
-  }
-
-  for (const line of epicsText.split(/\r?\n/)) {
-    const epicMatch = line.match(/^##\s+([A-Z]+-\d+)\s+(.+)$/);
-    if (!epicMatch) {
-      continue;
-    }
-
-    const epicId = epicMatch[1];
-    const existing = store.getEntity(epicId);
-
-    store.upsertEntity({
-      id: epicId,
-      entityType: "epic",
-      title: epicMatch[2].trim(),
-      lane: null,
-      state: "open",
-      confidence: 1,
-      provenance: "legacy-epics-import",
-      sourceKind: "projection-import",
-      reviewState: "active",
-      createdAt: existing?.createdAt,
-      data: {
-        ...(existing?.data ?? {})
-      }
-    });
+    importedEpicIds.add(epic.id);
     importedEpics += 1;
   }
+
+  pruneProjectionImportedEntities(store, {
+    entityType: "ticket",
+    keepIds: importedTicketIds
+  });
+  pruneProjectionImportedEntities(store, {
+    entityType: "epic",
+    keepIds: importedEpicIds
+  });
 
   return {
     importedTickets,
@@ -317,10 +368,170 @@ export function createSearchDocumentsForEntities(store) {
     `).run(
       stableId("search", "entity", entity.id),
       entity.id,
-      entity.title,
-      JSON.stringify(entity.data),
-      [entity.entityType, entity.lane ?? "", entity.state].filter(Boolean).join(","),
+      `${entity.id} ${entity.title}`,
+      JSON.stringify({
+        ...entity.data,
+        id: entity.id,
+        lane: entity.lane,
+        state: entity.state,
+        parentId: entity.parentId
+      }),
+      [entity.entityType, entity.id, entity.lane ?? "", entity.state, entity.parentId ?? ""].filter(Boolean).join(","),
       entity.updatedAt
     );
   }
+}
+
+async function selectProjectionSource(projectRoot, candidates, scorer) {
+  let best = { path: candidates[0], text: "", score: -1 };
+  for (const relativePath of candidates) {
+    const text = await readText(path.resolve(projectRoot, relativePath), "");
+    const score = scorer(text);
+    if (score > best.score) {
+      best = { path: relativePath, text, score };
+    }
+  }
+  return best;
+}
+
+function countKanbanTickets(text) {
+  return text.split(/\r?\n/).filter((line) => Boolean(parseKanbanTicketLine(line))).length;
+}
+
+function countEpicEntries(text) {
+  return parseEpicEntries(text).length;
+}
+
+function parseKanbanTicketLine(line) {
+  const match = line.match(/^- \[([ xX])\]\s+(?:(?:\*\*)?(\d{4}-\d{2}-\d{2})\s+)?(?:\*\*)?([A-Z][A-Z0-9-]+)(?:\*\*)?:\s+(.+)$/)
+    ?? line.match(/^- \[([ xX])\]\s+([A-Z][A-Z0-9-]+)\s+(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  if (match.length === 4) {
+    return {
+      checked: /[xX]/.test(match[1]),
+      completedAt: null,
+      ticketId: match[2],
+      title: match[3].trim()
+    };
+  }
+
+  return {
+    checked: /[xX]/.test(match[1]),
+    completedAt: match[2] ?? null,
+    ticketId: match[3],
+    title: match[4].trim()
+  };
+}
+
+function normalizeLaneName(name) {
+  const key = String(name).trim().toLowerCase();
+  const aliases = new Map([
+    ["todo", "Todo"],
+    ["to-do", "Todo"],
+    ["todoo", "Todo"],
+    ["backlog", "Backlog"],
+    ["deep backlog", "Deep Backlog"],
+    ["in progress", "In Progress"],
+    ["priority 1 bugs", "Bugs P1"],
+    ["bugs p1", "Bugs P1"],
+    ["priority 2/3 bugs", "Bugs P2/P3"],
+    ["bugs p2/p3", "Bugs P2/P3"],
+    ["human testing", "Human Inspection"],
+    ["human inspection", "Human Inspection"],
+    ["suggestions", "Suggestions"],
+    ["done", "Done"],
+    ["archived", "Archived"]
+  ]);
+  return aliases.get(key) ?? name;
+}
+
+function normalizeTicketFieldName(label) {
+  return String(label).trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+}
+
+function parseEpicEntries(text) {
+  const entries = [];
+  let current = null;
+
+  for (const line of text.split(/\r?\n/)) {
+    const explicit = line.match(/^##\s+([A-Z][A-Z0-9-]+)\s+(.+)$/);
+    if (explicit) {
+      if (current) entries.push(current);
+      current = {
+        id: explicit[1],
+        title: explicit[2].trim(),
+        state: "open",
+        summary: ""
+      };
+      continue;
+    }
+
+    const numbered = line.match(/^##\s+\d+\.\s+(.+?)(?:\s+\((ACTIVE|DONE|ARCHIVED)\))?$/i);
+    if (numbered) {
+      if (current) entries.push(current);
+      const title = numbered[1].trim();
+      current = {
+        id: `EPIC-${slugify(title).toUpperCase()}`,
+        title,
+        state: normalizeEpicState(numbered[2]),
+        summary: ""
+      };
+      continue;
+    }
+
+    if (current && !current.summary) {
+      const goal = line.match(/^Goal:\s+(.+)$/i);
+      if (goal) {
+        current.summary = goal[1].trim();
+      }
+    }
+  }
+
+  if (current) {
+    entries.push(current);
+  }
+  return entries;
+}
+
+function normalizeEpicState(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "done" || normalized === "archived") {
+    return "archived";
+  }
+  return "open";
+}
+
+function slugify(value) {
+  return String(value).replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "UNTITLED";
+}
+
+function pruneProjectionImportedEntities(store, { entityType, keepIds }) {
+  const ids = [...keepIds];
+  if (!ids.length) {
+    store.db.prepare("DELETE FROM search_index WHERE scope = 'entity' AND ref_id IN (SELECT id FROM entities WHERE entity_type = ? AND source_kind = 'projection-import')").run(entityType);
+    store.db.prepare("DELETE FROM entities WHERE entity_type = ? AND source_kind = 'projection-import'").run(entityType);
+    return;
+  }
+
+  const placeholders = ids.map(() => "?").join(", ");
+  store.db.prepare(`
+    DELETE FROM search_index
+    WHERE scope = 'entity'
+      AND ref_id IN (
+        SELECT id
+        FROM entities
+        WHERE entity_type = ?
+          AND source_kind = 'projection-import'
+          AND id NOT IN (${placeholders})
+      )
+  `).run(entityType, ...ids);
+  store.db.prepare(`
+    DELETE FROM entities
+    WHERE entity_type = ?
+      AND source_kind = 'projection-import'
+      AND id NOT IN (${placeholders})
+  `).run(entityType, ...ids);
 }
