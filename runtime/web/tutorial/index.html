@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ai-workflow Tutorial</title>
+  <style>
+    :root {
+      --ink: #112018;
+      --paper: #f4efe2;
+      --card: #fbf8ef;
+      --edge: #d9c9a8;
+      --accent: #1b6b4a;
+      --accent-soft: #d7eadf;
+      --warn: #9e3d2a;
+      --muted: #5d665f;
+      --shadow: rgba(35, 39, 34, 0.12);
+      --mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+      --sans: "Avenir Next", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(27, 107, 74, 0.15), transparent 28rem),
+        linear-gradient(180deg, #efe4c9 0%, var(--paper) 24%, #f8f3e8 100%);
+      min-height: 100vh;
+    }
+    .shell {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+    }
+    .hero {
+      border: 1px solid var(--edge);
+      background: linear-gradient(135deg, rgba(251, 248, 239, 0.98), rgba(244, 239, 226, 0.92));
+      border-radius: 26px;
+      padding: 1.5rem;
+      box-shadow: 0 24px 60px var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -4rem;
+      top: -3rem;
+      width: 16rem;
+      height: 16rem;
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(27, 107, 74, 0.18), transparent 70%);
+      pointer-events: none;
+    }
+    .eyebrow {
+      font: 700 0.78rem/1 var(--mono);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    h1 {
+      margin: 0.4rem 0 0.8rem;
+      font-size: clamp(2.2rem, 6vw, 4.6rem);
+      line-height: 0.94;
+      max-width: 12ch;
+    }
+    .lead {
+      max-width: 55ch;
+      font-size: 1.06rem;
+      color: var(--muted);
+      margin-bottom: 1.25rem;
+    }
+    .status-grid,
+    .step-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.9rem;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.45rem 0.75rem;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font: 700 0.78rem/1 var(--mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .card {
+      background: rgba(251, 248, 239, 0.86);
+      border: 1px solid var(--edge);
+      border-radius: 18px;
+      padding: 1rem;
+      box-shadow: 0 10px 24px rgba(34, 32, 25, 0.06);
+    }
+    .card h2, .card h3 {
+      margin: 0 0 0.55rem;
+    }
+    .label {
+      font: 700 0.74rem/1 var(--mono);
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 0.45rem;
+    }
+    .value {
+      font-size: 1rem;
+      word-break: break-word;
+    }
+    .section {
+      margin-top: 1.2rem;
+    }
+    .step {
+      position: relative;
+      padding-top: 2.6rem;
+    }
+    .step-index {
+      position: absolute;
+      top: 0.9rem;
+      left: 1rem;
+      width: 2rem;
+      height: 2rem;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: var(--accent);
+      color: #f8f8f2;
+      font: 700 0.9rem/1 var(--mono);
+    }
+    pre {
+      margin: 0.8rem 0 0;
+      padding: 0.95rem;
+      border-radius: 14px;
+      background: #17211c;
+      color: #eef6ef;
+      overflow-x: auto;
+      font: 0.84rem/1.45 var(--mono);
+    }
+    .hint {
+      margin-top: 0.75rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .note {
+      border-left: 4px solid var(--warn);
+      padding-left: 0.9rem;
+      color: #5c3027;
+    }
+    .footer {
+      margin-top: 1.4rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    @media (max-width: 720px) {
+      .shell { padding: 1rem 0.85rem 3rem; }
+      .hero { padding: 1.1rem; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="eyebrow">Tutorial Surface</div>
+      <h1>Use the tool without guessing.</h1>
+      <p class="lead">
+        This page is intentionally narrow. It explains the tutorial flow, shows the current mode and roots,
+        and gives the exact commands to prove, observe, and move into tool-dev safely.
+      </p>
+      <div class="pill">Tutorial Only</div>
+      <div class="section status-grid" id="status-grid"></div>
+    </section>
+
+    <section class="section">
+      <div class="step-grid">
+        <article class="card step">
+          <div class="step-index">1</div>
+          <h3>Check where the tool thinks it lives</h3>
+          <p>Always start by making the mode and roots explicit.</p>
+          <pre>ai-workflow mode status --json</pre>
+        </article>
+        <article class="card step">
+          <div class="step-index">2</div>
+          <h3>Prove against a real project</h3>
+          <p>In <code>tool-dev</code>, the toolkit stays the repair target and the copied project is only evidence.</p>
+          <pre>ai-workflow run ticket-proving-run --mode tool-dev --root adventure-machine2-playground --limit 5 --json</pre>
+        </article>
+        <article class="card step">
+          <div class="step-index">3</div>
+          <h3>Inspect a single ticket without mutating anything</h3>
+          <p>Use a dry run before you trust the executor.</p>
+          <pre>ai-workflow run execution-dry-run --ticket REF-APP-SHELL-01 --json</pre>
+        </article>
+        <article class="card step">
+          <div class="step-index">4</div>
+          <h3>Tell the tool it did bad</h3>
+          <p>The observation flow now infers likely fields and auto-attaches the latest run artifact.</p>
+          <pre>ai-workflow tool observe --mode tool-dev --complaint "it lied about readiness" --expected "it should admit the plan is weak" --create-ticket --json</pre>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="card">
+        <h2>What This Web Surface Covers</h2>
+        <p class="hint">Right now this page is for tutorial use only.</p>
+        <ul>
+          <li>Current mode and root visibility</li>
+          <li>The shortest safe proving flow</li>
+          <li>The complaint-to-ticket flow in tool-dev</li>
+        </ul>
+        <p class="note">
+          Not here yet: configuration editors, run history browsing, ticket tracking dashboards, and live controls.
+          Those should come later as proper product features, not tutorial hacks.
+        </p>
+      </div>
+    </section>
+
+    <p class="footer" id="footer"></p>
+  </main>
+  <script>
+    async function boot() {
+      const res = await fetch('/api/tutorial');
+      const data = await res.json();
+      const grid = document.getElementById('status-grid');
+      const cards = [
+        ['Mode', data.mode],
+        ['Repair Target', data.repairTargetRoot],
+        ['Evidence Root', data.evidenceRoot],
+        ['Toolkit Root', data.toolkitRoot]
+      ];
+      grid.innerHTML = cards.map(([label, value]) => `
+        <div class="card">
+          <div class="label">${label}</div>
+          <div class="value">${value}</div>
+        </div>
+      `).join('');
+      document.getElementById('footer').textContent =
+        `Tutorial server: ${data.url} · Built for guided first use, not long-term control.`;
+    }
+    boot().catch((error) => {
+      document.getElementById('status-grid').innerHTML = `<div class="card"><div class="label">Error</div><div class="value">${error.message}</div></div>`;
+    });
+  </script>
+</body>
+</html>

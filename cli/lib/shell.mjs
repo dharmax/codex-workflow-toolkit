@@ -228,7 +228,7 @@ async function planSingleRequest(inputText, options) {
         options.blacklist ??= new Set();
         options.blacklist.add(planner.providerId);
         if (!options.json) {
-          output.write(`Planner ${planner.providerId} failed: ${error.message}. Switching to fallback...\n`);
+          output.write(`${renderPlannerFailure(planner, error)}\n`);
         }
       }
       errors.push(`${planner.providerId}: ${error.message ?? String(error)}`);
@@ -272,6 +272,13 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
 
   if (/^(metrics|stats|usage)$/i.test(text)) {
     return actionPlan([{ type: "metrics" }], 0.98, "Usage metrics request.");
+  }
+
+  if (
+    /\b(?:what|which|show|list)\b.*\b(?:ai\s+)?providers?\b/.test(lower) ||
+    /\bproviders?\b.*\b(?:connected|configured|available|active|status)\b/.test(lower)
+  ) {
+    return actionPlan([{ type: "provider_status" }], 0.99, "Explicit provider status request.");
   }
 
   if (/^(connect|login|setup)\s+([a-zA-Z0-9_-]+)$/i.test(text)) {
@@ -626,6 +633,7 @@ function validateShellAction(action, plannerContext) {
     case "list_tickets":
     case "next_ticket":
     case "doctor":
+    case "provider_status":
     case "sync":
     case "run_review":
     case "run_dynamic_codelet":
@@ -829,6 +837,12 @@ export function compileShellAction(action, { json = false } = {}) {
       return cliCommand(["project", "metrics", ...(json ? ["--json"] : [])], false);
     case "doctor":
       return cliCommand(["doctor", ...(json ? ["--json"] : [])], false);
+    case "provider_status":
+      return {
+        args: [],
+        mutation: false,
+        display: "show connected provider status"
+      };
     case "audit_architecture":
       return cliCommand(["audit", "architecture", ...(json ? ["--json"] : [])], false);
     case "sync":
@@ -945,19 +959,23 @@ export async function runInteractiveShell(options) {
         "You can configure it now, or later with \`ai-workflow set-ollama-hw\`.",
         ""
       ].join("\n"));
-      const answer = (await promptShellQuestion(rl, "Configure Ollama hardware now? [Y/n] ") ?? "").trim().toLowerCase();
-      if (!answer || answer === "y" || answer === "yes") {
-        rl.pause();
-        await configureOllamaHardware({
-          root: options.root,
-          interactive: true,
-          rl
-        });
-        rl.resume();
-        options.planners = await resolveShellPlanners(options.root);
-        output.write(`\nUpdated planner: ${renderPlannerLine(options.planners.planners[0] ?? options.planners.heuristic)}\n\n`);
-      } else {
+      if (!process.stdin.isTTY || !process.stdout.isTTY) {
         output.write("\n");
+      } else {
+        const answer = (await promptShellQuestion(rl, "Configure Ollama hardware now? [Y/n] ") ?? "").trim().toLowerCase();
+        if (!answer || answer === "y" || answer === "yes") {
+          rl.pause();
+          await configureOllamaHardware({
+            root: options.root,
+            interactive: true,
+            rl
+          });
+          rl.resume();
+          options.planners = await resolveShellPlanners(options.root);
+          output.write(`\nUpdated planner: ${renderPlannerLine(options.planners.planners[0] ?? options.planners.heuristic)}\n\n`);
+        } else {
+          output.write("\n");
+        }
       }
     }
     while (true) {
@@ -1074,6 +1092,12 @@ async function runShellActionDirect(action, options) {
       return options.json
         ? `${JSON.stringify(report, null, 2)}\n`
         : `${renderDoctorReport(report)}\n`;
+    }
+    case "provider_status": {
+      const providerState = await discoverProviderState({ root: options.root });
+      return options.json
+        ? `${JSON.stringify(providerState, null, 2)}\n`
+        : `${renderProviderStatus(providerState)}\n`;
     }
     case "audit_architecture": {
       const findings = await auditArchitecture(options.root);
@@ -1341,11 +1365,72 @@ function renderPlannerLine(planner) {
   return `planner: ${planner.mode} (${planner.reason})`;
 }
 
+function renderProviderStatus(providerState) {
+  const lines = ["AI providers:"];
+  for (const [providerId, provider] of Object.entries(providerState.providers ?? {})) {
+    const status = [];
+    if (provider.local) {
+      status.push(provider.available ? "available" : "unavailable");
+      if (provider.host) {
+        status.push(`host ${provider.host}`);
+      }
+      if (Array.isArray(provider.models) && provider.models.length) {
+        status.push(`${provider.models.length} model${provider.models.length === 1 ? "" : "s"}`);
+      }
+      if (provider.details && !provider.available) {
+        status.push(shortenProviderDetail(provider.details));
+      }
+    } else {
+      if (provider.configured) {
+        status.push("configured");
+      } else if (provider.available) {
+        status.push("available via env");
+      } else {
+        status.push("not configured");
+      }
+      status.push(provider.available ? "routeable" : "not routeable");
+      if (provider.quota?.freeUsdRemaining != null) {
+        status.push(`free quota ${provider.quota.freeUsdRemaining}`);
+      }
+      if (provider.paidAllowed === false) {
+        status.push("paid disabled");
+      }
+    }
+    lines.push(`- ${providerId}: ${status.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function shortenProviderDetail(detail) {
+  const line = String(detail ?? "").split(/\r?\n/).find(Boolean) ?? "unavailable";
+  return line.length > 120 ? `${line.slice(0, 117)}...` : line;
+}
+
+function renderPlannerFailure(planner, error) {
+  const message = String(error?.message ?? error ?? "");
+  const statusMatch = message.match(/\((\d{3})\)/);
+  const reasonMatch = message.match(/"reason":\s*"([^"]+)"/);
+  const parts = [`Planner ${planner.providerId} failed`];
+  if (statusMatch?.[1]) {
+    parts.push(`HTTP ${statusMatch[1]}`);
+  }
+  if (reasonMatch?.[1]) {
+    parts.push(reasonMatch[1]);
+  } else {
+    const firstLine = message.split(/\r?\n/)[0]?.trim();
+    if (firstLine) {
+      parts.push(firstLine.replace(/\s+/g, " ").slice(0, 160));
+    }
+  }
+  return `${parts.join(": ")}. Switching to fallback...`;
+}
+
 function buildActionCatalog(plannerContext) {
   const lines = [
     "- project_summary: show overall project status, file/symbol counts, and recent friction",
     "- list_tickets: show all active tickets with summaries",
     "- doctor: local diagnostics and provider visibility",
+    "- provider_status: show configured and routeable AI providers",
     "- sync: sync the workflow DB",
     "- run_review: run the review summary codelet",
     "- search: search indexed project data",
@@ -1445,6 +1530,7 @@ function renderShellHelp(plannerContext) {
     "sync and show review hotspots",
     "search router race condition",
     "ticket TKT-001",
+    "what ai providers are you connected to right now?",
     "route review",
     "set-ollama-hw --global",
     "add bug note body \"shared router can race\" file src/core/router.js line 12"

@@ -23,6 +23,7 @@ const TEST_CASES = [
   { input: "metrics", expected: "metrics" },
   { input: "stats", expected: "metrics" },
   { input: "usage", expected: "metrics" },
+  { input: "what ai providers are you connected to right now?", expected: "provider_status" },
 
   // 3. Diagnostics
   { input: "doctor", expected: "doctor" },

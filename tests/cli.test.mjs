@@ -154,6 +154,108 @@ test("installer supports opting out of the default initial sync", async () => {
   }
 });
 
+test("web tutorial server serves tutorial html and mode-aware tutorial api", async () => {
+  const child = spawn(process.execPath, [
+    path.join(repoRoot, "cli", "ai-workflow.mjs"),
+    "web",
+    "tutorial",
+    "--mode",
+    "tool-dev",
+    "--evidence-root",
+    path.join(repoRoot, "adventure-machine2-playground"),
+    "--port",
+    "0",
+    "--json"
+  ], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  try {
+    const started = await new Promise((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      const timeout = setTimeout(() => reject(new Error(`tutorial server timeout\nstdout: ${stdout}\nstderr: ${stderr}`)), 5000);
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+        const trimmed = stdout.trim();
+        if (!trimmed) return;
+        try {
+          const payload = JSON.parse(trimmed);
+          clearTimeout(timeout);
+          resolve(payload);
+        } catch {
+          // wait for complete payload
+        }
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.on("exit", (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`tutorial server exited early with code ${code}\nstdout: ${stdout}\nstderr: ${stderr}`));
+      });
+    });
+
+    assert.equal(started.mode, "tool-dev");
+    assert.equal(typeof started.url, "string");
+
+    const htmlResponse = await fetch(started.url);
+    assert.equal(htmlResponse.status, 200);
+    const html = await htmlResponse.text();
+    assert.match(html, /Use the tool without guessing/i);
+
+    const apiResponse = await fetch(new URL("/api/tutorial", started.url));
+    assert.equal(apiResponse.status, 200);
+    const apiPayload = await apiResponse.json();
+    assert.equal(apiPayload.mode, "tool-dev");
+    assert.equal(apiPayload.repairTargetRoot, repoRoot);
+    assert.equal(apiPayload.evidenceRoot, path.join(repoRoot, "adventure-machine2-playground"));
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => child.on("exit", resolve));
+  }
+});
+
+test("non-interactive shell answers provider status directly without prompting for Ollama hardware", async () => {
+  const child = spawn(process.execPath, [
+    path.join(repoRoot, "cli", "ai-workflow.mjs"),
+    "shell",
+    "--no-ai"
+  ], {
+    cwd: repoRoot,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  child.stdin.write("what ai providers are you connected to right now?\n");
+  child.stdin.write("exit\n");
+  child.stdin.end();
+
+  const code = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`shell timeout\nstdout: ${stdout}\nstderr: ${stderr}`));
+    }, 10000);
+    child.on("exit", (exitCode) => {
+      clearTimeout(timeout);
+      resolve(exitCode ?? 0);
+    });
+  });
+
+  assert.equal(code, 0, stderr || stdout);
+  assert.doesNotMatch(stdout, /Configure Ollama hardware now\?/);
+  assert.match(stdout, /AI providers:/);
+});
+
 test("generated helper scripts work against initialized project state", async () => {
   const targetRoot = await makeTempDir();
 

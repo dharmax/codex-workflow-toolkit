@@ -1,5 +1,5 @@
 import path from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import os from "node:os";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -62,6 +62,7 @@ const HELP = `Usage:
   ai-workflow mode set <default|tool-dev> [--global]
   ai-workflow mode status [--json]
   ai-workflow tool observe [--complaint <text>] [--json]
+  ai-workflow web tutorial [--port <n>] [--host <host>] [--json]
   ai-workflow config get [key]
   ai-workflow config set <key> <value>
 
@@ -135,6 +136,8 @@ export async function main(argv) {
       return handleMode(rest);
     case "tool":
       return handleTool(rest);
+    case "web":
+      return handleWeb(rest);
     case "config":
       return handleConfig(rest);
     default:
@@ -560,6 +563,17 @@ async function handleTool(rest) {
   printAndExit("Usage: ai-workflow tool observe [--complaint <text>] [--json]", 1);
 }
 
+async function handleWeb(rest) {
+  const [action, ...extras] = rest;
+  if (action === "tutorial") {
+    return runNodeScriptLive(
+      path.resolve(toolkitRoot, "runtime", "scripts", "codex-workflow", "tutorial-web.mjs"),
+      extras
+    );
+  }
+  printAndExit("Usage: ai-workflow web tutorial [--port <n>] [--host <host>] [--json]", 1);
+}
+
 async function handleConfig(rest) {
   const [action, key, value, ...extras] = rest;
   const args = parseArgs(extras);
@@ -805,6 +819,37 @@ function runProjectCodelet(codelet, args) {
     printAndExit(`Unsupported project codelet runner: ${codelet.runner}`, 1);
   }
   return runNodeScript(entry, args);
+}
+
+function runNodeScriptLive(scriptPath, args) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [scriptPath, ...args], {
+      cwd: process.cwd(),
+      stdio: "inherit"
+    });
+    const forwardSignal = (signal) => {
+      if (!child.killed) {
+        child.kill(signal);
+      }
+    };
+    const handleSigint = () => forwardSignal("SIGINT");
+    const handleSigterm = () => forwardSignal("SIGTERM");
+    const cleanup = () => {
+      process.off("SIGINT", handleSigint);
+      process.off("SIGTERM", handleSigterm);
+    };
+    process.on("SIGINT", handleSigint);
+    process.on("SIGTERM", handleSigterm);
+    child.on("exit", (code) => {
+      cleanup();
+      resolve(code ?? 0);
+    });
+    child.on("error", (error) => {
+      cleanup();
+      process.stderr.write(`${error.message}\n`);
+      resolve(1);
+    });
+  });
 }
 
 async function handleToolObserve(rest) {

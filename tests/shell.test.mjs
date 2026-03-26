@@ -241,6 +241,14 @@ test("heuristic shell planner recognizes set-ollama-hw shell commands", () => {
   ]);
 });
 
+test("heuristic shell planner handles provider status questions without AI planning", () => {
+  const plan = planShellRequestHeuristically("what ai providers are you connected to right now?", plannerContext);
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [
+    { type: "provider_status" }
+  ]);
+});
+
 test("compileShellAction produces a safe mutating note command", () => {
   const compiled = compileShellAction({
     type: "add_note",

@@ -2,10 +2,10 @@
 
 import path from "node:path";
 import { parseArgs, printAndExit, splitCsv } from "./lib/cli.mjs";
-import { normalizePath, readText } from "./lib/fs-utils.mjs";
+import { isWorkflowStatePath, normalizePath, readText } from "./lib/fs-utils.mjs";
 import { deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
 import { getChanges, isGitRepo } from "./lib/git-utils.mjs";
-import { findTicket, parseKanban } from "./lib/kanban-utils.mjs";
+import { inferTicketWorkingSet, loadTicketContext } from "./lib/workflow-store-utils.mjs";
 
 const HELP = `Usage:
   node scripts/codex-workflow/context-pack.mjs --ticket TKT-001 --changed
@@ -13,8 +13,8 @@ const HELP = `Usage:
 
 Options:
   --root <path>      Project root. Defaults to current directory.
-  --ticket <id>      Ticket id from kanban.md.
-  --kanban <path>    Kanban file path relative to root. Defaults to kanban.md.
+  --ticket <id>      Ticket id from the synced workflow DB or discovered kanban source.
+  --kanban <path>    Kanban file path relative to root. Overrides source discovery.
   --files <list>     Comma-separated file paths to focus on.
   --changed          Include current git changes as file context.
   --json             Emit JSON.
@@ -27,22 +27,19 @@ if (args.help) {
 }
 
 const root = path.resolve(String(args.root ?? process.cwd()));
-const kanbanPath = path.resolve(root, String(args.kanban ?? "kanban.md"));
 const fileInputs = splitCsv(args.files);
 const files = [...fileInputs];
 let ticket = null;
+let ticketEntity = null;
+let ticketSourcePath = null;
 
 if (args.ticket) {
-  const kanban = await readText(kanbanPath);
-  if (!kanban.trim()) {
-    printAndExit(`Kanban file not found or empty: ${kanbanPath}`, 1);
-  }
-
-  const parsed = parseKanban(kanban);
-  ticket = findTicket(parsed, { id: args.ticket });
-
+  const resolved = await loadTicketContext({ root, ticketId: args.ticket, kanbanPath: args.kanban ?? null });
+  ticket = resolved.ticket;
+  ticketEntity = resolved.entity;
+  ticketSourcePath = resolved.sourcePath;
   if (!ticket) {
-    printAndExit(`Ticket ${args.ticket} not found in ${kanbanPath}`, 1);
+    printAndExit(`Ticket ${args.ticket} not found in ${ticketSourcePath ? path.resolve(root, ticketSourcePath) : root}`, 1);
   }
 }
 
@@ -57,9 +54,13 @@ if (args.changed) {
   }
 }
 
-const uniqueFiles = [...new Set(files.filter(Boolean).map(normalizePath))];
+const uniqueFiles = [...new Set(files.filter(Boolean).map(normalizePath).filter((filePath) => !isWorkflowStatePath(filePath)))];
+const inferredWorkingSet = uniqueFiles.length
+  ? { files: [], symbols: [], evidence: [] }
+  : await inferTicketWorkingSet({ root, ticket, entity: ticketEntity });
+const workingSetFiles = [...new Set([...uniqueFiles, ...inferredWorkingSet.files].filter(Boolean).map(normalizePath))];
 const ticketText = ticket ? `${ticket.heading}\n${ticket.body}` : "";
-const keywords = deriveKeywords({ ticketText, files: uniqueFiles });
+const keywords = deriveKeywords({ ticketText, files: workingSetFiles });
 const [agents, contributing, executionProtocol, enforcement, guidelines, knowledge] = await Promise.all([
   readText(path.resolve(root, "AGENTS.md")),
   readText(path.resolve(root, "CONTRIBUTING.md")),
@@ -78,20 +79,24 @@ const guidanceSlices = compactGuidance([
   ...summarizeGuidance(knowledge, keywords, { limit: 2, fallbackLimit: 1 })
 ]);
 
-const reviewFocus = buildReviewFocus(uniqueFiles);
-const hygiene = recommendSessionHygiene({ fileCount: uniqueFiles.length, guidanceCount: guidanceSlices.length, ticket });
+const reviewFocus = buildReviewFocus(workingSetFiles, inferredWorkingSet);
+const hygiene = recommendSessionHygiene({ fileCount: workingSetFiles.length, guidanceCount: guidanceSlices.length, ticket });
 const summary = {
   root,
   ticket: ticket ? { id: ticket.id, title: ticket.title, section: ticket.section } : null,
-  workingSet: uniqueFiles,
+  ticketSourcePath,
+  workingSet: workingSetFiles,
+  relevantSymbols: inferredWorkingSet.symbols,
+  workingSetSource: uniqueFiles.length ? "explicit-or-changed" : "ticket-inference",
+  workingSetEvidence: inferredWorkingSet.evidence,
   guidanceSlices,
   reviewFocus,
-  validationPlan: inferValidationPlan({ ticket, files: uniqueFiles }),
-  risks: buildRisks({ files: uniqueFiles, reviewFocus }),
-  openQuestions: buildOpenQuestions({ ticket, files: uniqueFiles }),
+  validationPlan: inferValidationPlan({ ticket, files: workingSetFiles }),
+  risks: buildRisks({ files: workingSetFiles, reviewFocus }),
+  openQuestions: buildOpenQuestions({ ticket, files: workingSetFiles, inferredWorkingSet }),
   sessionHygiene: hygiene,
   freshSessionRecommended: hygiene.recommendation === "/new",
-  resumePrompt: buildResumePrompt({ ticket, files: uniqueFiles, guidanceSlices, reviewFocus, hygiene })
+  resumePrompt: buildResumePrompt({ ticket, files: workingSetFiles, symbols: inferredWorkingSet.symbols, guidanceSlices, reviewFocus, hygiene })
 };
 
 if (args.json) {
@@ -142,7 +147,7 @@ function compactGuidance(items) {
   return compact.slice(0, 10);
 }
 
-function buildReviewFocus(files) {
+function buildReviewFocus(files, inferredWorkingSet = { files: [], symbols: [] }) {
   const focus = [];
 
   if (!files.length) {
@@ -163,6 +168,10 @@ function buildReviewFocus(files) {
 
   if (files.length > 10) {
     focus.push(`wide change surface: ${files.length} files`);
+  }
+
+  if (inferredWorkingSet.files.length && inferredWorkingSet.symbols.length) {
+    focus.push(`ticket inference surfaced ${inferredWorkingSet.files.length} files and ${inferredWorkingSet.symbols.length} symbols`);
   }
 
   return focus.length ? focus : ["no special review hotspots detected by local heuristics"];
@@ -208,21 +217,21 @@ function buildRisks({ files, reviewFocus }) {
   return risks;
 }
 
-function buildOpenQuestions({ ticket, files }) {
+function buildOpenQuestions({ ticket, files, inferredWorkingSet }) {
   const questions = [];
 
   if (!ticket) {
     questions.push("what is the explicit active ticket or work item?");
   }
 
-  if (!files.length) {
+  if (!files.length && !(inferredWorkingSet?.symbols?.length)) {
     questions.push("which concrete files or changed paths define the working set?");
   }
 
   return questions;
 }
 
-function buildResumePrompt({ ticket, files, guidanceSlices, reviewFocus, hygiene }) {
+function buildResumePrompt({ ticket, files, symbols, guidanceSlices, reviewFocus, hygiene }) {
   const parts = [];
   parts.push("Resume this work using the compact bundle below.");
 
@@ -232,6 +241,10 @@ function buildResumePrompt({ ticket, files, guidanceSlices, reviewFocus, hygiene
 
   if (files.length) {
     parts.push(`Working set: ${files.join(", ")}.`);
+  }
+
+  if (symbols?.length) {
+    parts.push(`Relevant symbols: ${symbols.join(", ")}.`);
   }
 
   if (guidanceSlices.length) {

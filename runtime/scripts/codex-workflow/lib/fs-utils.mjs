@@ -35,3 +35,7 @@ export function normalizePath(filePath) {
   return filePath.split(path.sep).join("/");
 }
 
+export function isWorkflowStatePath(filePath) {
+  const normalized = normalizePath(String(filePath));
+  return /^\.ai-workflow\/state\//.test(normalized);
+}

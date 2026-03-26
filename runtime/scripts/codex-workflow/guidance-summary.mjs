@@ -2,10 +2,10 @@
 
 import path from "node:path";
 import { parseArgs, printAndExit, splitCsv } from "./lib/cli.mjs";
-import { exists, normalizePath, readText } from "./lib/fs-utils.mjs";
+import { exists, isWorkflowStatePath, normalizePath, readText } from "./lib/fs-utils.mjs";
 import { deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
 import { getChanges, isGitRepo } from "./lib/git-utils.mjs";
-import { findTicket, parseKanban } from "./lib/kanban-utils.mjs";
+import { loadTicketContext } from "./lib/workflow-store-utils.mjs";
 
 const HELP = `Usage:
   node scripts/codex-workflow/guidance-summary.mjs --ticket TKT-001
@@ -14,8 +14,8 @@ const HELP = `Usage:
 
 Options:
   --root <path>      Project root. Defaults to current directory.
-  --ticket <id>      Ticket id from kanban.md.
-  --kanban <path>    Kanban file path relative to root. Defaults to kanban.md.
+  --ticket <id>      Ticket id from the synced workflow DB or discovered kanban source.
+  --kanban <path>    Kanban file path relative to root. Overrides source discovery.
   --files <list>     Comma-separated file paths to focus on.
   --changed          Include current git changes as file context.
   --json             Emit JSON.
@@ -28,23 +28,17 @@ if (args.help) {
 }
 
 const root = path.resolve(String(args.root ?? process.cwd()));
-const kanbanPath = path.resolve(root, String(args.kanban ?? "kanban.md"));
 const fileInputs = splitCsv(args.files);
 const files = [...fileInputs];
 let ticket = null;
+let ticketSourcePath = null;
 
 if (args.ticket) {
-  const kanban = await readText(kanbanPath);
-
-  if (!kanban.trim()) {
-    printAndExit(`Kanban file not found or empty: ${kanbanPath}`, 1);
-  }
-
-  const parsed = parseKanban(kanban);
-  ticket = findTicket(parsed, { id: args.ticket });
-
+  const resolved = await loadTicketContext({ root, ticketId: args.ticket, kanbanPath: args.kanban ?? null });
+  ticket = resolved.ticket;
+  ticketSourcePath = resolved.sourcePath;
   if (!ticket) {
-    printAndExit(`Ticket ${args.ticket} not found in ${kanbanPath}`, 1);
+    printAndExit(`Ticket ${args.ticket} not found in ${ticketSourcePath ? path.resolve(root, ticketSourcePath) : root}`, 1);
   }
 }
 
@@ -59,7 +53,7 @@ if (args.changed) {
   }
 }
 
-const uniqueFiles = [...new Set(files.filter(Boolean).map(normalizePath))];
+const uniqueFiles = [...new Set(files.filter(Boolean).map(normalizePath).filter((filePath) => !isWorkflowStatePath(filePath)))];
 const ticketText = ticket ? `${ticket.heading}\n${ticket.body}` : "";
 const keywords = deriveKeywords({ ticketText, files: uniqueFiles });
 
@@ -81,6 +75,7 @@ const [agents, contributing, executionProtocol, enforcement, guidelines, knowled
 const summary = {
   root,
   ticket: ticket ? { id: ticket.id, title: ticket.title, section: ticket.section } : null,
+  ticketSourcePath,
   files: uniqueFiles,
   keywords,
   validationPlan: inferValidationPlan({ ticket, files: uniqueFiles }),
