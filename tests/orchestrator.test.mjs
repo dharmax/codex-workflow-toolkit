@@ -4,7 +4,6 @@ import { cp, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import http from "node:http";
 import { syncProject, createTicket } from "../core/services/sync.mjs";
 import { sweepBugs } from "../core/services/orchestrator.mjs";
 
@@ -13,25 +12,29 @@ const fixtureRoot = path.join(repoRoot, "tests", "fixtures", "workflow-repo");
 
 test("sweepBugs finds tickets and calls verifyAndApplyPatch", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "orch-test-"));
-  
-  const server = http.createServer((req, res) => {
-    if (req.url === "/api/tags") {
-      res.writeHead(200);
-      res.end(JSON.stringify({ models: [{ name: "mock-model:latest", size: 1000 }] }));
-      return;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return { models: [{ name: "mock-model:latest", size: 1000 }] };
+        }
+      };
     }
-    if (req.url === "/api/generate") {
-      res.writeHead(200);
-      res.end(JSON.stringify({ response: `File: src/app.ts\n<<<< SEARCH\nimport { mount } from "riot";\n====\nimport { mount, unmount } from "riot";\n>>>>` }));
-      return;
+    if (String(url).endsWith("/api/generate")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            response: `File: src/app.ts\n<<<< SEARCH\nimport { mount } from "riot";\n====\nimport { mount, unmount } from "riot";\n>>>>`
+          };
+        }
+      };
     }
-    res.writeHead(404);
-    res.end();
-  });
-
-  server.listen(0);
-  const port = server.address().port;
-  process.env.OLLAMA_HOST = `http://127.0.0.1:${port}`;
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+  process.env.OLLAMA_HOST = "http://mock-ollama.local";
 
   try {
     await cp(fixtureRoot, targetRoot, { recursive: true });
@@ -54,7 +57,7 @@ test("sweepBugs finds tickets and calls verifyAndApplyPatch", async () => {
     assert.match(report, /BUG-999/);
     
   } finally {
-    server.close();
+    globalThis.fetch = originalFetch;
     delete process.env.OLLAMA_HOST;
     await rm(targetRoot, { recursive: true, force: true });
   }

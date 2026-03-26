@@ -13,19 +13,32 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function runNode(args, options = {}) {
+  const captureDir = await mkdtemp(path.join(os.tmpdir(), "codex-workflow-capture-"));
+  const stdoutPath = path.join(captureDir, "stdout.log");
+  const stderrPath = path.join(captureDir, "stderr.log");
   try {
-    const { stdout, stderr } = await execFileAsync(process.execPath, args, {
+    await execFileAsync("/usr/bin/bash", ["-lc", `${shellQuote(process.execPath)} ${args.map(shellQuote).join(" ")} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)}`], {
       ...options,
       maxBuffer: 8 * 1024 * 1024
     });
-    return { code: 0, stdout, stderr };
+    return {
+      code: 0,
+      stdout: await readFile(stdoutPath, "utf8").catch(() => ""),
+      stderr: await readFile(stderrPath, "utf8").catch(() => "")
+    };
   } catch (error) {
     return {
       code: error.code ?? 1,
-      stdout: error.stdout ?? "",
-      stderr: error.stderr ?? error.message
+      stdout: await readFile(stdoutPath, "utf8").catch(() => error.stdout ?? ""),
+      stderr: await readFile(stderrPath, "utf8").catch(() => error.stderr ?? error.message)
     };
+  } finally {
+    await rm(captureDir, { recursive: true, force: true });
   }
+}
+
+function shellQuote(value) {
+  return JSON.stringify(String(value));
 }
 
 async function makeTempDir() {

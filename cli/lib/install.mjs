@@ -19,12 +19,11 @@ export async function installAgents({ toolkitRoot, projectRoot = process.cwd() }
   return results;
 }
 
-async function ensureProjectConfig(projectRoot, toolkitRoot) {
+async function ensureProjectConfig(projectRoot) {
   const configPath = getProjectConfigPath(projectRoot);
   const existing = await readConfig(configPath);
   const nextConfig = {
     ...existing,
-    toolkitRoot,
     storage: {
       dbPath: ".ai-workflow/state/workflow.db",
       ...(existing.storage ?? {})

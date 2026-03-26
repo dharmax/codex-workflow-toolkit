@@ -33,9 +33,9 @@
     "audit:guidelines": "node runtime/scripts/codex-workflow/guideline-audit.mjs",
     "audit": "node runtime/scripts/codex-workflow/workflow-audit.mjs",
     "ai-workflow": "node cli/ai-workflow.mjs",
-    "test": "node --test"
+    "test": "node --test --test-concurrency=1"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   }
 }

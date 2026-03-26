@@ -1,6 +1,6 @@
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { writeConfigValue } from "./config-store.mjs";
+import { getGlobalConfigPath, writeConfigValue } from "./config-store.mjs";
 import { spawn } from "node:child_process";
 
 export async function handleProviderConnect(providerId, { rl: existingRl } = {}) {
@@ -32,6 +32,7 @@ export async function handleProviderConnect(providerId, { rl: existingRl } = {})
 }
 
 async function connectWithApiKey(rl, providerId) {
+  const configPath = getGlobalConfigPath();
   const canonicalId = providerId === "gemini" ? "google" : providerId;
   const urlMap = {
     openai: "https://platform.openai.com/api-keys",
@@ -54,12 +55,13 @@ async function connectWithApiKey(rl, providerId) {
     return 1;
   }
 
-  await writeConfigValue(`providers.${canonicalId}.apiKey`, apiKey.trim(), { global: true });
+  await writeConfigValue(configPath, `providers.${canonicalId}.apiKey`, apiKey.trim());
   console.log(`Successfully connected to ${canonicalId}!`);
   return 0;
 }
 
 async function connectCodex(rl) {
+  const configPath = getGlobalConfigPath();
   console.log("Connecting to Codex (Browser Login Simulation)...");
   // In a real scenario, this might involve OAuth or a special login URL
   console.log("Opening browser for login...");
@@ -71,7 +73,7 @@ async function connectCodex(rl) {
     return 1;
   }
 
-  await writeConfigValue("providers.codex.token", token.trim(), { global: true });
+  await writeConfigValue(configPath, "providers.codex.token", token.trim());
   console.log("Successfully connected to Codex!");
   return 0;
 }

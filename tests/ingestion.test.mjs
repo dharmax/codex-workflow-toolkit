@@ -4,7 +4,6 @@ import { cp, mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import http from "node:http";
 import { syncProject, getProjectSummary } from "../core/services/sync.mjs";
 import { ingestArtifact } from "../core/services/orchestrator.mjs";
 import { withSupergitTransaction } from "../core/services/supergit.mjs";
@@ -16,37 +15,61 @@ test("ingestArtifact assesses and generates correct epics and tickets with mock 
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ingest-test-"));
   
   let callCount = 0;
-  const server = http.createServer((req, res) => {
-    if (req.url === "/api/tags") {
-      res.writeHead(200);
-      res.end(JSON.stringify({ models: [{ name: "mock-model:latest", size: 1000 }] }));
-      return;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return { models: [{ name: "mock-model:latest", size: 1000 }] };
+        }
+      };
     }
-    if (req.url === "/api/generate") {
+    if (String(url).endsWith("/api/generate") || String(url).includes(":generateContent?key=")) {
       callCount++;
-      res.writeHead(200);
-      if (callCount === 1) {
-        // Outline phase
-        res.end(JSON.stringify({ response: JSON.stringify({
-          status: "complete",
-          outline: "# Outline\n- Epic: EPC-NEW"
-        }) }));
-      } else {
-        // Generation phase
-        res.end(JSON.stringify({ response: JSON.stringify({
-          epic: { id: "EPC-NEW", title: "New Feature", summary: "Summary" },
-          tickets: [{ id: "TKT-NEW", title: "New Ticket", summary: "Do it", domain: "logic" }]
-        }) }));
-      }
-      return;
+      return {
+        ok: true,
+        async json() {
+          if (callCount === 1) {
+            return {
+              response: JSON.stringify({
+                status: "complete",
+                outline: "# Outline\n- Epic: EPC-NEW"
+              }),
+              candidates: [{
+                content: {
+                  parts: [{
+                    text: JSON.stringify({
+                      status: "complete",
+                      outline: "# Outline\n- Epic: EPC-NEW"
+                    })
+                  }]
+                }
+              }]
+            };
+          }
+          return {
+            response: JSON.stringify({
+              epic: { id: "EPC-NEW", title: "New Feature", summary: "Summary" },
+              tickets: [{ id: "TKT-NEW", title: "New Ticket", summary: "Do it", domain: "logic" }]
+            }),
+            candidates: [{
+              content: {
+                parts: [{
+                  text: JSON.stringify({
+                    epic: { id: "EPC-NEW", title: "New Feature", summary: "Summary" },
+                    tickets: [{ id: "TKT-NEW", title: "New Ticket", summary: "Do it", domain: "logic" }]
+                  })
+                }]
+              }
+            }]
+          };
+        }
+      };
     }
-    res.writeHead(404);
-    res.end();
-  });
-
-  server.listen(0);
-  const port = server.address().port;
-  process.env.OLLAMA_HOST = `http://127.0.0.1:${port}`;
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+  process.env.OLLAMA_HOST = "http://mock-ollama.local";
 
   try {
     await cp(fixtureRoot, targetRoot, { recursive: true });
@@ -68,7 +91,7 @@ test("ingestArtifact assesses and generates correct epics and tickets with mock 
     assert.equal(summary.activeTickets.some(t => t.id === "TKT-NEW"), true);
 
   } finally {
-    server.close();
+    globalThis.fetch = originalFetch;
     delete process.env.OLLAMA_HOST;
     await rm(targetRoot, { recursive: true, force: true });
   }

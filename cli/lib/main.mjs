@@ -1,7 +1,10 @@
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFile } from "node:child_process";
+import os from "node:os";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import { promisify } from "node:util";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/lib/cli.mjs";
 import { getToolkitCodelet, getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
@@ -19,6 +22,7 @@ import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { ingestArtifact } from "../../core/services/orchestrator.mjs";
 
 const toolkitRoot = getToolkitRoot();
+const execFileAsync = promisify(execFile);
 
 const HELP = `Usage:
   ai-workflow init [options]
@@ -672,21 +676,45 @@ async function handleConsult(rest) {
 }
 
 function runNodeScript(scriptPath, args) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [scriptPath, ...args], {
-      cwd: process.cwd(),
-      stdio: "inherit"
-    });
+  return mkdtemp(path.join(os.tmpdir(), "ai-workflow-cli-")).then(async (captureDir) => {
+    const stdoutPath = path.join(captureDir, "stdout.log");
+    const stderrPath = path.join(captureDir, "stderr.log");
+    const command = `${shellQuote(process.execPath)} ${[scriptPath, ...args].map(shellQuote).join(" ")} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)}`;
 
-    child.on("close", (code) => {
-      resolve(code ?? 1);
-    });
-
-    child.on("error", (error) => {
-      process.stderr.write(`${error.message}\n`);
-      resolve(1);
-    });
+    try {
+      await execFileAsync("/usr/bin/bash", ["-lc", command], {
+        cwd: process.cwd(),
+        maxBuffer: 16 * 1024 * 1024
+      });
+      const stdout = await readFile(stdoutPath, "utf8").catch(() => "");
+      const stderr = await readFile(stderrPath, "utf8").catch(() => "");
+      if (stdout) {
+        process.stdout.write(stdout);
+      }
+      if (stderr) {
+        process.stderr.write(stderr);
+      }
+      return 0;
+    } catch (error) {
+      const stdout = await readFile(stdoutPath, "utf8").catch(() => error.stdout ?? "");
+      const stderr = await readFile(stderrPath, "utf8").catch(() => error.stderr ?? "");
+      if (stdout) {
+        process.stdout.write(stdout);
+      }
+      if (stderr) {
+        process.stderr.write(stderr);
+      } else if (error.message) {
+        process.stderr.write(`${error.message}\n`);
+      }
+      return error.code ?? 1;
+    } finally {
+      await rm(captureDir, { recursive: true, force: true });
+    }
   });
+}
+
+function shellQuote(value) {
+  return JSON.stringify(String(value));
 }
 
 function runProjectCodelet(codelet, args) {

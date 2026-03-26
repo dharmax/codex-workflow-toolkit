@@ -2,10 +2,11 @@ import path from "node:path";
 import process from "node:process";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { listToolkitCodelets } from "./codelets.mjs";
+import { getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
 import { listProjectCodelets } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
 import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
@@ -87,17 +88,22 @@ export async function buildShellContext(root = process.cwd()) {
 
   const [mission, kanban, gemini, guidelines] = await Promise.all([
     readFileIfExists(path.resolve(root, "MISSION.md")),
-    (async () => {
-      const gK = await readFileIfExists(path.resolve(root, ".gemini", "KANBAN.md"));
-      if (gK) return gK;
-      return readFileIfExists(path.resolve(root, "KANBAN.md"));
-    })(),
-    (async () => {
-      const gG = await readFileIfExists(path.resolve(root, ".gemini", "GEMINI.md"));
-      if (gG) return gG;
-      return readFileIfExists(path.resolve(root, "GEMINI.md"));
-    })(),
-    readFileIfExists(path.resolve(root, "templates", "project-guidelines.md"))
+    readFirstExisting([
+      path.resolve(root, ".gemini", "KANBAN.md"),
+      path.resolve(root, ".gemini", "kanban.md"),
+      path.resolve(root, "KANBAN.md"),
+      path.resolve(root, "kanban.md")
+    ]),
+    readFirstExisting([
+      path.resolve(root, ".gemini", "GEMINI.md"),
+      path.resolve(root, ".gemini", "gemini.md"),
+      path.resolve(root, "GEMINI.md"),
+      path.resolve(root, "gemini.md")
+    ]),
+    readFirstExisting([
+      path.resolve(root, "project-guidelines.md"),
+      path.resolve(root, "templates", "project-guidelines.md")
+    ])
   ]);
 
   return {
@@ -121,6 +127,16 @@ async function readFileIfExists(filePath) {
   } catch {
     return null;
   }
+}
+
+async function readFirstExisting(filePaths) {
+  for (const filePath of filePaths) {
+    const content = await readFileIfExists(filePath);
+    if (content) {
+      return content;
+    }
+  }
+  return null;
 }
 
 export async function resolveShellPlanners(root = process.cwd()) {
@@ -1189,12 +1205,15 @@ async function runShellActionDirect(action, options) {
       }
       const stagedDir = path.resolve(options.root, ".ai-workflow", "staged-codelets");
       const entryPath = path.resolve(stagedDir, `dynamic-${Date.now()}.mjs`);
+      const toolkitRoot = getToolkitRoot();
+      const sqliteStoreUrl = pathToFileURL(path.resolve(toolkitRoot, "core", "db", "sqlite-store.mjs")).href;
+      const syncUrl = pathToFileURL(path.resolve(toolkitRoot, "core", "services", "sync.mjs")).href;
       const source = [
         "/* Responsibility: Dynamic AI-forged codelet for on-the-fly execution.",
         "   Context: This script was forged to satisfy a specific user intent. */",
         "import path from \"node:path\";",
-        "import { openWorkflowStore } from \"./core/db/sqlite-store.mjs\";",
-        "import { getProjectSummary } from \"./core/services/sync.mjs\";",
+        `import { openWorkflowStore } from ${JSON.stringify(sqliteStoreUrl)};`,
+        `import { getProjectSummary } from ${JSON.stringify(syncUrl)};`,
         "",
         "const root = process.cwd();",
         "async function run() {",

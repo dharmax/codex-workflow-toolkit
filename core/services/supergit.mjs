@@ -57,6 +57,12 @@ export async function withSupergitTransaction(root, taskName, operation) {
     success = false;
     operationResult = { success: false, error: err.message };
   } finally {
+    if (!success) {
+      // Clean up only on the temp branch so we do not destroy the caller's working tree.
+      await runGit(["reset", "--hard", "HEAD"], { root });
+      await runGit(["clean", "-fd"], { root });
+    }
+
     // 5. Cleanup
     await runGit(["checkout", originalBranch], { root });
 
@@ -68,13 +74,6 @@ export async function withSupergitTransaction(root, taskName, operation) {
         success = false;
         operationResult = { success: false, error: "Failed to merge temp branch cleanly" };
       }
-    }
-
-    if (!success) {
-      // If failed, nuke any untracked garbage the AI might have left behind
-      // before we attempt to restore the original state.
-      await runGit(["reset", "--hard", "HEAD"], { root });
-      await runGit(["clean", "-fd"], { root });
     }
 
     // Delete temp branch (force delete)

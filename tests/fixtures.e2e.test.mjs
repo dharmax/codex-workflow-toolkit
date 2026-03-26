@@ -175,24 +175,33 @@ async function runNodeInline(script, options = {}) {
 }
 
 async function runCommand(command, args, options = {}) {
+  const captureDir = await makeTempDir();
+  const stdoutPath = path.join(captureDir, "stdout.log");
+  const stderrPath = path.join(captureDir, "stderr.log");
   try {
-    const { stdout, stderr } = await execFileAsync(command, args, {
+    await execFileAsync("/usr/bin/bash", ["-lc", `${shellQuote(command)} ${args.map(shellQuote).join(" ")} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)}`], {
       cwd: options.cwd,
       env: process.env
     });
 
     return {
       code: 0,
-      stdout,
-      stderr
+      stdout: await readFile(stdoutPath, "utf8").catch(() => ""),
+      stderr: await readFile(stderrPath, "utf8").catch(() => "")
     };
   } catch (error) {
     return {
       code: error.code ?? 1,
-      stdout: error.stdout ?? "",
-      stderr: error.stderr ?? error.message
+      stdout: await readFile(stdoutPath, "utf8").catch(() => error.stdout ?? ""),
+      stderr: await readFile(stderrPath, "utf8").catch(() => error.stderr ?? error.message)
     };
+  } finally {
+    await cleanup(captureDir);
   }
+}
+
+function shellQuote(value) {
+  return JSON.stringify(String(value));
 }
 
 function parseJsonStdout(result) {
