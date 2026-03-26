@@ -16,38 +16,47 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
   const capability = knowledge.capabilityMapping[taskClass] ?? domain ?? "logic";
   const minimumQuality = knowledge.minimumQuality[taskClass] ?? "medium";
   const preferLocalForTask = preferLocal ?? providerState.routingPolicy.preferLocalFor?.includes(taskClass) ?? providerState.routingPolicy.preferLocalFor?.includes(capability) ?? false;
+  const quotaStrategy = providerState.routingPolicy.quotaStrategy ?? "prefer-free-remote";
   const candidates = [];
+  const remoteFreeQuotaAvailable = Object.values(providerState.providers).some((provider) =>
+    !provider.local && provider.available && hasFreeQuota(provider)
+  );
 
   for (const [providerId, provider] of Object.entries(providerState.providers)) {
     if (!provider.available) {
       continue;
     }
+    if (!provider.local && shouldBlockProviderForQuota(provider, { quotaStrategy, remoteFreeQuotaAvailable })) {
+      continue;
+    }
 
     for (const model of provider.models) {
+      const shellPlanningLocal = taskClass === "shell-planning" && provider.local;
       const quality = model.quality ?? "medium";
       if (!allowWeak && QUALITY_ORDER[quality] < QUALITY_ORDER[minimumQuality]) {
         continue;
       }
 
       // Check hardware limits for local models
-      if (provider.local && provider.maxModelSizeB && model.sizeB && model.sizeB > provider.maxModelSizeB) {
+      if (!shellPlanningLocal && provider.local && provider.maxModelSizeB && model.sizeB && model.sizeB > provider.maxModelSizeB) {
         continue;
       }
 
       // 0-5 competency score (Data-driven inference)
       const competency = model.capabilities?.[capability] ?? inferCompetency(model, capability, knowledge.inferenceHeuristics);
       
-      if (competency < 2 || (competency < 3 && QUALITY_ORDER[minimumQuality] > QUALITY_ORDER.low)) {
+      if ((!shellPlanningLocal && competency < 2) || (!shellPlanningLocal && competency < 3 && QUALITY_ORDER[minimumQuality] > QUALITY_ORDER.low)) {
         continue;
       }
 
-      const localPreference = preferLocalForTask && provider.local ? 3 : 0;
+      const localPreference = preferLocalForTask && provider.local ? (shellPlanningLocal ? 5 : 3) : 0;
+      const configTrustBonus = provider.local ? 1 : provider.configured ? 2 : -3;
       
       // Item 35: Historical Success Bias
       const modelMetrics = providerState.metricsSummary?.byModel?.find(m => m.model_id === model.id);
       const reliabilityBonus = modelMetrics ? (modelMetrics.success_rate / 20) : 2; // 0-5 bonus based on success rate
-
-      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + reliabilityBonus;
+      const quotaBonus = scoreQuota(provider, { quotaStrategy, remoteFreeQuotaAvailable });
+      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + reliabilityBonus + quotaBonus + configTrustBonus;
       
       candidates.push({
         providerId,
@@ -56,6 +65,8 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
         quality,
         costTier: model.costTier ?? 5,
         competency,
+        quota: provider.quota ?? null,
+        freeQuotaRemaining: provider.quota?.freeUsdRemaining ?? null,
         score
       });
     }
@@ -88,10 +99,37 @@ function buildReason(candidate, taskClass, minimumQuality, capability) {
   const parts = [];
   parts.push(`competency ${candidate.competency}/5 for ${capability}`);
   parts.push(candidate.local ? "local-first candidate" : "remote provider candidate");
+  if (candidate.freeQuotaRemaining !== null) {
+    parts.push(`free quota $${candidate.freeQuotaRemaining.toFixed(2)} remaining`);
+  }
   if (candidate.costTier <= 2) {
     parts.push("low cost tier");
   }
   return parts.join(", ");
+}
+
+function hasFreeQuota(provider) {
+  return provider.quota?.freeUsdRemaining !== null && provider.quota.freeUsdRemaining > 0;
+}
+
+function shouldBlockProviderForQuota(provider, { quotaStrategy, remoteFreeQuotaAvailable }) {
+  if (provider.local) return false;
+  if (quotaStrategy !== "prefer-free-remote") return false;
+  if (!remoteFreeQuotaAvailable) return false;
+  if (hasFreeQuota(provider)) return false;
+  return provider.quota?.freeUsdRemaining !== null;
+}
+
+function scoreQuota(provider, { quotaStrategy, remoteFreeQuotaAvailable }) {
+  if (provider.local) return remoteFreeQuotaAvailable ? -4 : 2;
+  if (quotaStrategy !== "prefer-free-remote") return 0;
+  if (hasFreeQuota(provider)) {
+    return 8 + Math.min(4, provider.quota.freeUsdRemaining / 5);
+  }
+  if (provider.quota?.freeUsdRemaining !== null) {
+    return provider.paidAllowed === false ? -50 : -10;
+  }
+  return 0;
 }
 
 function inferCompetency(model, capability, heuristics) {

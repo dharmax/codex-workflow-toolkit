@@ -90,6 +90,149 @@ test("routeTask picks up a configured remote Ollama host", async () => {
   }
 });
 
+test("routeTask prefers the remote provider with remaining free quota", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-route-quota-"));
+
+  try {
+    await mkdir(path.join(targetRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(targetRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          ollama: { enabled: false },
+          google: {
+            apiKey: "g-key",
+            quota: { freeUsdRemaining: 0 },
+            paidAllowed: false
+          },
+          openai: {
+            apiKey: "o-key",
+            quota: { freeUsdRemaining: 7.5 },
+            paidAllowed: false
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+
+    const route = await routeTask({
+      root: targetRoot,
+      taskClass: "strategy",
+      preferLocal: false
+    });
+
+    assert.equal(route.recommended?.providerId, "openai");
+    assert.equal(route.recommended?.reason.includes("free quota $7.50 remaining"), true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("routeTask can fall back to ollama when remote free quota is exhausted", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-route-quota-local-"));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [{ name: "qwen2.5:14b", size: 14 * 1024 ** 3 }]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  try {
+    await mkdir(path.join(targetRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(targetRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          google: {
+            apiKey: "g-key",
+            quota: { freeUsdRemaining: 0 },
+            paidAllowed: false
+          },
+          openai: {
+            apiKey: "o-key",
+            quota: { freeUsdRemaining: 0 },
+            paidAllowed: false
+          },
+          ollama: {
+            host: "http://127.0.0.1:11434"
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+
+    const route = await routeTask({
+      root: targetRoot,
+      taskClass: "summarization"
+    });
+
+    assert.equal(route.recommended?.providerId, "ollama");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("routeTask prefers local shell planning over env-only remote providers", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-route-shell-local-"));
+  const originalGoogleKey = process.env.GOOGLE_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.GOOGLE_API_KEY = "env-only-google-key";
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [{ name: "deepseek-r1:8b", size: 5 * 1024 ** 3 }]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  try {
+    await mkdir(path.join(targetRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(targetRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          ollama: {
+            host: "http://127.0.0.1:11434",
+            hardwareClass: "tiny",
+            maxModelSizeB: 4
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+
+    const route = await routeTask({
+      root: targetRoot,
+      taskClass: "shell-planning"
+    });
+
+    assert.equal(route.recommended?.providerId, "ollama");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalGoogleKey === undefined) {
+      delete process.env.GOOGLE_API_KEY;
+    } else {
+      process.env.GOOGLE_API_KEY = originalGoogleKey;
+    }
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("CLI sync, summary, ticket creation, note creation, route, and telegram preview work together", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-cli-"));
   const fixtureRoot = path.join(repoRoot, "tests", "fixtures", "workflow-repo");
@@ -149,6 +292,45 @@ test("CLI sync, summary, ticket creation, note creation, route, and telegram pre
     assert.equal(telegram.code, 0, telegram.stderr || telegram.stdout);
     const telegramPayload = JSON.parse(telegram.stdout);
     assert.match(telegramPayload.text, /AI Workflow Status/);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("CLI provider quota refresh updates configured monthly free quota windows", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-cli-provider-quota-"));
+
+  try {
+    await mkdir(path.join(targetRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(targetRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          google: {
+            apiKey: "g-key",
+            quota: {
+              freeUsdRemaining: 0,
+              monthlyFreeUsd: 3,
+              resetAt: "2026-03-01"
+            }
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+
+    const refresh = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "provider",
+      "quota",
+      "refresh",
+      "google",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(refresh.code, 0, refresh.stderr || refresh.stdout);
+    const payload = JSON.parse(refresh.stdout);
+    assert.equal(payload.refreshed[0].providerId, "google");
+    assert.equal(typeof payload.refreshed[0].quota.freeUsdRemaining, "number");
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

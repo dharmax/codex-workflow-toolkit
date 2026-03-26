@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chooseShellPlannerModel, compileShellAction, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, planShellRequestWithAgent, runShellTurn } from "../cli/lib/shell.mjs";
+import { chooseShellPlannerModel, compileShellAction, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, planShellRequestWithAgent, resolveShellPlanners, runShellTurn } from "../cli/lib/shell.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
 
 test("buildShellContext reads foundational project files", async (t) => {
@@ -21,6 +21,55 @@ test("buildShellContext reads foundational project files", async (t) => {
     assert.equal(context.kanban, "Kanban State");
     assert.equal(context.guidelines, "Project Guidelines");
   } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveShellPlanners prefers local shell planning when remote access is env-only", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-route-" + Math.random().toString(36).slice(2));
+  const originalGoogleKey = process.env.GOOGLE_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.GOOGLE_API_KEY = "env-only-google-key";
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "deepseek-r1:8b", size: 5 * 1024 ** 3 }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  await fs.mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".ai-workflow", "config.json"),
+    JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://127.0.0.1:11434",
+          hardwareClass: "tiny",
+          maxModelSizeB: 4
+        }
+      }
+    }, null, 2)
+  );
+
+  try {
+    const planners = await resolveShellPlanners(root);
+    assert.equal(planners.planners[0]?.providerId, "ollama");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalGoogleKey === undefined) {
+      delete process.env.GOOGLE_API_KEY;
+    } else {
+      process.env.GOOGLE_API_KEY = originalGoogleKey;
+    }
     await fs.rm(root, { recursive: true, force: true });
   }
 });

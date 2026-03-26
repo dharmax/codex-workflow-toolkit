@@ -161,17 +161,47 @@ async function readFirstExisting(filePaths) {
 export async function resolveShellPlanners(root = process.cwd()) {
   const route = await routeTask({ root, taskClass: "shell-planning" });
   const planners = [];
+  const providers = route.providers ?? {};
+  const configuredRemoteAvailable = Object.values(providers).some((provider) => !provider.local && provider.available && provider.configured);
+
+  const ollamaProvider = providers.ollama;
+  if (ollamaProvider?.available && !configuredRemoteAvailable) {
+    try {
+      const localShellModel = chooseShellPlannerModel(ollamaProvider);
+      planners.push({
+        mode: "ollama",
+        providerId: "ollama",
+        modelId: localShellModel.id,
+        host: ollamaProvider.host,
+        needsHardwareHint: Boolean(localShellModel.needsHardwareHint),
+        reason: localShellModel.reason ?? "local shell fallback"
+      });
+    } catch {
+      // keep route-derived planners only
+    }
+  }
 
   if (route.recommended) {
-    planners.push(mapRouteCandidateToPlanner(route.recommended, route.providers));
+    planners.push(mapRouteCandidateToPlanner(route.recommended, providers));
   }
 
   for (const candidate of route.fallbackChain) {
-    planners.push(mapRouteCandidateToPlanner(candidate, route.providers));
+    planners.push(mapRouteCandidateToPlanner(candidate, providers));
+  }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const planner of planners) {
+    const key = `${planner.providerId}:${planner.modelId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    deduped.push(planner);
   }
 
   return {
-    planners,
+    planners: deduped,
     heuristic: {
       mode: "heuristic",
       reason: "No available AI models for shell planning."
@@ -271,7 +301,7 @@ async function planSingleRequest(inputText, options) {
       if (isFatal) {
         options.blacklist ??= new Set();
         options.blacklist.add(planner.providerId);
-        if (!options.json) {
+        if (!options.json && shouldSurfacePlannerFailure(inputText, heuristic)) {
           output.write(`${renderPlannerFailure(planner, error)}\n`);
         }
       }
@@ -286,6 +316,17 @@ async function planSingleRequest(inputText, options) {
       reason: errors.join("; ")
     }
   };
+}
+
+function shouldSurfacePlannerFailure(inputText, heuristic) {
+  const text = String(inputText ?? "").trim().toLowerCase();
+  if (heuristic?.kind === "reply") {
+    return false;
+  }
+  if (/\b(route|provider|model|quota|config|doctor|diagnostics)\b/.test(text)) {
+    return true;
+  }
+  return false;
 }
 
 export function planShellRequestHeuristically(inputText, plannerContext) {
