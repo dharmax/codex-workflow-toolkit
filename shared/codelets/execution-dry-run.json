@@ -1,0 +1,8 @@
+{
+  "id": "execution-dry-run",
+  "stability": "beta",
+  "category": "verification",
+  "summary": "Show the inferred execution plan and optional baseline checks for a ticket without mutating files.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/codex-workflow/execution-dry-run.mjs"
+}

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { openWorkflowStore } from "../db/sqlite-store.mjs";
-import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "../../cli/lib/config-store.mjs";
+import { getGlobalConfigPath, getProjectConfigPath, readConfig, readConfigSafe, writeConfigValue } from "../../cli/lib/config-store.mjs";
 import { loadKnowledge } from "./knowledge.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -43,12 +43,15 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
     const config = configuredProviders[providerId] ?? {};
     const apiKey = config.apiKey ?? getEnvKey(providerId);
     const models = normalizeConfiguredModels(providerId, config, knowledge.models[providerId] ?? []);
+    const quota = normalizeProviderQuota(config.quota);
     providers[providerId] = {
       available: config.enabled !== false && models.length > 0 && !!apiKey,
       local: false,
       configured: !!configuredProviders[providerId],
       apiKey: apiKey ?? null,
       baseUrl: config.baseUrl ?? null,
+      quota,
+      paidAllowed: config.paidAllowed !== false,
       models
     };
   }
@@ -90,10 +93,41 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
       capabilityMapping: knowledge.capabilityMapping,
       preferLocalFor: ["data", "summarization", "extraction", "note-normalization", "strategy"],
       minimumQuality: knowledge.minimumQuality,
+      quotaStrategy: "prefer-free-remote",
       ...(globalConfig.routing ?? {}),
       ...(projectConfig.routing ?? {})
     },
     providers
+  };
+}
+
+export async function refreshProviderQuotaState({ root = process.cwd(), providerId = "all", scope = "global", now = new Date() } = {}) {
+  const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(root);
+  const config = await readConfig(configPath);
+  const providers = config.providers ?? {};
+  const providerIds = providerId === "all"
+    ? Object.keys(providers)
+    : [providerId];
+  const refreshed = [];
+
+  for (const id of providerIds) {
+    const provider = providers[id];
+    if (!provider) continue;
+
+    const result = refreshQuotaWindow(provider.quota, now);
+    if (!result.changed) {
+      refreshed.push({ providerId: id, changed: false, quota: normalizeProviderQuota(provider.quota) });
+      continue;
+    }
+
+    await writeConfigValue(configPath, `providers.${id}.quota`, JSON.stringify(result.quota));
+    refreshed.push({ providerId: id, changed: true, quota: normalizeProviderQuota(result.quota) });
+  }
+
+  return {
+    scope,
+    configPath,
+    refreshed
   };
 }
 
@@ -291,6 +325,49 @@ export async function generateWithOpenAI({ model, prompt, system = "", apiKey, b
   };
 }
 
+export async function generateWithAnthropic({ model, prompt, system = "", apiKey, baseUrl } = {}) {
+  const key = apiKey ?? process.env.ANTHROPIC_API_KEY;
+  if (!key) {
+    throw new Error("Anthropic API key is required (ANTHROPIC_API_KEY or config)");
+  }
+
+  const url = `${baseUrl ?? "https://api.anthropic.com/v1"}/messages`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model,
+      system: system || undefined,
+      max_tokens: 2048,
+      temperature: 0.1,
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Anthropic request failed (${response.status}): ${errorBody}`);
+  }
+
+  const payload = await response.json();
+  const text = Array.isArray(payload.content)
+    ? payload.content
+      .filter((item) => item?.type === "text")
+      .map((item) => item.text ?? "")
+      .join("\n")
+    : "";
+  return {
+    providerId: "anthropic",
+    model,
+    response: text.trim(),
+    raw: payload
+  };
+}
+
 const CUSTOM_PROVIDERS = new Map();
 
 export function registerProvider(providerId, implementation) {
@@ -310,6 +387,8 @@ export async function generateCompletion({ providerId, modelId, prompt, system, 
       return generateWithGemini({ model: modelId, prompt, system, apiKey: config.apiKey });
     case "openai":
       return generateWithOpenAI({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl });
+    case "anthropic":
+      return generateWithAnthropic({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl });
     default:
       throw new Error(`Unsupported provider for completion: ${providerId}`);
   }
@@ -447,4 +526,76 @@ function normalizeModelSize(value) {
   }
   const numeric = Number(value);
   return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function normalizeProviderQuota(quota = {}) {
+  const freeUsdRemaining = normalizeMoney(quota?.freeUsdRemaining);
+  const monthlyFreeUsd = normalizeMoney(quota?.monthlyFreeUsd);
+  const resetAt = quota?.resetAt ? String(quota.resetAt).trim() : null;
+
+  return {
+    freeUsdRemaining,
+    monthlyFreeUsd,
+    resetAt,
+    exhausted: freeUsdRemaining !== null ? freeUsdRemaining <= 0 : false
+  };
+}
+
+function refreshQuotaWindow(quota = {}, now = new Date()) {
+  const normalized = normalizeProviderQuota(quota);
+  if (normalized.monthlyFreeUsd === null || !normalized.resetAt) {
+    return { changed: false, quota };
+  }
+
+  const resetDate = parseDateOnly(normalized.resetAt);
+  if (!resetDate) {
+    return { changed: false, quota };
+  }
+
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  if (today < resetDate) {
+    return { changed: false, quota };
+  }
+
+  const nextReset = advanceMonth(resetDate);
+  return {
+    changed: true,
+    quota: {
+      ...quota,
+      freeUsdRemaining: normalized.monthlyFreeUsd,
+      monthlyFreeUsd: normalized.monthlyFreeUsd,
+      resetAt: formatDateOnly(nextReset)
+    }
+  };
+}
+
+function parseDateOnly(value) {
+  const match = String(value ?? "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month, day));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateOnly(date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function advanceMonth(date) {
+  const next = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1));
+  const targetDay = date.getUTCDate();
+  const monthEnd = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+  next.setUTCDate(Math.min(targetDay, monthEnd));
+  return next;
+}
+
+function normalizeMoney(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? Number(numeric.toFixed(2)) : null;
 }

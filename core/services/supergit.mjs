@@ -17,6 +17,11 @@ async function runGit(args, { root = process.cwd() } = {}) {
  * Pipeline: Auto-Stash -> Temp Branch -> Execute -> (Merge on Success) -> Auto-Pop
  */
 export async function withSupergitTransaction(root, taskName, operation) {
+  const gitRepo = await runGit(["rev-parse", "--is-inside-work-tree"], { root });
+  if (!gitRepo.ok || gitRepo.stdout.trim() !== "true") {
+    return operation();
+  }
+
   // 1. Check if clean
   const status = await runGit(["status", "--porcelain"], { root });
   const isClean = status.ok && status.stdout.trim() === "";
@@ -30,12 +35,18 @@ export async function withSupergitTransaction(root, taskName, operation) {
 
   // Keep track of the original branch
   const branchInfo = await runGit(["branch", "--show-current"], { root });
-  const originalBranch = branchInfo.ok ? branchInfo.stdout.trim() : "master";
+  const originalBranch = branchInfo.ok ? branchInfo.stdout.trim() : "";
+  if (!originalBranch) {
+    return { success: false, error: "Unable to determine current git branch" };
+  }
 
   // 3. Create Temp Branch
   const safeTaskName = taskName.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase();
   const tempBranch = `supergit-temp-${safeTaskName}-${Date.now()}`;
-  await runGit(["checkout", "-b", tempBranch], { root });
+  const createBranch = await runGit(["checkout", "-b", tempBranch], { root });
+  if (!createBranch.ok) {
+    return { success: false, error: `Failed to create temp branch: ${createBranch.error}` };
+  }
 
   let success = false;
   let operationResult = null;
@@ -64,7 +75,11 @@ export async function withSupergitTransaction(root, taskName, operation) {
     }
 
     // 5. Cleanup
-    await runGit(["checkout", originalBranch], { root });
+    const checkoutOriginal = await runGit(["checkout", originalBranch], { root });
+    if (!checkoutOriginal.ok) {
+      success = false;
+      operationResult = { success: false, error: `Failed to return to original branch: ${checkoutOriginal.error}` };
+    }
 
     if (success) {
       // Merge Temp Branch

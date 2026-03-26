@@ -28,7 +28,8 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
         continue;
       }
       const parsed = parseIndexedFile({ filePath: relativePath, content: file.content });
-      const notes = parsed.notes.map((note) => ({
+      const filteredNotes = filterIndexedNotes(relativePath, parsed.notes);
+      const notes = filteredNotes.map((note) => ({
         ...note,
         ...deriveCandidateScores(note, relativePath)
       }));
@@ -93,6 +94,25 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
   } finally {
     store.close();
   }
+}
+
+function filterIndexedNotes(relativePath, notes = []) {
+  if (!shouldSuppressIndexedNotes(relativePath)) {
+    return notes;
+  }
+  return [];
+}
+
+function shouldSuppressIndexedNotes(relativePath) {
+  const normalized = String(relativePath ?? "").replace(/\\/g, "/").toLowerCase();
+  return normalized === "kanban.md"
+    || normalized === "epics.md"
+    || normalized === "docs/kanban.md"
+    || normalized === "docs/epics.md"
+    || normalized.endsWith("/kanban.md")
+    || normalized.endsWith("/epics.md")
+    || normalized === "progress.md"
+    || normalized.endsWith("/progress.md");
 }
 
 async function detectBuildArtifacts(root) {

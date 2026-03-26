@@ -56,6 +56,30 @@ async function connectWithApiKey(rl, providerId) {
   }
 
   await writeConfigValue(configPath, `providers.${canonicalId}.apiKey`, apiKey.trim());
+  const freeQuotaInput = await rl.question(`Enter remaining free quota in USD for ${canonicalId} (blank if unknown): `);
+  if (freeQuotaInput.trim()) {
+    const numeric = Number(freeQuotaInput);
+    if (!Number.isFinite(numeric)) {
+      console.error("Free quota must be numeric when provided.");
+      return 1;
+    }
+    await writeConfigValue(configPath, `providers.${canonicalId}.quota.freeUsdRemaining`, String(Number(numeric.toFixed(2))));
+  }
+  const monthlyQuotaInput = await rl.question(`Enter monthly free quota in USD for ${canonicalId} (blank if unknown): `);
+  if (monthlyQuotaInput.trim()) {
+    const numeric = Number(monthlyQuotaInput);
+    if (!Number.isFinite(numeric)) {
+      console.error("Monthly free quota must be numeric when provided.");
+      return 1;
+    }
+    await writeConfigValue(configPath, `providers.${canonicalId}.quota.monthlyFreeUsd`, String(Number(numeric.toFixed(2))));
+  }
+  const resetAt = await rl.question(`Enter quota reset date for ${canonicalId} (YYYY-MM-DD, blank if unknown): `);
+  if (resetAt.trim()) {
+    await writeConfigValue(configPath, `providers.${canonicalId}.quota.resetAt`, resetAt.trim());
+  }
+  const paidAllowed = await rl.question(`Allow paid usage after free quota is exhausted? [y/N] `);
+  await writeConfigValue(configPath, `providers.${canonicalId}.paidAllowed`, String(/^y(es)?$/i.test(paidAllowed.trim())));
   console.log(`Successfully connected to ${canonicalId}!`);
   return 0;
 }

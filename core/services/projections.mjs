@@ -67,7 +67,7 @@ export function buildSmartProjectStatus(store, { auditFindings = [] } = {}) {
 export function buildProjectSummary(store) {
   const counts = store.getSummary();
   const activeTickets = store.listEntities({ entityType: "ticket" })
-    .filter((ticket) => ticket.state !== "archived")
+    .filter((ticket) => ticket.state !== "archived" && ticket.lane !== "Done" && ticket.lane !== "Archived")
     .map(t => ({
       id: t.id,
       title: t.title,

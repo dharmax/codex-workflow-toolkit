@@ -1,0 +1,5 @@
+# Embedded real-project proving ground.
+adventure-machine2-playground/
+
+# Synthetic repos used only by toolkit tests.
+tests/fixtures/

@@ -199,6 +199,30 @@ test("syncProject ignores generated artifact directories that would pollute sear
   }
 });
 
+test("syncProject respects .ai-workflowignore and skips nested embedded project roots", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-ignore-"));
+
+  try {
+    await writeFile(path.join(targetRoot, ".ai-workflowignore"), "tests/fixtures/\nembedded-project/\n", "utf8");
+    await writeFile(path.join(targetRoot, "README.md"), "# Root\n", "utf8");
+    await mkdir(path.join(targetRoot, "tests", "fixtures", "mini"), { recursive: true });
+    await writeFile(path.join(targetRoot, "tests", "fixtures", "mini", "ignored.md"), "# Ignored Fixture\n", "utf8");
+
+    await mkdir(path.join(targetRoot, "embedded-project", "docs"), { recursive: true });
+    await writeFile(path.join(targetRoot, "embedded-project", "package.json"), "{\n  \"name\": \"embedded\"\n}\n", "utf8");
+    await writeFile(path.join(targetRoot, "embedded-project", "docs", "kanban.md"), "# Board\n", "utf8");
+    await writeFile(path.join(targetRoot, "embedded-project", "src.md"), "# Should be ignored\n", "utf8");
+
+    const result = await syncProject({ projectRoot: targetRoot });
+    assert.equal(result.indexedFiles, 1);
+
+    const search = await searchProject({ projectRoot: targetRoot, query: "ignored" });
+    assert.equal(search.length, 0);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("syncProject removes stale indexed files that become ignored on later runs", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-stale-index-"));
 
@@ -286,6 +310,38 @@ test("syncProject imports richer docs kanban tickets instead of template root ka
     const exactTicketSearch = await searchProject({ projectRoot: targetRoot, query: "REF-APP-SHELL-01" });
     assert.equal(exactTicketSearch[0]?.scope, "entity");
     assert.equal(exactTicketSearch[0]?.refId, "REF-APP-SHELL-01");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("project summary excludes done tickets and sync suppresses projection/progress note noise", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-summary-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "README.md"), "# Root\n", "utf8");
+    await writeFile(path.join(targetRoot, "kanban.md"), [
+      "# Kanban",
+      "",
+      "## Done",
+      "- [ ] TODO should not become a note",
+      "",
+      "## Todo",
+      "- [ ] TKT-100 Active item"
+    ].join("\n"), "utf8");
+    await writeFile(path.join(targetRoot, "progress.md"), [
+      "# Progress",
+      "",
+      "BUG: work completed:"
+    ].join("\n"), "utf8");
+
+    const result = await syncProject({ projectRoot: targetRoot });
+    const summary = await getProjectSummary({ projectRoot: targetRoot });
+
+    assert.equal(summary.activeTickets.some((ticket) => ticket.id === "TKT-100"), true);
+    assert.equal(summary.activeTickets.some((ticket) => ticket.lane === "Done"), false);
+    assert.equal(result.summary.notes.some((note) => note.filePath === "kanban.md"), false);
+    assert.equal(result.summary.notes.some((note) => note.filePath === "progress.md"), false);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

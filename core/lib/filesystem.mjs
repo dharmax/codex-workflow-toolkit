@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { ensureDir } from "../../runtime/scripts/codex-workflow/lib/fs-utils.mjs";
 import { getAllSupportedExtensions } from "./registry.mjs";
@@ -35,6 +36,7 @@ export async function collectProjectFiles(root, options = {}) {
   const files = [];
   const ignore = new Set([...DEFAULT_IGNORES, ...(options.ignore ?? [])]);
   const supported = new Set(getAllSupportedExtensions());
+  const projectIgnore = await loadProjectIgnore(root);
 
   async function walk(currentDir) {
     const entries = await readdir(currentDir, { withFileTypes: true });
@@ -50,6 +52,12 @@ export async function collectProjectFiles(root, options = {}) {
         if (relativePath.startsWith(".ai-workflow/cache") || relativePath.startsWith(".ai-workflow/generated")) {
           continue;
         }
+        if (shouldIgnorePath(relativePath, projectIgnore)) {
+          continue;
+        }
+        if (await isNestedProjectRoot(root, absolutePath, relativePath)) {
+          continue;
+        }
         await walk(absolutePath);
         continue;
       }
@@ -59,6 +67,9 @@ export async function collectProjectFiles(root, options = {}) {
       }
 
       if (shouldIgnoreFile(entry.name, relativePath)) {
+        continue;
+      }
+      if (shouldIgnorePath(relativePath, projectIgnore)) {
         continue;
       }
 
@@ -80,6 +91,66 @@ function shouldIgnoreFile(name, relativePath) {
     return true;
   }
   return GENERATED_FILE_PATTERNS.some((pattern) => pattern.test(name));
+}
+
+async function loadProjectIgnore(root) {
+  const ignorePath = path.resolve(root, ".ai-workflowignore");
+  let text = "";
+  try {
+    text = await readFile(ignorePath, "utf8");
+  } catch {
+    return [];
+  }
+
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => normalizeIgnorePattern(line));
+}
+
+function normalizeIgnorePattern(pattern) {
+  const normalized = normalizePath(String(pattern).trim()).replace(/^\.?\//, "");
+  if (!normalized) return "";
+  return normalized.endsWith("/") ? normalized : normalized;
+}
+
+function shouldIgnorePath(relativePath, patterns) {
+  const normalized = normalizePath(relativePath);
+  return patterns.some((pattern) => matchesIgnorePattern(normalized, pattern));
+}
+
+function matchesIgnorePattern(relativePath, pattern) {
+  if (!pattern) return false;
+  if (pattern.endsWith("/")) {
+    const prefix = pattern.replace(/\/+$/, "");
+    return relativePath === prefix || relativePath.startsWith(`${prefix}/`);
+  }
+  return relativePath === pattern || relativePath.startsWith(`${pattern}/`);
+}
+
+async function isNestedProjectRoot(root, absolutePath, relativePath) {
+  const normalized = normalizePath(relativePath);
+  if (!normalized || normalized.startsWith(".git/") || normalized.startsWith(".ai-workflow/")) {
+    return false;
+  }
+
+  const packageJsonPath = path.resolve(absolutePath, "package.json");
+  const workflowConfigPath = path.resolve(absolutePath, ".ai-workflow", "config.json");
+  const docsKanbanPath = path.resolve(absolutePath, "docs", "kanban.md");
+  const rootKanbanPath = path.resolve(absolutePath, "kanban.md");
+  const nestedScriptPath = path.resolve(absolutePath, "scripts", "codex-workflow");
+
+  if (!existsSync(packageJsonPath)) {
+    return false;
+  }
+
+  const hasProjectMarkers = existsSync(workflowConfigPath)
+    || existsSync(docsKanbanPath)
+    || existsSync(rootKanbanPath)
+    || existsSync(nestedScriptPath);
+
+  return hasProjectMarkers;
 }
 
 export async function readProjectFile(root, relativePath) {
