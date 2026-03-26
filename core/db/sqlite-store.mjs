@@ -102,6 +102,7 @@ export class SqliteWorkflowStore {
   }
 
   replaceIndexedFile({ file, parsed, sha1, indexedAt }) {
+    const symbolIds = this.db.prepare("SELECT id FROM symbols WHERE file_path = ? AND source_kind = 'indexed'").all(file.relativePath);
     this.db.prepare(`
       INSERT INTO files (path, language, file_kind, sha1, size_bytes, mtime_ms, metadata_json, indexed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -128,13 +129,17 @@ export class SqliteWorkflowStore {
     this.db.prepare("DELETE FROM claims WHERE file_path = ? AND source_kind = 'indexed'").run(file.relativePath);
     this.db.prepare("DELETE FROM notes WHERE file_path = ? AND source_kind = 'indexed'").run(file.relativePath);
     this.db.prepare("DELETE FROM search_index WHERE scope = 'file' AND ref_id = ?").run(file.relativePath);
+    for (const symbol of symbolIds) {
+      this.db.prepare("DELETE FROM search_index WHERE scope = 'symbol' AND ref_id = ?").run(symbol.id);
+    }
 
     for (const [index, symbol] of (parsed.symbols ?? []).entries()) {
+      const symbolId = stableId("symbol", file.relativePath, symbol.kind, symbol.name, index);
       this.db.prepare(`
         INSERT INTO symbols (id, file_path, name, kind, exported, line, column, metadata_json, source_kind, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'indexed', ?)
       `).run(
-        stableId("symbol", file.relativePath, symbol.kind, symbol.name, index),
+        symbolId,
         file.relativePath,
         symbol.name,
         symbol.kind,
@@ -142,6 +147,23 @@ export class SqliteWorkflowStore {
         symbol.line ?? null,
         symbol.column ?? null,
         asJson(symbol.metadata),
+        indexedAt
+      );
+
+      this.db.prepare(`
+        INSERT INTO search_index (id, scope, ref_id, title, body, tags, updated_at)
+        VALUES (?, 'symbol', ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          title = excluded.title,
+          body = excluded.body,
+          tags = excluded.tags,
+          updated_at = excluded.updated_at
+      `).run(
+        stableId("search", "symbol", symbolId),
+        symbolId,
+        renderSymbolSearchTitle(symbol),
+        renderSymbolSearchBody(file.relativePath, symbol),
+        [symbol.kind, symbol.exported ? "exported" : "local", file.relativePath, symbol.name].join(","),
         indexedAt
       );
     }
@@ -208,6 +230,7 @@ export class SqliteWorkflowStore {
   pruneIndexedFiles(activePaths = []) {
     const normalizedPaths = [...new Set(activePaths.filter(Boolean))];
     if (!normalizedPaths.length) {
+      this.db.prepare("DELETE FROM search_index WHERE scope = 'symbol'").run();
       this.db.prepare("DELETE FROM symbols WHERE source_kind = 'indexed'").run();
       this.db.prepare("DELETE FROM claims WHERE source_kind = 'indexed'").run();
       this.db.prepare("DELETE FROM notes WHERE source_kind = 'indexed'").run();
@@ -217,6 +240,16 @@ export class SqliteWorkflowStore {
     }
 
     const placeholders = normalizedPaths.map(() => "?").join(", ");
+    this.db.prepare(`
+      DELETE FROM search_index
+      WHERE scope = 'symbol'
+        AND ref_id IN (
+          SELECT id
+          FROM symbols
+          WHERE source_kind = 'indexed'
+            AND file_path NOT IN (${placeholders})
+        )
+    `).run(...normalizedPaths);
     this.db.prepare(`
       DELETE FROM symbols
       WHERE source_kind = 'indexed'
@@ -486,6 +519,37 @@ export class SqliteWorkflowStore {
     }));
   }
 
+  listSymbols(filters = {}) {
+    const clauses = [];
+    const values = [];
+    if (filters.filePath) {
+      clauses.push("file_path = ?");
+      values.push(filters.filePath);
+    }
+    if (filters.name) {
+      clauses.push("name = ?");
+      values.push(filters.name);
+    }
+    const query = `
+      SELECT *
+      FROM symbols
+      ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+      ORDER BY file_path, line, name
+    `;
+    return this.db.prepare(query).all(...values).map((row) => ({
+      id: row.id,
+      filePath: row.file_path,
+      name: row.name,
+      kind: row.kind,
+      exported: Boolean(row.exported),
+      line: row.line,
+      column: row.column,
+      metadata: parseJson(row.metadata_json),
+      sourceKind: row.source_kind,
+      updatedAt: row.updated_at
+    }));
+  }
+
   upsertCandidate(candidate) {
     const existing = this.db.prepare("SELECT * FROM candidates WHERE id = ?").get(candidate.id);
     const preservedStatus = existing && ["rejected", "archived", "promoted"].includes(existing.status)
@@ -641,6 +705,10 @@ export class SqliteWorkflowStore {
     const rows = this.db.prepare(`
       SELECT *,
         (CASE
+          WHEN scope = 'symbol' AND lower(title) LIKE '% ' || ? THEN 120
+          WHEN scope = 'symbol' AND lower(tags) LIKE '%' || ? || '%' THEN 110
+          WHEN scope = 'symbol' AND lower(title) = ? THEN 105
+          WHEN scope = 'symbol' AND lower(title) LIKE '%' || ? || '%' THEN 85
           WHEN lower(title) LIKE '%' || ? || '%' THEN 40
           WHEN lower(body) LIKE '%' || ? || '%' THEN 20
           ELSE 0
@@ -650,7 +718,7 @@ export class SqliteWorkflowStore {
         ${scopeClause}
       ORDER BY score DESC, updated_at DESC
       LIMIT ?
-    `).all(trimmed, trimmed, trimmed, trimmed, ...scopes, limit);
+    `).all(trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, trimmed, ...scopes, limit);
 
     const indexedResults = rows.map((row) => ({
       id: row.id,
@@ -699,4 +767,16 @@ export class SqliteWorkflowStore {
 
 function normalizeText(value) {
   return String(value).toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function renderSymbolSearchTitle(symbol) {
+  return `${symbol.kind} ${symbol.name}`;
+}
+
+function renderSymbolSearchBody(filePath, symbol) {
+  const metadata = symbol.metadata ?? {};
+  const signature = String(metadata.signature ?? "").trim();
+  const lineText = symbol.line ? `${filePath}:${symbol.line}` : filePath;
+  const exportText = symbol.exported ? "exported" : "local";
+  return [lineText, `${exportText} ${symbol.kind}`, signature].filter(Boolean).join("\n");
 }

@@ -43,31 +43,22 @@ export async function buildSurgicalContext(projectRoot, { symbolNames = [], file
     // 3. Pull specified symbols (with Budgeting)
     const limitedSymbols = symbolNames.slice(0, budget.MAX_SYMBOLS);
     for (const name of limitedSymbols) {
-      const symbol = store.db.prepare("SELECT * FROM symbols WHERE name = ?").get(name);
-      if (symbol) {
-        const file = await readProjectFile(projectRoot, symbol.file_path);
-        // Extract just the symbol's code block from the file
+      const matches = store.listSymbols({ name }).slice(0, 3);
+      for (const symbol of matches) {
+        const file = await readProjectFile(projectRoot, symbol.filePath);
         const snippet = extractSymbolSnippet(file.content, symbol);
-        // Limit snippet size
         const snippetLines = snippet.split("\n");
         const truncatedSnippet = snippetLines.length > 200 ? snippetLines.slice(0, 200).join("\n") + "\n... [TRUNCATED]" : snippet;
 
         context.symbols.push({
-          name,
-          path: symbol.file_path,
-          snippet: truncatedSnippet
+          id: symbol.id,
+          name: symbol.name,
+          kind: symbol.kind,
+          path: symbol.filePath,
+          line: symbol.line,
+          snippet: truncatedSnippet,
+          signature: symbol.metadata?.signature ?? null
         });
-
-        // Find dependencies (outgoing edges)
-        const deps = store.db.prepare(`
-          SELECT s.name, s.file_path 
-          FROM symbols s
-          JOIN facts f ON s.id = f.subject_id
-          WHERE f.file_path = ? AND f.predicate = 'calls'
-        `).all(symbol.file_path);
-        
-        // Add minimal metadata about dependencies
-        context.symbols.push(...deps.map(d => ({ name: d.name, path: d.file_path, isDependency: true })));
       }
     }
 
@@ -76,11 +67,11 @@ export async function buildSurgicalContext(projectRoot, { symbolNames = [], file
 }
 
 function extractSymbolSnippet(content, symbol) {
-  // Simple line-based extraction for now. 
-  // Future: Use AST ranges from DB if available.
   const lines = content.split("\n");
-  const start = Math.max(0, (symbol.start_line ?? 1) - 1);
-  const end = symbol.end_line ?? lines.length;
+  const metadata = symbol.metadata ?? {};
+  const startLine = metadata.declarationLine ?? symbol.line ?? 1;
+  const start = Math.max(0, startLine - 1);
+  const end = Math.min(lines.length, start + 20);
   return lines.slice(start, end).join("\n");
 }
 
@@ -101,11 +92,8 @@ export function formatContextForPrompt(context) {
   if (context.symbols.length) {
     parts.push("## Relevant Symbols");
     for (const sym of context.symbols) {
-      if (sym.snippet) {
-        parts.push(`Symbol: ${sym.name} (${sym.path})\n\`\`\`\n${sym.snippet}\n\`\`\``);
-      } else {
-        parts.push(`Dependency: ${sym.name} in ${sym.path}`);
-      }
+      const header = `${sym.kind ?? "symbol"} ${sym.name} (${sym.path}${sym.line ? `:${sym.line}` : ""})`;
+      parts.push(`Symbol: ${header}\n\`\`\`\n${sym.snippet ?? sym.signature ?? ""}\n\`\`\``);
     }
   }
 

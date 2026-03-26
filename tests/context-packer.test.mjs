@@ -31,3 +31,27 @@ test("buildSurgicalContext pulls specific files and limits lines", async () => {
     await rm(targetRoot, { recursive: true, force: true });
   }
 });
+
+test("buildSurgicalContext pulls symbol snippets from indexed symbol records", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ctx-packer-symbol-"));
+
+  try {
+    await cp(fixtureRoot, targetRoot, { recursive: true });
+    await syncProject({ projectRoot: targetRoot });
+
+    const context = await buildSurgicalContext(targetRoot, {
+      symbolNames: ["runApp"]
+    });
+
+    assert.equal(context.symbols.length >= 1, true);
+    assert.equal(context.symbols[0].name, "runApp");
+    assert.equal(context.symbols[0].kind, "function");
+    assert.match(context.symbols[0].snippet, /export function runApp/);
+
+    const prompt = formatContextForPrompt(context);
+    assert.match(prompt, /## Relevant Symbols/);
+    assert.match(prompt, /function runApp \(src\/app\.ts:9\)/);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});

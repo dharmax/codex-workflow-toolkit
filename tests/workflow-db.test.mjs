@@ -58,6 +58,14 @@ test("manual notes, candidate review, and search operate against the DB-first st
       query: "router"
     });
     assert.equal(results.some((item) => item.title.includes("src/core/router.js") || item.body.includes("router")), true);
+    assert.equal(results.some((item) => item.scope === "symbol" && item.title === "function routeWork"), true);
+
+    const exactSymbolResults = await searchProject({
+      projectRoot: targetRoot,
+      query: "runApp"
+    });
+    assert.equal(exactSymbolResults[0]?.scope, "symbol");
+    assert.equal(exactSymbolResults[0]?.title, "function runApp");
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

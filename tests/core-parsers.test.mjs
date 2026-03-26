@@ -20,6 +20,23 @@ test("JS-family parser indexes imports, symbols, calls, and tagged notes without
   assert.equal(parsed.notes[0].body, "actual work item");
 });
 
+test("JS-family parser captures interfaces, types, enums, and variables with locations", () => {
+  const parsed = parseIndexedFile({
+    filePath: "src/types.ts",
+    content: [
+      "export interface CombatUiState { ready: boolean }",
+      "export type CombatAction = 'attack' | 'talk'",
+      "export enum CombatStatus { Idle = 'idle' }",
+      "export const DEFAULT_ROUND = 1"
+    ].join("\n")
+  });
+
+  assert.equal(parsed.symbols.some((item) => item.name === "CombatUiState" && item.kind === "interface" && item.line === 1), true);
+  assert.equal(parsed.symbols.some((item) => item.name === "CombatAction" && item.kind === "type" && item.line === 2), true);
+  assert.equal(parsed.symbols.some((item) => item.name === "CombatStatus" && item.kind === "enum" && item.line === 3), true);
+  assert.equal(parsed.symbols.some((item) => item.name === "DEFAULT_ROUND" && item.kind === "variable" && item.line === 4), true);
+});
+
 test("tagged note parsing does not treat incidental prose as a note", () => {
   const parsed = parseIndexedFile({
     filePath: "src/app.ts",
