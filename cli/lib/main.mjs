@@ -16,10 +16,13 @@ import { installAgents } from "./install.mjs";
 import { forgeProjectCodelet, getProjectCodelet, listProjectCodelets, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
+import { refreshProviderQuotaState } from "../../core/services/providers.mjs";
 import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection } from "../../core/services/projections.mjs";
-import { addManualNote, getProjectMetrics, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { addManualNote, createTicket, getProjectMetrics, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { ingestArtifact } from "../../core/services/orchestrator.mjs";
+import { assertSafeRepairTarget, getToolkitRoot as getOperatingToolkitRoot, resolveOperatingContext } from "../../core/lib/operating-context.mjs";
+import { readLatestRunArtifact } from "../../core/lib/run-artifacts.mjs";
 
 const toolkitRoot = getToolkitRoot();
 const execFileAsync = promisify(execFile);
@@ -55,6 +58,10 @@ const HELP = `Usage:
   ai-workflow route <task-class> [--json]
   ai-workflow telegram preview [--json]
   ai-workflow provider connect <provider-id>
+  ai-workflow provider quota refresh [provider-id|all] [--global] [--json]
+  ai-workflow mode set <default|tool-dev> [--global]
+  ai-workflow mode status [--json]
+  ai-workflow tool observe [--complaint <text>] [--json]
   ai-workflow config get [key]
   ai-workflow config set <key> <value>
 
@@ -124,6 +131,10 @@ export async function main(argv) {
       return handleTelegram(rest);
     case "provider":
       return handleProvider(rest);
+    case "mode":
+      return handleMode(rest);
+    case "tool":
+      return handleTool(rest);
     case "config":
       return handleConfig(rest);
     default:
@@ -471,11 +482,82 @@ async function handleTelegram(rest) {
 }
 
 async function handleProvider(rest) {
-  const [subcommand, providerId] = rest;
+  const [subcommand, providerId, ...extras] = rest;
   if (subcommand === "connect") {
     return await handleProviderConnect(providerId);
   }
-  printAndExit("Usage: ai-workflow provider connect <provider-id>", 1);
+  if (subcommand === "quota") {
+    const [action, target] = [providerId, extras[0]];
+    const args = parseArgs(extras.slice(1));
+    if (action === "refresh") {
+      const result = await refreshProviderQuotaState({
+        root: process.cwd(),
+        providerId: target ?? "all",
+        scope: args.global ? "global" : "project"
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return 0;
+      }
+      for (const item of result.refreshed) {
+        process.stdout.write(`${item.providerId}: ${item.changed ? "refreshed" : "unchanged"}\n`);
+      }
+      return 0;
+    }
+  }
+  printAndExit("Usage: ai-workflow provider connect <provider-id>\n       ai-workflow provider quota refresh [provider-id|all] [--global] [--json]", 1);
+}
+
+async function handleMode(rest) {
+  const [action, ...tail] = rest;
+  const args = parseArgs(tail);
+  const value = args._[0];
+  const scope = args.global ? "global" : "project";
+  const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(process.cwd());
+
+  if (action === "set") {
+    const normalized = normalizeModeValue(value);
+    if (!normalized) {
+      printAndExit("Usage: ai-workflow mode set <default|tool-dev> [--global]", 1);
+    }
+    const config = await writeConfigValue(configPath, "mode", normalized);
+    process.stdout.write(`${JSON.stringify({ path: configPath, mode: getConfigValue(config, "mode") }, null, 2)}\n`);
+    return 0;
+  }
+
+  if (action === "status") {
+    const context = await resolveOperatingContext({ cwd: process.cwd() });
+    const payload = {
+      mode: context.mode,
+      toolkitRoot: context.toolkitRoot,
+      repairTargetRoot: context.repairTargetRoot,
+      evidenceRoot: context.evidenceRoot,
+      externalTarget: context.externalTarget,
+      projectConfigPath: context.projectConfigPath,
+      globalConfigPath: context.globalConfigPath
+    };
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write([
+      `Mode: ${payload.mode}`,
+      `Toolkit root: ${payload.toolkitRoot}`,
+      `Repair target: ${payload.repairTargetRoot}`,
+      `Evidence root: ${payload.evidenceRoot}`
+    ].join("\n") + "\n");
+    return 0;
+  }
+
+  printAndExit("Usage: ai-workflow mode set <default|tool-dev> [--global]\n       ai-workflow mode status [--json]", 1);
+}
+
+async function handleTool(rest) {
+  const [action, ...extras] = rest;
+  if (action === "observe") {
+    return handleToolObserve(extras);
+  }
+  printAndExit("Usage: ai-workflow tool observe [--complaint <text>] [--json]", 1);
 }
 
 async function handleConfig(rest) {
@@ -723,4 +805,253 @@ function runProjectCodelet(codelet, args) {
     printAndExit(`Unsupported project codelet runner: ${codelet.runner}`, 1);
   }
   return runNodeScript(entry, args);
+}
+
+async function handleToolObserve(rest) {
+  const args = parseArgs(rest);
+  const context = await resolveOperatingContext({
+    cwd: process.cwd(),
+    mode: args.mode ? String(args.mode) : "tool-dev",
+    root: args.root ? String(args.root) : getOperatingToolkitRoot(),
+    evidenceRoot: args["evidence-root"] ? String(args["evidence-root"]) : null,
+    allowExternalTarget: Boolean(args["allow-external-target"])
+  });
+  assertSafeRepairTarget(context, { action: "tool observation" });
+
+  const initialComplaint = String(args.complaint ?? args._.join(" ") ?? "").trim();
+  const inferred = inferObservationFromComplaint(initialComplaint);
+  const rl = readline.createInterface({ input, output });
+  const interactive = process.stdin.isTTY && !args.json;
+  const latestRun = await readLatestRunArtifact(context.repairTargetRoot);
+
+  try {
+    const complaint = initialComplaint || (interactive ? await askText(rl, "What did it do wrong? ") : "");
+    if (!complaint) {
+      printAndExit("tool observe requires --complaint in non-interactive mode", 1);
+    }
+    const complaintInferred = inferObservationFromComplaint(complaint);
+    const merged = {
+      complaint,
+      kind: String(args.kind ?? complaintInferred.kind ?? inferred.kind ?? "").trim(),
+      severity: String(args.severity ?? complaintInferred.severity ?? inferred.severity ?? "").trim(),
+      component: String(args.component ?? complaintInferred.component ?? inferred.component ?? "").trim(),
+      expected: String(args.expected ?? "").trim(),
+      relatedTicketId: String(args.ticket ?? "").trim(),
+      relatedCommand: String(args.command ?? "").trim(),
+      evidenceRoot: context.evidenceRoot
+    };
+
+    if (!merged.kind) {
+      merged.kind = interactive ? await askChoice(rl, "What kind of bad behavior was it?", [
+        ["wrong-target", "wrong target / wrong repo"],
+        ["wrong-context", "wrong context / wrong files"],
+        ["bad-verification", "bad verification / wrong checks"],
+        ["misleading-output", "misleading output"],
+        ["unsafe-execution", "unsafe execution"],
+        ["missing-feature", "missing logic / mini-feature"],
+        ["other", "other"]
+      ], "other") : "other";
+    }
+
+    if (!merged.severity) {
+      merged.severity = interactive ? await askChoice(rl, "How severe is it?", [
+        ["annoying", "annoying but tolerable"],
+        ["blocking", "blocking usefulness"],
+        ["unsafe", "unsafe / high risk"]
+      ], "blocking") : "blocking";
+    }
+
+    if (!merged.component) {
+      merged.component = interactive ? await askChoice(rl, "Which toolkit area is closest?", [
+        ["search", "search / retrieval"],
+        ["context", "context / working set"],
+        ["verification", "verification / checks"],
+        ["execution", "execution / patching"],
+        ["shell", "shell / CLI UX"],
+        ["routing", "provider routing / models"],
+        ["other", "other / unknown"]
+      ], "other") : "other";
+    }
+
+    if (!merged.expected) {
+      merged.expected = interactive ? await askText(rl, "What should it have done instead? ", "be more explicit") : "be more explicit";
+    }
+
+    if (!merged.relatedTicketId && interactive) {
+      merged.relatedTicketId = await askOptionalText(rl, "Related ticket id (optional): ");
+    }
+
+    if (!merged.relatedCommand && interactive) {
+      merged.relatedCommand = await askOptionalText(rl, "Related command/run (optional): ");
+    }
+
+    const createTicketNow = args["create-ticket"] !== undefined
+      ? Boolean(args["create-ticket"])
+      : interactive
+        ? normalizeYesNo(await askText(rl, "Create a toolkit ticket now? [Y/n] ", "y"), true)
+        : false;
+
+    const summary = compactObservationSummary(merged);
+    const attachedRun = latestRun && (!merged.relatedTicketId || latestRun.ticketId === merged.relatedTicketId || !latestRun.ticketId)
+      ? latestRun
+      : null;
+    const summaryWithRun = attachedRun
+      ? `${summary} | Attached run: ${attachedRun.id} (${attachedRun.kind})`
+      : summary;
+    const note = await addManualNote({
+      projectRoot: context.repairTargetRoot,
+      note: {
+        noteType: merged.severity === "unsafe" ? "BUG" : "NOTE",
+        body: summaryWithRun,
+        filePath: null,
+        symbolName: merged.component,
+        provenance: "tool-dev-observe"
+      }
+    });
+
+    let ticket = null;
+    if (createTicketNow) {
+      const ticketId = await nextToolkitTicketId(context.repairTargetRoot);
+      ticket = buildTicketEntity({
+        id: ticketId,
+        title: truncateTitle(merged.complaint || "Tool observation"),
+        lane: merged.severity === "unsafe" ? "Bugs P1" : "Todo",
+        summary: summaryWithRun
+      });
+      await createTicket({ projectRoot: context.repairTargetRoot, entity: ticket });
+    }
+
+    const payload = {
+      mode: context.mode,
+      repairTargetRoot: context.repairTargetRoot,
+      evidenceRoot: context.evidenceRoot,
+      observation: merged,
+      attachedRun,
+      note,
+      ticket
+    };
+
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    } else {
+      process.stdout.write([
+        `Mode: ${payload.mode}`,
+        `Repair target: ${payload.repairTargetRoot}`,
+        payload.evidenceRoot !== payload.repairTargetRoot ? `Evidence root: ${payload.evidenceRoot}` : null,
+        `Observation: ${merged.kind} | ${merged.severity} | ${merged.component}`,
+        `Recorded note: ${note.id}`,
+        ticket ? `Created toolkit ticket: ${ticket.id}` : "Created toolkit ticket: no"
+      ].filter(Boolean).join("\n") + "\n");
+    }
+    return 0;
+  } finally {
+    rl.close();
+  }
+}
+
+function inferObservationFromComplaint(text) {
+  const value = String(text ?? "").toLowerCase();
+  const result = {};
+  if (!value.trim()) return result;
+
+  if (/\b(wrong repo|wrong project|wrong target|edited .*project|edited .*repo)\b/.test(value)) {
+    result.kind = "wrong-target";
+    result.component = "execution";
+    result.severity = "unsafe";
+  } else if (/\b(wrong file|irrelevant|missed obvious|bad context|empty working set|junk files?)\b/.test(value)) {
+    result.kind = "wrong-context";
+    result.component = "context";
+    result.severity = "blocking";
+  } else if (/\b(verification|wrong check|bad check|baseline|claimed ready|lied|misleading)\b/.test(value)) {
+    result.kind = /\b(lied|misleading)\b/.test(value) ? "misleading-output" : "bad-verification";
+    result.component = /\b(lied|misleading)\b/.test(value) ? "shell" : "verification";
+    result.severity = /\bunsafe\b/.test(value) ? "unsafe" : "blocking";
+  } else if (/\b(missing|should support|needs to|mini-feature|feature)\b/.test(value)) {
+    result.kind = "missing-feature";
+    result.component = "other";
+    result.severity = "annoying";
+  } else if (/\b(unsafe|dangerous|destructive)\b/.test(value)) {
+    result.kind = "unsafe-execution";
+    result.component = "execution";
+    result.severity = "unsafe";
+  }
+
+  if (!result.component && /\b(search|find|retrieve|ranking)\b/.test(value)) result.component = "search";
+  if (!result.component && /\b(context|working set|files|symbols)\b/.test(value)) result.component = "context";
+  if (!result.component && /\b(route|provider|quota|model)\b/.test(value)) result.component = "routing";
+  if (!result.severity && /\b(blocker|can't|cannot|useless|broken)\b/.test(value)) result.severity = "blocking";
+  return result;
+}
+
+async function askChoice(rl, prompt, choices, fallback) {
+  const lines = [prompt];
+  choices.forEach(([value, label], index) => {
+    lines.push(`${index + 1}. ${label}`);
+  });
+  const answer = (await rl.question(`${lines.join("\n")}\nChoice: `)).trim();
+  const byIndex = Number.parseInt(answer, 10);
+  if (Number.isFinite(byIndex) && byIndex >= 1 && byIndex <= choices.length) {
+    return choices[byIndex - 1][0];
+  }
+  const normalized = answer.toLowerCase();
+  const direct = choices.find(([value]) => value === normalized);
+  return direct?.[0] ?? fallback;
+}
+
+async function askText(rl, prompt, fallback = "") {
+  const answer = (await rl.question(prompt)).trim();
+  return answer || fallback;
+}
+
+async function askOptionalText(rl, prompt) {
+  return (await rl.question(prompt)).trim();
+}
+
+function normalizeYesNo(value, defaultValue) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return defaultValue;
+  if (["y", "yes", "true"].includes(normalized)) return true;
+  if (["n", "no", "false"].includes(normalized)) return false;
+  return defaultValue;
+}
+
+async function nextToolkitTicketId(projectRoot) {
+  return withWorkflowStore(projectRoot, async (store) => {
+    const rows = store.db.prepare(`
+      SELECT id FROM entities
+      WHERE entity_type = 'ticket' AND id LIKE 'TKH-%'
+      ORDER BY id
+    `).all();
+    let max = 0;
+    for (const row of rows) {
+      const parsed = Number.parseInt(String(row.id).replace(/^TKH-/, ""), 10);
+      if (Number.isFinite(parsed)) max = Math.max(max, parsed);
+    }
+    return `TKH-${String(max + 1).padStart(3, "0")}`;
+  });
+}
+
+function compactObservationSummary(observation) {
+  return [
+    `Complaint: ${observation.complaint}`,
+    `Kind: ${observation.kind}`,
+    `Severity: ${observation.severity}`,
+    `Component: ${observation.component}`,
+    `Expected: ${observation.expected}`,
+    observation.relatedTicketId ? `Related ticket: ${observation.relatedTicketId}` : null,
+    observation.relatedCommand ? `Related command: ${observation.relatedCommand}` : null,
+    observation.evidenceRoot ? `Evidence root: ${observation.evidenceRoot}` : null
+  ].filter(Boolean).join(" | ");
+}
+
+function truncateTitle(text, limit = 72) {
+  const value = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (value.length <= limit) return value || "Toolkit observation";
+  return `${value.slice(0, Math.max(0, limit - 3)).trim()}...`;
+}
+
+function normalizeModeValue(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "default" || normalized === "tool-dev") return normalized;
+  return null;
 }

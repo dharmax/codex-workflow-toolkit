@@ -7,9 +7,11 @@ import { generateCompletion } from "./providers.mjs";
 import { withWorkflowStore } from "./sync.mjs";
 import { buildTicketEntity } from "./projections.mjs";
 import { withSupergitTransaction } from "./supergit.mjs";
+import { buildTicketExecutionPlan, runVerificationPlan } from "./execution-planner.mjs";
 
 export async function sweepBugs(options) {
   const root = options.root;
+  const baselineVerificationCache = new Map();
   const bugs = await withWorkflowStore(root, async (store) => {
     return store.listEntities({ entityType: "ticket" }).filter(t => t.lane === "Todo" && (t.title.toLowerCase().includes("bug") || t.id.startsWith("BUG")));
   });
@@ -20,15 +22,107 @@ export async function sweepBugs(options) {
 
   for (const bug of bugs) {
     console.log(`[orchestrator] Attempting fix for ${bug.id}...`);
-    
-    const result = await withSupergitTransaction(root, bug.id, async () => {
-      const context = await buildSurgicalContext(root, { ticketId: bug.id });
-      const model = (await routeTask({ root, taskClass: "debugging" })).recommended;
-      if (!model) {
-        return { success: false, error: "No debugging model available" };
-      }
+    const result = await executeTicket({
+      root,
+      ticketId: bug.id,
+      apply: true,
+      verificationTimeoutMs: options.verificationTimeoutMs,
+      baselineVerificationCache
+    });
 
-      const system = `You are a developer fixing a bug. Output ONLY SEARCH/REPLACE blocks.
+    const verificationSummary = formatVerificationSummary(result?.verification);
+    report += `- ${bug.id}: ${result?.success ? `Fixed${verificationSummary}` : `Failed (${result?.error}) -> Moved to Blocked`}\n`;
+  }
+
+  return report;
+}
+
+export async function executeTicket(options) {
+  const root = options.root;
+  const ticketId = options.ticketId;
+  const apply = Boolean(options.apply);
+  const verificationTimeoutMs = options.verificationTimeoutMs;
+  const baselineVerificationCache = options.baselineVerificationCache ?? new Map();
+  const ticket = await withWorkflowStore(root, async (store) => store.getEntity(ticketId));
+
+  if (!ticket || ticket.entityType !== "ticket") {
+    return {
+      success: false,
+      error: `Ticket not found: ${ticketId}`,
+      status: "missing-ticket"
+    };
+  }
+
+  const context = await buildSurgicalContext(root, { ticketId: ticket.id });
+  const executionPlan = await buildTicketExecutionPlan({
+    root,
+    entity: ticket,
+    workingSet: context.files.map((file) => file.path).filter(Boolean),
+    relevantSymbols: context.symbols.map((symbol) => symbol.name).filter(Boolean)
+  });
+
+  if (!executionPlan.ready) {
+    if (apply) {
+      await updateTicketState(root, ticket, "Blocked", {
+        executionPlan,
+        executionResult: {
+          status: "blocked",
+          reason: executionPlan.concerns.join("; ")
+        }
+      });
+    }
+    return {
+      success: false,
+      status: "blocked",
+      error: `Unsafe to execute: ${executionPlan.concerns.join("; ")}`,
+      executionPlan
+    };
+  }
+
+  const baselineVerification = await getBaselineVerification(root, executionPlan, baselineVerificationCache, verificationTimeoutMs);
+  if (!baselineVerification.ok) {
+    if (apply) {
+      await updateTicketState(root, ticket, "Blocked", {
+        executionPlan,
+        executionResult: {
+          status: "baseline-red",
+          verification: baselineVerification
+        }
+      });
+    }
+    const failure = baselineVerification.results.find((item) => item.exitCode !== 0);
+    return {
+      success: false,
+      status: "baseline-red",
+      error: `Verification baseline red: ${failure?.command ?? "unknown command"}`,
+      executionPlan,
+      verification: baselineVerification
+    };
+  }
+
+  if (!apply) {
+    return {
+      success: true,
+      status: "planned",
+      executionPlan,
+      verification: baselineVerification
+    };
+  }
+
+  return withSupergitTransaction(root, ticket.id, async () => {
+    const model = (await routeTask({ root, taskClass: "debugging" })).recommended;
+    if (!model) {
+      await updateTicketState(root, ticket, "Blocked", {
+        executionPlan,
+        executionResult: {
+          status: "blocked",
+          reason: "No debugging model available"
+        }
+      });
+      return { success: false, status: "blocked", error: "No debugging model available", executionPlan };
+    }
+
+    const system = `You are a developer fixing a bug. Output ONLY SEARCH/REPLACE blocks.
 Format each block exactly like this:
 File: path/to/file.js
 <<<< SEARCH
@@ -37,91 +131,158 @@ exact old code to replace
 new code
 >>>>
 
+Only edit files that are already in the provided working set.
+
 ## Architectural Refinement (Optional)
 If you gain insights about the architectural mapping, you may ALSO output a JSON block like this:
 { "action": "refine_map", "file": "path/to/file.js", "module": "module-name", "features": ["feature-a", "feature-b"] }
 `;
-      let prompt = `Context:\n${formatContextForPrompt(context)}\n\nFix this bug.`;
-      
-      let patchSuccess = false;
-      let lastError = null;
-      const MAX_RETRIES = 2; 
+    let prompt = `Context:\n${formatContextForPrompt(context)}\n\nAllowed files:\n${executionPlan.workingSet.join("\n")}\n\nFix this bug.`;
+    let patchSuccess = false;
+    let lastError = null;
+    let patchResult = null;
+    const MAX_RETRIES = 2;
 
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        const start = Date.now();
-        let completion;
-        let requestSuccess = true;
-        let reqError = null;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+      const start = Date.now();
+      let completion;
+      let requestSuccess = true;
+      let reqError = null;
 
-        try {
-          completion = await generateCompletion({
+      try {
+        completion = await generateCompletion({
+          providerId: model.providerId,
+          modelId: model.modelId,
+          system,
+          prompt,
+          config: { host: model.host, apiKey: model.apiKey }
+        });
+      } catch (error) {
+        requestSuccess = false;
+        reqError = error.message;
+        lastError = reqError;
+        break;
+      } finally {
+        const latencyMs = Date.now() - start;
+        await withWorkflowStore(root, async (store) => {
+          store.appendMetric({
+            taskClass: "debugging",
+            capability: "logic",
             providerId: model.providerId,
             modelId: model.modelId,
-            system,
-            prompt,
-            config: { host: model.host, apiKey: model.apiKey }
+            latencyMs,
+            success: requestSuccess,
+            errorMessage: reqError
           });
-        } catch (error) {
-          requestSuccess = false;
-          reqError = error.message;
-          lastError = reqError;
-          break; // Stop retries on network/auth errors
-        } finally {
-          const latencyMs = Date.now() - start;
-          await withWorkflowStore(root, async (store) => {
-            store.appendMetric({
-              taskClass: "debugging",
-              capability: "logic",
-              providerId: model.providerId,
-              modelId: model.modelId,
-              latencyMs,
-              success: requestSuccess,
-              errorMessage: reqError
-            });
-          }).catch(() => {});
-        }
-
-        if (!requestSuccess) break;
-
-        const applyResult = await verifyAndApplyPatch(root, completion.response);
-        if (applyResult.success) {
-          await processRefinements(root, completion.response);
-          patchSuccess = true;
-          break;
-        }
-
-        console.log(`[orchestrator] Patch failed on attempt ${attempt + 1}: ${applyResult.error}. Retrying...`);
-        lastError = applyResult.error;
-        prompt += `\n\nYour previous patch failed with the following error:\n${applyResult.error}\nPlease provide a corrected SEARCH/REPLACE block. Ensure the SEARCH block exactly matches the current file content.`;
+        }).catch(() => {});
       }
 
-      if (patchSuccess) {
-        // Phase 4: Placeholder for "npm test" check
-        // if (!runTests(root)) return { success: false, error: "Tests failed" };
-        
-        await withWorkflowStore(root, async (store) => {
-          const updated = { ...bug, lane: "Done" };
-          store.upsertEntity(updated);
-        });
-        return { success: true };
-      } else {
-        await withWorkflowStore(root, async (store) => {
-          const updated = { ...bug, lane: "Blocked" };
-          store.upsertEntity(updated);
-        });
-        return { success: false, error: lastError ?? "Patch application failed" };
+      if (!requestSuccess) break;
+
+      patchResult = await verifyAndApplyPatch(root, completion.response, {
+        allowedFiles: executionPlan.workingSet
+      });
+      if (patchResult.success) {
+        await processRefinements(root, completion.response);
+        patchSuccess = true;
+        break;
       }
+
+      lastError = patchResult.error;
+      prompt += `\n\nYour previous patch failed with the following error:\n${patchResult.error}\nPlease provide a corrected SEARCH/REPLACE block. Ensure the SEARCH block exactly matches the current file content and do not edit files outside the allowed set.`;
+    }
+
+    if (!patchSuccess) {
+      await updateTicketState(root, ticket, "Blocked", {
+        executionPlan,
+        executionResult: {
+          status: "patch-failed",
+          reason: lastError ?? "Patch application failed"
+        }
+      });
+      return { success: false, status: "patch-failed", error: lastError ?? "Patch application failed", executionPlan };
+    }
+
+    const verification = await runVerificationPlan(root, executionPlan, { timeoutMs: verificationTimeoutMs });
+    if (!verification.ok) {
+      await updateTicketState(root, ticket, "Blocked", {
+        executionPlan,
+        executionResult: {
+          status: "verification-failed",
+          verification
+        }
+      });
+      const failure = verification.results.find((item) => item.exitCode !== 0);
+      return {
+        success: false,
+        status: "verification-failed",
+        error: `Verification failed: ${failure?.command ?? "unknown command"}`,
+        executionPlan,
+        verification
+      };
+    }
+
+    await withWorkflowStore(root, async (store) => {
+      const updated = {
+        ...ticket,
+        lane: "Done",
+        data: {
+          ...(ticket.data ?? {}),
+          executionPlan,
+          executionResult: {
+            status: "verified",
+            verification,
+            changedFiles: patchResult?.changedFiles ?? []
+          }
+        }
+      };
+      store.upsertEntity(updated);
     });
-
-    report += `- ${bug.id}: ${result?.success ? "Fixed" : `Failed (${result?.error}) -> Moved to Blocked`}\n`;
-  }
-
-  return report;
+    return {
+      success: true,
+      status: "verified",
+      executionPlan,
+      verification,
+      changedFiles: patchResult?.changedFiles ?? []
+    };
+  });
 }
 
-async function verifyAndApplyPatch(root, patchText) {
+async function updateTicketState(root, bug, lane, payload = {}) {
+  await withWorkflowStore(root, async (store) => {
+    const updated = {
+      ...bug,
+      lane,
+      data: {
+        ...(bug.data ?? {}),
+        ...payload
+      }
+    };
+    store.upsertEntity(updated);
+  });
+}
+
+function formatVerificationSummary(verification) {
+  if (!verification?.results?.length) return "";
+  const passed = verification.results.filter((item) => item.exitCode === 0).length;
+  return ` [verified ${passed}/${verification.results.length}]`;
+}
+
+async function getBaselineVerification(root, executionPlan, cache, timeoutMs) {
+  const cacheKey = executionPlan.verificationCommands.map((item) => item.command).join(" || ");
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  const verification = await runVerificationPlan(root, executionPlan, { timeoutMs });
+  cache.set(cacheKey, verification);
+  return verification;
+}
+
+async function verifyAndApplyPatch(root, patchText, options = {}) {
   const blocks = parsePatch(patchText);
   if (!blocks.length) return { success: false, error: "No patch blocks found" };
+  const allowedFiles = new Set((options.allowedFiles ?? []).map((filePath) => String(filePath)));
 
   // Group blocks by file
   const fileBlocks = new Map();
@@ -129,11 +290,15 @@ async function verifyAndApplyPatch(root, patchText) {
     if (!block.file) {
       return { success: false, error: "A patch block is missing the 'File: path' header" };
     }
+    if (allowedFiles.size && !allowedFiles.has(block.file)) {
+      return { success: false, error: `Patch attempted to edit file outside working set: ${block.file}` };
+    }
     const list = fileBlocks.get(block.file) ?? [];
     list.push(block);
     fileBlocks.set(block.file, list);
   }
 
+  const changedFiles = [];
   for (const [filePath, fileSpecificBlocks] of fileBlocks.entries()) {
     try {
       const file = await readProjectFile(root, filePath);
@@ -145,12 +310,13 @@ async function verifyAndApplyPatch(root, patchText) {
       }
 
       await writeProjectFile(root, filePath, patchResult.content);
+      changedFiles.push(filePath);
     } catch (error) {
       return { success: false, error: `Failed to process ${filePath}: ${error.message}` };
     }
   }
 
-  return { success: true };
+  return { success: true, changedFiles };
 }
 
 export async function ideateFeature(intent, options) {

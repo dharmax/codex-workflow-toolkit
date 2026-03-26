@@ -37,7 +37,7 @@ function shellQuote(value) {
   return JSON.stringify(String(value));
 }
 
-test("ai-workflow list reports built-in codelets", async () => {
+test("ai-workflow list reports built-in codelets", { concurrency: false }, async () => {
   const result = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "list", "--json"]);
   assert.equal(result.code, 0);
   const payload = JSON.parse(result.stdout);
@@ -45,7 +45,7 @@ test("ai-workflow list reports built-in codelets", async () => {
   assert.equal(payload.toolkitCodelets.some((item) => item.id === "sync"), true);
 });
 
-test("ai-workflow doctor reports local diagnostics and ollama absence cleanly", async () => {
+test("ai-workflow doctor reports local diagnostics and ollama absence cleanly", { concurrency: false }, async () => {
   const result = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "doctor", "--json"]);
   assert.equal(result.code, 0);
   const payload = JSON.parse(result.stdout);
@@ -53,7 +53,7 @@ test("ai-workflow doctor reports local diagnostics and ollama absence cleanly", 
   assert.equal(typeof payload.ollama, "object");
 });
 
-test("ai-workflow can extract a ticket and build a context pack for an initialized repo", async () => {
+test("ai-workflow can extract a ticket and build a context pack for an initialized repo", { concurrency: false }, async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-smoke-"));
 
   try {
@@ -77,7 +77,276 @@ test("ai-workflow can extract a ticket and build a context pack for an initializ
   }
 });
 
-test("ai-workflow install creates the core OS workspace and initializes project config", async () => {
+test("ai-workflow ticket helpers prefer the discovered real kanban source over stale root kanban", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-real-kanban-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+    await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+    await writeFile(
+      path.join(targetRoot, "docs", "kanban.md"),
+      [
+        "# Kanban",
+        "",
+        "## In Progress",
+        "- [ ] **REF-APP-SHELL-01**: Continue app-shell and modal-surface refactor hardening after review findings.",
+        "  - Outcome: restore overlay handling and deep-link routing",
+        "",
+        "## Priority 1 Bugs",
+        "- [ ] **BUG-OVERLAY-01**: Restore global overlay handling for non-dialog modals after the app-shell refactor."
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(targetRoot, "kanban.md"),
+      [
+        "# Kanban",
+        "",
+        "## Todo",
+        "- [ ] TKT-001 Replace this example ticket"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const syncResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(syncResult.code, 0);
+
+    const ticketResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "extract", "ticket", "REF-APP-SHELL-01", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(ticketResult.code, 0);
+    const ticketPayload = JSON.parse(ticketResult.stdout);
+    assert.equal(ticketPayload.id, "REF-APP-SHELL-01");
+    assert.equal(ticketPayload.section, "In Progress");
+    assert.match(ticketPayload.body, /Outcome: restore overlay handling/i);
+
+    const contextResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "run", "context-pack", "--ticket", "REF-APP-SHELL-01", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(contextResult.code, 0);
+    const contextPayload = JSON.parse(contextResult.stdout);
+    assert.equal(contextPayload.ticket.id, "REF-APP-SHELL-01");
+    assert.equal(contextPayload.ticket.section, "In Progress");
+    assert.equal(contextPayload.ticketSourcePath, "docs/kanban.md");
+    assert.equal(Array.isArray(contextPayload.workingSet), true);
+    assert.equal(contextPayload.workingSet.length > 0, true);
+    assert.equal(Array.isArray(contextPayload.relevantSymbols), true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("ai-workflow ticket proving run evaluates multiple tickets against the real runtime helpers", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-ticket-proving-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+    await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+    await mkdir(path.join(targetRoot, "src", "ui", "components", "dialog"), { recursive: true });
+    await mkdir(path.join(targetRoot, "tests"), { recursive: true });
+    await writeFile(
+      path.join(targetRoot, "package.json"),
+      JSON.stringify({
+        name: "ticket-proving-runtime-test",
+        type: "module",
+        scripts: {
+          "test:e2e": "node -e \"console.log('e2e ok')\"",
+          "test:unit": "node -e \"console.log('unit ok')\""
+        }
+      }, null, 2),
+      "utf8"
+    );
+    await writeFile(path.join(targetRoot, "src", "ui", "components", "dialog", "modal.riot"), "<modal><div>modal</div></modal>\n", "utf8");
+    await writeFile(path.join(targetRoot, "tests", "modal.e2e.spec.ts"), "test('modal', () => {})\n", "utf8");
+    await writeFile(
+      path.join(targetRoot, "docs", "kanban.md"),
+      [
+        "# Kanban",
+        "",
+        "## In Progress",
+        "- [ ] **REF-APP-SHELL-01**: Continue app-shell and modal-surface refactor hardening after review findings.",
+        "",
+        "## Priority 1 Bugs",
+        "- [ ] **BUG-OVERLAY-01**: Restore global overlay handling for non-dialog modals after the app-shell refactor."
+      ].join("\n"),
+      "utf8"
+    );
+
+    const syncResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(syncResult.code, 0);
+
+    const provingResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "run", "ticket-proving-run", "--tickets", "REF-APP-SHELL-01", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(provingResult.code, 0);
+    const provingPayload = JSON.parse(provingResult.stdout);
+    assert.equal(provingPayload.total, 1);
+    assert.equal(provingPayload.passed, 1);
+    assert.equal(provingPayload.verificationPlanned, 1);
+    assert.equal(Array.isArray(provingPayload.tickets), true);
+    assert.equal(Array.isArray(provingPayload.tickets[0].executionPlan.verificationCommands), true);
+    assert.equal(provingPayload.tickets[0].executionPlan.verificationCommands.length > 0, true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("ai-workflow execution dry-run reports inferred plan without mutating files", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-dry-run-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+    await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+    await mkdir(path.join(targetRoot, "src", "ui", "components", "dialog"), { recursive: true });
+    await mkdir(path.join(targetRoot, "tests", "modal-smoke"), { recursive: true });
+    await mkdir(path.join(targetRoot, "functions"), { recursive: true });
+    await writeFile(path.join(targetRoot, "package.json"), JSON.stringify({
+      name: "dry-run-test",
+      packageManager: "pnpm@10.0.0",
+      scripts: {
+        "test:e2e": "playwright test -c playwright.config.ts",
+        "test:unit": "playwright test -c playwright.unit.config.ts"
+      }
+    }, null, 2), "utf8");
+    await writeFile(path.join(targetRoot, "playwright.config.ts"), "export default { testMatch: ['**/e2e.spec.ts'] };\n", "utf8");
+    await writeFile(path.join(targetRoot, "playwright.unit.config.ts"), "export default { testMatch: ['**/*.unit.spec.ts'] };\n", "utf8");
+    await writeFile(path.join(targetRoot, "src", "ui", "components", "dialog", "modal.riot"), "<modal></modal>\n", "utf8");
+    await writeFile(path.join(targetRoot, "tests", "modal-smoke", "e2e.spec.ts"), "test('modal', () => {})\n", "utf8");
+    await writeFile(path.join(targetRoot, "tests", "e2e.spec.ts"), "test('root e2e', () => {})\n", "utf8");
+    await writeFile(path.join(targetRoot, "functions", "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+
+    const syncResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(syncResult.code, 0);
+
+    const ticketResult = await runNode(
+      [
+        path.join(repoRoot, "cli", "ai-workflow.mjs"),
+        "project",
+        "ticket",
+        "create",
+        "--id",
+        "BUG-OVERLAY-01",
+        "--title",
+        "Restore global overlay handling for non-dialog modals after the app-shell refactor.",
+        "--lane",
+        "Bugs P1",
+        "--summary",
+        "Verification: pnpm exec playwright test -c playwright.config.ts tests/modal-smoke/e2e.spec.ts",
+        "--json"
+      ],
+      { cwd: targetRoot }
+    );
+    assert.equal(ticketResult.code, 0);
+
+    const dryRunResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "run", "execution-dry-run", "--ticket", "BUG-OVERLAY-01", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(dryRunResult.code, 0);
+    const payload = JSON.parse(dryRunResult.stdout);
+    assert.equal(payload.ticket.id, "BUG-OVERLAY-01");
+    assert.equal(Array.isArray(payload.executionPlan.verificationCommands), true);
+    assert.equal(payload.executionPlan.verificationCommands.length > 0, true);
+    assert.equal(
+      payload.executionPlan.verificationCommands.some((entry) => /playwright\.config\.ts/.test(entry.command)),
+      true
+    );
+    assert.equal(
+      payload.executionPlan.verificationCommands.some((entry) => /playwright\.unit\.config\.ts/.test(entry.command)),
+      false
+    );
+    assert.equal(payload.executionPlan.workingSet.includes("functions/pnpm-lock.yaml"), false);
+    assert.equal(
+      Array.isArray(payload.workingSetEvidence)
+        && payload.workingSetEvidence.some((entry) => entry.kind === "selected-file"),
+      true
+    );
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("ai-workflow execution dry-run prefers primary source files over docs when enough code context exists", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-dry-run-doc-filter-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+    await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+    await mkdir(path.join(targetRoot, "src", "engine"), { recursive: true });
+    await mkdir(path.join(targetRoot, "src", "ui", "components"), { recursive: true });
+    await mkdir(path.join(targetRoot, "tests"), { recursive: true });
+    await writeFile(path.join(targetRoot, "package.json"), JSON.stringify({
+      name: "dry-run-doc-filter",
+      packageManager: "pnpm@10.0.0",
+      scripts: {
+        "test:e2e": "playwright test -c playwright.config.ts",
+        "test:unit": "playwright test -c playwright.unit.config.ts",
+        build: "vite build"
+      }
+    }, null, 2), "utf8");
+    await writeFile(path.join(targetRoot, "playwright.config.ts"), "export default { testMatch: ['**/e2e.spec.ts'] };\n", "utf8");
+    await writeFile(path.join(targetRoot, "playwright.unit.config.ts"), "export default { testMatch: ['**/*.unit.spec.ts'] };\n", "utf8");
+    await writeFile(path.join(targetRoot, "src", "engine", "audio.ts"), "export function __getAudioDebugState() { return null; }\n", "utf8");
+    await writeFile(path.join(targetRoot, "src", "engine", "gdrive-sync.ts"), "export const audioDebugSync = true;\n", "utf8");
+    await writeFile(path.join(targetRoot, "src", "engine", "npc-logic-cache.ts"), "export const overlayDebugCache = new Map();\n", "utf8");
+    await writeFile(path.join(targetRoot, "src", "ui", "components", "combat-modal.riot"), "<audio-debug-overlay></audio-debug-overlay>\n", "utf8");
+    await writeFile(path.join(targetRoot, "src", "ui", "components", "tutorial-overlay.riot"), "<overlay-debug></overlay-debug>\n", "utf8");
+    await writeFile(path.join(targetRoot, "tests", "e2e.spec.ts"), "test('audio debug overlay', () => {})\n", "utf8");
+    await writeFile(path.join(targetRoot, "docs", "knowledge.md"), "# Audio debug overlay notes\n", "utf8");
+    const syncResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(syncResult.code, 0);
+
+    const ticketResult = await runNode(
+      [
+        path.join(repoRoot, "cli", "ai-workflow.mjs"),
+        "project",
+        "ticket",
+        "create",
+        "--id",
+        "AUDIO-UX-03",
+        "--title",
+        "Add an audio-debug overlay.",
+        "--lane",
+        "Suggestions",
+        "--json"
+      ],
+      { cwd: targetRoot }
+    );
+    assert.equal(ticketResult.code, 0);
+
+    const dryRunResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "run", "execution-dry-run", "--ticket", "AUDIO-UX-03", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(dryRunResult.code, 0);
+    const payload = JSON.parse(dryRunResult.stdout);
+    assert.equal(payload.executionPlan.workingSet.some((filePath) => String(filePath).startsWith("docs/")), false);
+    assert.equal(payload.executionPlan.workingSet.includes("src/engine/audio.ts"), true);
+    assert.equal(payload.executionPlan.workingSet.includes("tests/e2e.spec.ts"), true);
+    assert.equal(payload.workingSetEvidence[0].kind, "selected-file");
+    assert.equal(Array.isArray(payload.workingSetEvidence[0].reasons), true);
+    assert.equal(payload.workingSetEvidence[0].reasons.length > 0, true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("ai-workflow install creates the core OS workspace and initializes project config", { concurrency: false }, async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-install-"));
 
   try {
@@ -96,7 +365,7 @@ test("ai-workflow install creates the core OS workspace and initializes project 
   }
 });
 
-test("project codelets override toolkit codelets by id", async () => {
+test("project codelets override toolkit codelets by id", { concurrency: false }, async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-override-"));
 
   try {
@@ -119,4 +388,199 @@ test("project codelets override toolkit codelets by id", async () => {
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }
+});
+
+test("ai-workflow mode set/status stores explicit tool-dev mode", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-mode-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+
+    const setResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "mode", "set", "tool-dev"],
+      { cwd: targetRoot }
+    );
+    assert.equal(setResult.code, 0);
+
+    const statusResult = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "mode", "status", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(statusResult.code, 0);
+    const payload = JSON.parse(statusResult.stdout);
+    assert.equal(payload.mode, "tool-dev");
+    assert.equal(typeof payload.repairTargetRoot, "string");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("ai-workflow tool observe can infer and record a toolkit-style observation with explicit inputs", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-tool-observe-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+    const result = await runNode(
+      [
+        path.join(repoRoot, "cli", "ai-workflow.mjs"),
+        "tool",
+        "observe",
+        "--mode",
+        "default",
+        "--root",
+        targetRoot,
+        "--complaint",
+        "it lied about readiness and picked useless verification",
+        "--expected",
+        "it should admit verification is weak and ask for better checks",
+        "--create-ticket",
+        "--json"
+      ],
+      { cwd: targetRoot }
+    );
+    assert.equal(result.code, 0);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.observation.kind, "misleading-output");
+    assert.equal(payload.observation.component, "shell");
+    assert.equal(payload.observation.severity, "blocking");
+    assert.equal(payload.ticket.id, "TKH-001");
+    assert.equal(payload.note.provenance, "tool-dev-observe");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("tool-dev mode blocks external execution targets unless explicitly allowed", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-tool-dev-guard-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+
+    const result = await runNode(
+      [
+        path.join(repoRoot, "cli", "ai-workflow.mjs"),
+        "run",
+        "execution-dry-run",
+        "--mode",
+        "tool-dev",
+        "--root",
+        targetRoot,
+        "--ticket",
+        "TKT-001",
+        "--json"
+      ],
+      { cwd: targetRoot }
+    );
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /tool-dev mode refuses external repair target/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("tool observe auto-attaches the latest recorded run artifact", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-observe-run-artifact-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+    await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+    await mkdir(path.join(targetRoot, "src", "ui", "components", "dialog"), { recursive: true });
+    await mkdir(path.join(targetRoot, "tests", "modal-smoke"), { recursive: true });
+    await writeFile(path.join(targetRoot, "package.json"), JSON.stringify({
+      name: "observe-run-artifact-test",
+      packageManager: "pnpm@10.0.0",
+      scripts: {
+        "test:e2e": "playwright test -c playwright.config.ts",
+        "test:unit": "playwright test -c playwright.unit.config.ts"
+      }
+    }, null, 2), "utf8");
+    await writeFile(path.join(targetRoot, "playwright.config.ts"), "export default { testMatch: ['**/e2e.spec.ts'] };\n", "utf8");
+    await writeFile(path.join(targetRoot, "playwright.unit.config.ts"), "export default { testMatch: ['**/*.unit.spec.ts'] };\n", "utf8");
+    await writeFile(path.join(targetRoot, "src", "ui", "components", "dialog", "modal.riot"), "<modal></modal>\n", "utf8");
+    await writeFile(path.join(targetRoot, "tests", "modal-smoke", "e2e.spec.ts"), "test('modal', () => {})\n", "utf8");
+
+    let result = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(result.code, 0);
+
+    result = await runNode(
+      [
+        path.join(repoRoot, "cli", "ai-workflow.mjs"),
+        "project",
+        "ticket",
+        "create",
+        "--id",
+        "BUG-OVERLAY-01",
+        "--title",
+        "Restore global overlay handling for non-dialog modals after the app-shell refactor.",
+        "--lane",
+        "Bugs P1",
+        "--json"
+      ],
+      { cwd: targetRoot }
+    );
+    assert.equal(result.code, 0);
+
+    result = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "run", "execution-dry-run", "--ticket", "BUG-OVERLAY-01", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(result.code, 0);
+    const dryRunPayload = JSON.parse(result.stdout);
+    assert.equal(typeof dryRunPayload.runArtifact?.id, "string");
+
+    result = await runNode(
+      [
+        path.join(repoRoot, "cli", "ai-workflow.mjs"),
+        "tool",
+        "observe",
+        "--mode",
+        "default",
+        "--root",
+        targetRoot,
+        "--complaint",
+        "it picked weak verification",
+        "--expected",
+        "it should attach the exact run",
+        "--json"
+      ],
+      { cwd: targetRoot }
+    );
+    assert.equal(result.code, 0);
+    const observePayload = JSON.parse(result.stdout);
+    assert.equal(observePayload.attachedRun.id, dryRunPayload.runArtifact.id);
+    assert.equal(observePayload.attachedRun.kind, "execution-dry-run");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("tool-dev proving keeps toolkit as repair target and external project as evidence root", { concurrency: false }, async () => {
+  const toolkitRoot = repoRoot;
+  const evidenceRoot = path.join(repoRoot, "adventure-machine2-playground");
+
+  const result = await runNode(
+    [
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "run",
+      "ticket-proving-run",
+      "--mode",
+      "tool-dev",
+      "--root",
+      evidenceRoot,
+      "--limit",
+      "1",
+      "--json"
+    ],
+    { cwd: toolkitRoot }
+  );
+  assert.equal(result.code, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.mode, "tool-dev");
+  assert.equal(payload.repairTargetRoot, toolkitRoot);
+  assert.equal(payload.evidenceRoot, evidenceRoot);
+  assert.equal(payload.root, evidenceRoot);
+  assert.equal(typeof payload.runArtifact?.id, "string");
 });
