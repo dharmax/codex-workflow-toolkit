@@ -49,7 +49,7 @@ const KNOWN_TASK_CLASSES = [
 ];
 
 export async function handleShell(rest, { cliPath } = {}) {
-  const args = parseArgs(rest);
+  const args = parseShellArgs(rest);
   if (args.help) {
     printAndExit(SHELL_HELP.trim());
   }
@@ -75,6 +75,24 @@ export async function handleShell(rest, { cliPath } = {}) {
   }
 
   return runInteractiveShell(options);
+}
+
+function parseShellArgs(argv) {
+  const args = { _: [] };
+  const booleanFlags = new Set(["help", "json", "yes", "plan-only", "no-ai"]);
+  for (const value of argv) {
+    if (!String(value).startsWith("--")) {
+      args._.push(value);
+      continue;
+    }
+    const key = String(value).slice(2);
+    if (booleanFlags.has(key)) {
+      args[key] = true;
+      continue;
+    }
+    args._.push(value);
+  }
+  return args;
 }
 
 export async function buildShellContext(root = process.cwd()) {
@@ -112,6 +130,7 @@ export async function buildShellContext(root = process.cwd()) {
     projectCodelets,
     summary,
     smartStatus,
+    providerState,
     knowledge: providerState.knowledge,
     mission,
     kanban,
@@ -178,6 +197,17 @@ export async function planShellRequest(inputText, options) {
   const segments = inputText.split(/\s+then\s+|\s+and\s+/i);
   if (segments.length > 1) {
     const plans = await Promise.all(segments.map(s => planSingleRequest(s.trim(), options)));
+    const canSafelyCombine = plans.every((plan) => {
+      if (!plan) return false;
+      if ((plan.confidence ?? 0) < 0.7) return false;
+      if (plan.kind === "reply" && /needs the AI planner or a more direct phrasing/i.test(String(plan.reply ?? ""))) {
+        return false;
+      }
+      return true;
+    });
+    if (!canSafelyCombine) {
+      return planSingleRequest(inputText, options);
+    }
     const combinedActions = plans.flatMap(p => p.actions || []);
     const confidence = plans.reduce((acc, p) => acc * p.confidence, 1);
     
@@ -188,6 +218,20 @@ export async function planShellRequest(inputText, options) {
         confidence,
         reason: `Combined multi-intent plan: ${plans.map(p => p.reason).join("; ")}`,
         strategy: plans.map(p => p.strategy).filter(Boolean).join(" Then ")
+      };
+    }
+
+    if (plans.every((plan) => plan.kind === "reply")) {
+      const combinedReply = plans
+        .map((plan) => String(plan.reply ?? "").trim())
+        .filter(Boolean)
+        .join("\n\n");
+      return {
+        kind: "reply",
+        actions: [],
+        confidence,
+        reason: `Combined multi-intent reply: ${plans.map((plan) => plan.reason).join("; ")}`,
+        reply: combinedReply || "I need a clearer request."
       };
     }
   }
@@ -1049,10 +1093,12 @@ export async function runInteractiveShell(options) {
   options.blacklist = new Set();
   options.history = [];
   try {
-    const primary = options.planners.planners[0] ?? options.planners.heuristic;
+    const primary = options.noAi
+      ? { ...options.planners.heuristic, mode: "heuristic-forced", reason: "AI planning disabled for this shell session." }
+      : options.planners.planners[0] ?? options.planners.heuristic;
     output.write(`ai-workflow shell\n${renderPlannerLine(primary)}\nType 'help' for examples. Type 'exit' to quit.\n\n`);
 
-    if (!options.planners.planners.length) {
+    if (!options.noAi && !options.planners.planners.length) {
       output.write([
         "Planner note: No AI models configured. Shell is running in limited regex-only mode.",
         "To enable full agentic reasoning, you can:",
@@ -1068,7 +1114,7 @@ export async function runInteractiveShell(options) {
     if ((primary.configWarnings ?? []).length) {
       output.write("\n");
     }
-    if (primary.needsHardwareHint) {
+    if (!options.noAi && primary.needsHardwareHint) {
       output.write([
         "Planner note: Ollama hardware is not configured, so the shell is defaulting to a smaller model.",
         "You can configure it now, or later with \`ai-workflow set-ollama-hw\`.",
@@ -1699,6 +1745,61 @@ function buildContextualShellReply(inputText, plannerContext) {
   const summary = plannerContext?.summary ?? {};
   const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
   const modules = Array.isArray(summary.modules) ? summary.modules : [];
+  const providerState = plannerContext?.providerState ?? {};
+  const providerMap = providerState.providers ?? {};
+  const projectName = path.basename(plannerContext?.root ?? process.cwd());
+
+  if (normalized === "what project am i in and what should i work on next") {
+    const top = activeTickets[0];
+    if (!top) {
+      return replyPlan(`You are in \`${projectName}\`. I do not see an obvious active ticket yet.`, 0.88, "Answered from project root and summary.");
+    }
+    return replyPlan([
+      `You are in \`${projectName}\`.`,
+      `Start with ${top.id}: ${top.title}. It is currently in ${top.lane}.`
+    ].join("\n"), 0.9, "Compound project grounding reply.");
+  }
+
+  if (["what project am i in", "which project is this", "what repo is this"].includes(normalized)) {
+    const ticketHint = activeTickets[0] ? ` The top active ticket looks like ${activeTickets[0].id}: ${activeTickets[0].title}.` : "";
+    return replyPlan(`You are in \`${projectName}\`. Indexed modules and tickets are available here.${ticketHint}`, 0.88, "Answered from project root and summary.");
+  }
+
+  if (["what should i work on next", "what should i do next", "what is next"].includes(normalized)) {
+    if (!activeTickets.length) {
+      return replyPlan("I do not see an obvious active ticket yet. Run `sync` if the board may be stale, or ask me to inspect the project state.", 0.82, "No active tickets in summary.");
+    }
+    const top = activeTickets[0];
+    return replyPlan(`Start with ${top.id}: ${top.title}. It is currently in ${top.lane}.`, 0.88, "Suggested next work from active tickets.");
+  }
+
+  if (normalized.includes("help me set this up") && /\bopenai\b/.test(normalized) && /\bollama\b/.test(normalized)) {
+    const ollama = providerMap.ollama;
+    const openai = providerMap.openai;
+    const lines = [
+      "Use this setup sequence:",
+      "1. `ai-workflow set-provider-key openai --global`",
+      "2. `ai-workflow set-ollama-hw --global`",
+      "3. `ai-workflow doctor`",
+      "4. `ai-workflow route shell-planning`"
+    ];
+    if (ollama?.available) {
+      lines.push(`Ollama is already visible at ${ollama.host}.`);
+    }
+    if (openai?.available) {
+      lines.push("OpenAI already looks available.");
+    }
+    return replyPlan(lines.join("\n"), 0.87, "Setup guidance from provider state.");
+  }
+
+  if (/\bgemini\b/.test(normalized) && /\b(broken|failing|blocked|wrong)\b/.test(normalized)) {
+    return replyPlan([
+      "Gemini looks unhealthy in this environment.",
+      "If you are seeing `API_KEY_SERVICE_BLOCKED`, the Google key is present but blocked for the Generative Language API.",
+      "Fix it by replacing/unsetting the Google key, or prefer OpenAI/Ollama until the key is valid.",
+      "Useful checks: `ai-workflow doctor`, `ai-workflow route shell-planning`, `ai-workflow config get providers`."
+    ].join("\n"), 0.9, "Provider troubleshooting reply.");
+  }
 
   if (["what are the next tickets", "what are the active tickets", "can you list the active tickets"].includes(normalized)) {
     if (!activeTickets.length) {
@@ -1722,7 +1823,14 @@ function buildContextualShellReply(inputText, plannerContext) {
     return replyPlan("Claims are extracted relationships and facts in the workflow DB, such as imports, calls, ownership, and ticket-linked evidence.", 0.9, "Explained built-in terminology.");
   }
 
-  if (["how are you", "tell me a joke"].includes(normalized)) {
+  if (["what can you do here", "what can you do"].includes(normalized)) {
+    return replyPlan([
+      "I can inspect project state, answer questions about the repo, search code and tickets, sync the workflow DB, prepare context, and run guided workflow actions.",
+      "If you want to change code or project state, say that directly and I’ll plan or execute the next step."
+    ].join("\n"), 0.7, "Capability explanation.");
+  }
+
+  if (["how are you", "tell me a joke"].includes(normalized) || /\bhow(?:'s| is) it going\b/.test(normalized) || /\bready to help\b/.test(normalized)) {
     return replyPlan("Ready. Point me at the code or the problem and I’ll work it through.", 0.45, "Light conversational reply.");
   }
 

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chooseShellPlannerModel, compileShellAction, planShellRequestHeuristically, validateShellPlan, buildShellContext, planShellRequestWithAgent, runShellTurn } from "../cli/lib/shell.mjs";
+import { chooseShellPlannerModel, compileShellAction, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, planShellRequestWithAgent, runShellTurn } from "../cli/lib/shell.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
 
 test("buildShellContext reads foundational project files", async (t) => {
@@ -212,9 +212,18 @@ const plannerContext = {
   projectCodelets: [
     { id: "custom-check", summary: "Project-local check." }
   ],
+  root: "/tmp/example-project",
+  providerState: {
+    providers: {
+      openai: { available: false },
+      ollama: { available: true, host: "http://127.0.0.1:11434" },
+      google: { available: true }
+    }
+  },
   summary: {
     fileCount: 10,
-    activeTickets: [{ id: "TKT-001", title: "Example" }]
+    activeTickets: [{ id: "TKT-001", title: "Example", lane: "Todo" }],
+    modules: [{ name: "src/ui" }, { name: "src/engine" }]
   }
 };
 
@@ -255,6 +264,39 @@ test("heuristic shell planner handles version requests directly", () => {
   assert.deepEqual(plan.actions, [
     { type: "version" }
   ]);
+});
+
+test("shell planner can answer compound project-grounded questions", async () => {
+  const plan = await planShellRequest("what project am i in and what should i work on next?", {
+    plannerContext,
+    noAi: true,
+    planners: { planners: [], heuristic: { mode: "heuristic", reason: "fallback" } }
+  });
+  assert.equal(plan.kind, "reply");
+  assert.match(plan.reply, /example-project/);
+  assert.match(plan.reply, /TKT-001/);
+});
+
+test("heuristic shell planner can answer setup and troubleshooting questions", () => {
+  const setup = planShellRequestHeuristically("help me set this up to use openai and ollama", plannerContext);
+  assert.equal(setup.kind, "reply");
+  assert.match(setup.reply, /set-provider-key openai --global/);
+  assert.match(setup.reply, /set-ollama-hw --global/);
+
+  const providerFailure = planShellRequestHeuristically("i think you did something wrong: gemini looks broken, investigate and tell me what to do", plannerContext);
+  assert.equal(providerFailure.kind, "reply");
+  assert.match(providerFailure.reply, /API_KEY_SERVICE_BLOCKED/);
+  assert.match(providerFailure.reply, /doctor/);
+});
+
+test("heuristic shell planner answers capability and greeting prompts like an assistant", () => {
+  const capability = planShellRequestHeuristically("what can you do here?", plannerContext);
+  assert.equal(capability.kind, "reply");
+  assert.match(capability.reply, /inspect project state/i);
+
+  const greeting = planShellRequestHeuristically("how's it going? ready to help?", plannerContext);
+  assert.equal(greeting.kind, "reply");
+  assert.match(greeting.reply, /Ready\./);
 });
 
 test("runShellTurn narrates non-mutating tool results through the assistant layer", async () => {

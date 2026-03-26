@@ -138,6 +138,16 @@ export class SqliteWorkflowStore {
       this.db.prepare(`
         INSERT INTO symbols (id, file_path, name, kind, exported, line, column, metadata_json, source_kind, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'indexed', ?)
+        ON CONFLICT(id) DO UPDATE SET
+          file_path = excluded.file_path,
+          name = excluded.name,
+          kind = excluded.kind,
+          exported = excluded.exported,
+          line = excluded.line,
+          column = excluded.column,
+          metadata_json = excluded.metadata_json,
+          source_kind = excluded.source_kind,
+          updated_at = excluded.updated_at
       `).run(
         symbolId,
         file.relativePath,
@@ -172,6 +182,19 @@ export class SqliteWorkflowStore {
       this.db.prepare(`
         INSERT INTO claims (id, subject_id, predicate, object_id, object_text, kind, confidence, provenance, source_kind, lifecycle_state, file_path, line, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'indexed', ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          subject_id = excluded.subject_id,
+          predicate = excluded.predicate,
+          object_id = excluded.object_id,
+          object_text = excluded.object_text,
+          kind = excluded.kind,
+          confidence = excluded.confidence,
+          provenance = excluded.provenance,
+          source_kind = excluded.source_kind,
+          lifecycle_state = excluded.lifecycle_state,
+          file_path = excluded.file_path,
+          line = excluded.line,
+          updated_at = excluded.updated_at
       `).run(
         stableId("claim", file.relativePath, fact.predicate, fact.objectText ?? fact.objectId, fact.line ?? index),
         `file:${file.relativePath}`,

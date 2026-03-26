@@ -304,6 +304,18 @@ test("non-interactive shell handles version directly", async () => {
   assert.match(stdout, new RegExp(repoRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
+test("one-shot shell request still works when boolean flags come before natural language", async () => {
+  const result = await runNode([
+    path.join(repoRoot, "cli", "ai-workflow.mjs"),
+    "shell",
+    "--no-ai",
+    "what can you do here?"
+  ], { cwd: repoRoot });
+
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /inspect project state/i);
+});
+
 test("generated helper scripts work against initialized project state", async () => {
   const targetRoot = await makeTempDir();
 
