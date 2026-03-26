@@ -129,3 +129,27 @@ test("syncProject tolerates duplicate facts emitted from the same file", async (
     await rm(targetRoot, { recursive: true, force: true });
   }
 });
+
+test("shadow sync does not promote tickets on loose keyword overlap alone", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-shadow-sync-"));
+
+  try {
+    await cp(fixtureRoot, targetRoot, { recursive: true });
+    await syncProject({ projectRoot: targetRoot });
+
+    await withWorkflowStore(targetRoot, async (store) => {
+      store.upsertEntity(buildTicketEntity({
+        id: "TKT-555",
+        title: "Shared router workflow provider migration",
+        lane: "Todo",
+        summary: "Should stay Todo without explicit evidence."
+      }));
+    });
+
+    const result = await syncProject({ projectRoot: targetRoot });
+    const ticket = result.summary.activeTickets.find((item) => item.id === "TKT-555");
+    assert.equal(ticket?.lane, "Todo");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});

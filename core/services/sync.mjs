@@ -106,11 +106,17 @@ async function performShadowSync(store, root) {
   const claims = store.db.prepare("SELECT * FROM claims WHERE lifecycle_state = 'active'").all();
   
   for (const ticket of tickets) {
-    // If we find code claims that match ticket keywords, boost confidence or auto-move
-    const keywords = ticket.title.toLowerCase().split(" ").filter(w => w.length > 4);
-    const matches = claims.filter(c => keywords.some(k => (c.object_text ?? "").toLowerCase().includes(k)));
-    
-    if (matches.length > 3 && ticket.lane === "Todo") {
+    const ticketId = ticket.id.toLowerCase();
+    const titlePhrase = ticket.title.toLowerCase().replace(/\s+/g, " ").trim();
+
+    // Only mutate workflow state when we have strong evidence:
+    // an explicit ticket-id mention, or repeated exact-title mentions for long titles.
+    const idMatches = claims.filter((claim) => (claim.object_text ?? "").toLowerCase().includes(ticketId));
+    const titleMatches = titlePhrase.length >= 24
+      ? claims.filter((claim) => (claim.object_text ?? "").toLowerCase().includes(titlePhrase))
+      : [];
+
+    if ((idMatches.length >= 1 || titleMatches.length >= 2) && ticket.lane === "Todo") {
       store.upsertEntity({ ...ticket, lane: "In Progress", provenance: "shadow-sync-inference" });
     }
   }

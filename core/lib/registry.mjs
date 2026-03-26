@@ -46,8 +46,9 @@ export function getNoteRegex() {
     ...Object.values(SEMANTICS.NOTES.aliases).flat()
   ];
   const escaped = allMarkers.map(m => m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  // Matches "TODO: body", "[TODO] body", "- [ ] body", etc.
-  return new RegExp(`(?:\\b(?:${escaped.join("|")})\\b[:\\]]?|\\-\\s+\\[\\s\\])\\s*(.+)`, "i");
+  // Matches explicit markers at the start of a note line such as
+  // "TODO: body", "[TODO] body", "- TODO body", or "- [ ] body".
+  return new RegExp(`^\\s*(?:(?:[-*]\\s+)?(?:\\[\\s*)?(?:${escaped.join("|")})(?:\\s*\\])?[:\\-]?|\\-\\s+\\[\\s\\])\\s+(.+)`, "i");
 }
 
 export function isFolderRole(folderName, role) {

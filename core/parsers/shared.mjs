@@ -30,13 +30,16 @@ export function extractTaggedNotes(source, { commentPattern, filePath }) {
 
 export function parseTaggedNote(text) {
   const normalized = String(text).replace(/\s+/g, " ").trim();
-  const match = normalized.match(new RegExp(`\\b(${NOTE_TYPES.join("|")}):?\\s+(.+)`, "i"));
+  const match = normalized.match(new RegExp(
+    `^(?:[-*]\\s+)?(?:\\[\\s*(${NOTE_TYPES.join("|")})\\s*\\]|(${NOTE_TYPES.join("|")}))(?::|-)?\\s+(.+)$`,
+    "i"
+  ));
   if (!match) {
     return null;
   }
   return {
-    noteType: match[1].toUpperCase(),
-    body: match[2].trim()
+    noteType: String(match[1] ?? match[2]).toUpperCase(),
+    body: match[3].trim()
   };
 }
 

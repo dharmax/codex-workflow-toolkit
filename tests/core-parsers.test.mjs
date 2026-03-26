@@ -20,6 +20,19 @@ test("JS-family parser indexes imports, symbols, calls, and tagged notes without
   assert.equal(parsed.notes[0].body, "actual work item");
 });
 
+test("tagged note parsing does not treat incidental prose as a note", () => {
+  const parsed = parseIndexedFile({
+    filePath: "src/app.ts",
+    content: [
+      "// This bug fix should stay stable after refactor",
+      "// TODO: actual tagged note"
+    ].join("\n")
+  });
+
+  assert.equal(parsed.notes.length, 1);
+  assert.equal(parsed.notes[0].body, "actual tagged note");
+});
+
 test("Riot parser merges script, style, and template indexing", () => {
   const parsed = parseIndexedFile({
     filePath: "src/ui/panel.riot",
