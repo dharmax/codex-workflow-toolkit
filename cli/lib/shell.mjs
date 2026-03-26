@@ -245,6 +245,7 @@ export async function planShellRequest(inputText, options) {
       return {
         kind: "plan",
         actions: combinedActions.slice(0, 5), // Limit to 5 combined
+        graph: buildActionGraph(combinedActions.slice(0, 5)),
         confidence,
         reason: `Combined multi-intent plan: ${plans.map(p => p.reason).join("; ")}`,
         strategy: plans.map(p => p.strategy).filter(Boolean).join(" Then ")
@@ -259,6 +260,7 @@ export async function planShellRequest(inputText, options) {
       return {
         kind: "reply",
         actions: [],
+        graph: buildActionGraph([]),
         confidence,
         reason: `Combined multi-intent reply: ${plans.map((plan) => plan.reason).join("; ")}`,
         reply: combinedReply || "I need a clearer request."
@@ -688,7 +690,8 @@ export function validateShellPlan(plan, plannerContext) {
   if (plan.kind === "reply") {
     return {
       ...replyPlan(String(plan.reply ?? "I need a clearer request."), Number(plan.confidence ?? 0.5), String(plan.reason ?? "Planner reply.")),
-      strategy: plan.strategy ? String(plan.strategy) : null
+      strategy: plan.strategy ? String(plan.strategy) : null,
+      graph: buildActionGraph([])
     };
   }
 
@@ -698,7 +701,8 @@ export function validateShellPlan(plan, plannerContext) {
       actions: [],
       confidence: Number(plan.confidence ?? 1),
       reason: String(plan.reason ?? "Planner exit."),
-      strategy: plan.strategy ? String(plan.strategy) : null
+      strategy: plan.strategy ? String(plan.strategy) : null,
+      graph: buildActionGraph([])
     };
   }
 
@@ -710,6 +714,7 @@ export function validateShellPlan(plan, plannerContext) {
   return {
     kind: "plan",
     actions,
+    graph: buildActionGraph(actions),
     confidence: Number(plan.confidence ?? 0.7),
     reason: String(plan.reason ?? "Planner produced a valid action plan."),
     strategy: plan.strategy ? String(plan.strategy) : null
@@ -727,13 +732,23 @@ function shouldAutoNarratePlan(actions, options) {
 }
 
 async function synthesizeShellExecutionReply({ inputText, plan, executed, options, planner }) {
-  const renderedOutputs = executed
-    .map((item) => {
+  const graphResults = Array.isArray(executed?.graphNodes)
+    ? executed.graphNodes
+    : [];
+  const renderedOutputs = graphResults
+    .map((node) => {
+      const item = node.execution;
+      if (!item) return null;
       const text = String(item.ok ? item.stdout : `${item.stdout}${item.stderr}`).trim();
       if (!text || text === STREAMED_STDIO) {
         return null;
       }
-      return `Action: ${item.action.type}\nOutput:\n${text}`;
+      return [
+        `Node: ${node.id}`,
+        `Action: ${item.action.type}`,
+        node.dependsOn?.length ? `Depends on: ${node.dependsOn.join(", ")}` : null,
+        `Output:\n${text}`
+      ].filter(Boolean).join("\n");
     })
     .filter(Boolean)
     .join("\n\n");
@@ -761,9 +776,9 @@ async function synthesizeShellExecutionReply({ inputText, plan, executed, option
       prompt: [
         `User request:\n${inputText}`,
         "",
-        `Planned actions:\n${plan.actions.map((action) => action.type).join(", ")}`,
+        `Action graph:\n${renderActionGraph(plan.graph)}`,
         "",
-        `Tool results:\n${renderedOutputs}`,
+        `Node results:\n${renderedOutputs}`,
         "",
         "Write the final assistant reply:"
       ].join("\n"),
@@ -781,7 +796,7 @@ async function synthesizeShellExecutionReply({ inputText, plan, executed, option
 }
 
 function renderFallbackAssistantReply({ inputText, plan, executed }) {
-  const first = executed[0];
+  const first = executed?.graphNodes?.[0]?.execution ?? executed?.[0];
   const raw = String(first?.ok ? first?.stdout : `${first?.stdout ?? ""}${first?.stderr ?? ""}`).trim();
   if (!raw) {
     return null;
@@ -914,6 +929,7 @@ export async function runShellTurn(inputText, options) {
     input: inputText,
     plan,
     executed: [],
+    executedGraph: null,
     preRendered: false,
     history: options.history ?? [],
     options
@@ -958,8 +974,11 @@ export async function runShellTurn(inputText, options) {
   }
 
   const executed = [];
-  for (const action of plan.actions) {
-    executed.push(await executeShellAction(action, options));
+  const executedGraph = plan.graph ? await executeActionGraph(plan.graph, options) : { nodes: [], executions: [] };
+  for (const node of executedGraph.nodes) {
+    if (node.execution) {
+      executed.push(node.execution);
+    }
   }
 
   const failed = executed.find((item) => item.ok === false);
@@ -984,19 +1003,20 @@ export async function runShellTurn(inputText, options) {
     assistantReply = await synthesizeShellExecutionReply({
       inputText,
       plan,
-      executed,
+      executed: { graphNodes: executedGraph.nodes, executions: executed },
       options,
       planner: narrationPlanner
     });
   }
 
   return {
-    input: inputText,
-    plan,
-    executed,
-    preRendered,
-    recovery,
-    assistantReply
+      input: inputText,
+      plan,
+      executed,
+      executedGraph,
+      preRendered,
+      recovery,
+      assistantReply
   };
 }
 
@@ -1571,6 +1591,80 @@ function renderActionList(actions) {
   }).join("\n");
 }
 
+function buildActionGraph(actions) {
+  const nodes = [];
+  let lastMutatingNodeId = null;
+  let lastSyncNodeId = null;
+  let previousNodeId = null;
+  for (const [index, action] of actions.entries()) {
+    const id = `n${index + 1}`;
+    const dependsOn = new Set();
+    if (action.type === "sync" && previousNodeId) {
+      dependsOn.add(previousNodeId);
+    } else if (isMutatingAction(action) && previousNodeId) {
+      dependsOn.add(previousNodeId);
+    } else {
+      if (lastMutatingNodeId) dependsOn.add(lastMutatingNodeId);
+      if (lastSyncNodeId && action.type !== "sync") dependsOn.add(lastSyncNodeId);
+    }
+    const node = {
+      id,
+      type: action.type,
+      action,
+      dependsOn: Array.from(dependsOn),
+      status: "pending"
+    };
+    nodes.push(node);
+    previousNodeId = id;
+    if (action.type === "sync") lastSyncNodeId = id;
+    if (isMutatingAction(action)) lastMutatingNodeId = id;
+  }
+  return { nodes };
+}
+
+async function executeActionGraph(graph, options) {
+  const nodeMap = new Map((graph?.nodes ?? []).map((node) => [node.id, {
+    ...node,
+    dependsOn: Array.isArray(node.dependsOn) ? [...node.dependsOn] : [],
+    status: "pending",
+    execution: null
+  }]));
+  const executions = [];
+  while (true) {
+    const ready = Array.from(nodeMap.values()).filter((node) =>
+      node.status === "pending"
+      && node.dependsOn.every((depId) => nodeMap.get(depId)?.status === "ok")
+    );
+    if (!ready.length) {
+      break;
+    }
+    for (const node of ready) {
+      node.status = "running";
+      node.execution = await executeShellAction(node.action, options);
+      node.status = node.execution.ok ? "ok" : "failed";
+      executions.push(node.execution);
+      if (!node.execution.ok) {
+        for (const waiting of nodeMap.values()) {
+          if (waiting.status === "pending" && waiting.dependsOn.includes(node.id)) {
+            waiting.status = "blocked";
+          }
+        }
+        return { nodes: Array.from(nodeMap.values()), executions };
+      }
+    }
+  }
+  return { nodes: Array.from(nodeMap.values()), executions };
+}
+
+function renderActionGraph(graph) {
+  const nodes = graph?.nodes ?? [];
+  if (!nodes.length) return "(empty)";
+  return nodes.map((node) => {
+    const deps = node.dependsOn?.length ? ` <- ${node.dependsOn.join(", ")}` : "";
+    return `${node.id}: ${node.type}${deps}`;
+  }).join("\n");
+}
+
 function renderPlannerLine(planner) {
   if (!planner) {
     return "planner: unavailable";
@@ -1724,6 +1818,7 @@ function actionPlan(actions, confidence, reason) {
   return {
     kind: "plan",
     actions,
+    graph: buildActionGraph(actions),
     confidence,
     reason
   };
@@ -1733,6 +1828,7 @@ function replyPlan(reply, confidence = 1, reason = "Reply only.") {
   return {
     kind: "reply",
     actions: [],
+    graph: buildActionGraph([]),
     reply,
     confidence,
     reason

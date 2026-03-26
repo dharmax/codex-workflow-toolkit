@@ -283,6 +283,10 @@ test("heuristic shell planner expands sync plus review requests into multiple ac
     { type: "sync" },
     { type: "run_review" }
   ]);
+  assert.deepEqual(plan.graph.nodes.map((node) => ({ id: node.id, type: node.type, dependsOn: node.dependsOn })), [
+    { id: "n1", type: "sync", dependsOn: [] },
+    { id: "n2", type: "run_review", dependsOn: ["n1"] }
+  ]);
 });
 
 test("heuristic shell planner keeps help requests as replies and accepts question marks", () => {
@@ -406,7 +410,8 @@ test("runShellTurn narrates non-mutating tool results through the assistant laye
     available: true,
     models: [{ id: "brain-v1", quality: "high" }],
     generate: async ({ prompt }) => {
-      assert.match(prompt, /Tool results:/);
+      assert.match(prompt, /Node results:/);
+      assert.match(prompt, /Action graph:/);
       return { response: "Connected providers are ready." };
     }
   });
@@ -428,9 +433,27 @@ test("runShellTurn narrates non-mutating tool results through the assistant laye
 
     assert.equal(result.plan.kind, "plan");
     assert.equal(result.assistantReply, "Connected providers are ready.");
+    assert.equal(Array.isArray(result.executedGraph?.nodes), true);
+    assert.equal(result.executedGraph.nodes[0].id, "n1");
+    assert.equal(result.executedGraph.nodes[0].status, "ok");
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
+});
+
+test("validateShellPlan builds an action graph for agent plans", () => {
+  const valid = validateShellPlan({
+    kind: "plan",
+    actions: [
+      { type: "sync" },
+      { type: "search", query: "router" }
+    ]
+  }, plannerContext);
+  assert.equal(valid.kind, "plan");
+  assert.deepEqual(valid.graph.nodes.map((node) => ({ type: node.type, dependsOn: node.dependsOn })), [
+    { type: "sync", dependsOn: [] },
+    { type: "search", dependsOn: ["n1"] }
+  ]);
 });
 
 test("compileShellAction produces a safe mutating note command", () => {
