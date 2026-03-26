@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { openWorkflowStore } from "../db/sqlite-store.mjs";
 import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "../../cli/lib/config-store.mjs";
 import { loadKnowledge } from "./knowledge.mjs";
 
@@ -27,6 +28,10 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
 
   const configuredProviders = mergeProviderConfig(globalConfig.providers, projectConfig.providers);
   const providers = {};
+
+  const store = await openWorkflowStore({ projectRoot: root });
+  const metricsSummary = store.getMetricsSummary();
+  store.close();
 
   const allProviderIds = new Set([...Object.keys(knowledge.models), ...Object.keys(configuredProviders)]);
 
@@ -79,6 +84,7 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
   return {
     root,
     knowledge,
+    metricsSummary,
     configWarnings: [projectConfigState.warning, globalConfigState.warning].filter(Boolean),
     routingPolicy: {
       capabilityMapping: knowledge.capabilityMapping,

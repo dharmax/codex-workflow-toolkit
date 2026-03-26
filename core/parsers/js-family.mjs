@@ -1,4 +1,5 @@
-import { countLineColumn, parseTaggedNote } from "./shared.mjs";
+import { countLineColumn } from "./shared.mjs";
+import { findNotesFuzzily } from "../lib/fuzzy.mjs";
 
 const KEYWORDS = new Set(["if", "for", "while", "switch", "catch", "return", "new", "import", "function"]);
 
@@ -108,18 +109,15 @@ function extractJsNotes(source, filePath) {
   }
 
   return comments
-    .map((comment) => {
-      const note = parseTaggedNote(comment.body.replace(/^\*\s*/gm, "").trim());
-      if (!note) {
-        return null;
-      }
+    .flatMap((comment) => {
       const location = countLineColumn(source, comment.index);
-      return {
-        ...note,
-        filePath,
-        line: location.line,
-        column: location.column
-      };
-    })
-    .filter(Boolean);
+      return findNotesFuzzily(comment.body.replace(/^\*\s*/gm, "").trim())
+        .map(found => ({
+          noteType: found.type,
+          body: found.body,
+          filePath,
+          line: location.line + (found.line - 1),
+          column: location.column
+        }));
+    });
 }

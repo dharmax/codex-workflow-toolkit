@@ -42,27 +42,33 @@ export function parseTaggedNote(text) {
 
 export function scoreNote(note) {
   const baseScores = {
-    BUG: 0.95,
-    FIXME: 0.85,
-    RISK: 0.82,
-    HACK: 0.66,
-    TODO: 0.58,
-    NOTE: 0.34
+    BUG: 0.95, FIXME: 0.85, RISK: 0.82, HACK: 0.66, TODO: 0.58, NOTE: 0.34
   };
   const body = String(note.body ?? "").toLowerCase();
-  const riskHints = /(security|race|leak|corrupt|inconsistent|crash|break|wrong|unsafe)/.test(body) ? 0.2 : 0;
-  const leverageHints = /(shared|router|workflow|schema|migration|cache|index|reusable|provider)/.test(body) ? 0.16 : 0;
-  const valueHints = /(cleanup|follow[- ]up|ticket|later|before shipping|needs test|needs audit)/.test(body) ? 0.12 : 0;
+  
+  // Semantic Density Analysis
+  const criticalTokens = ["security", "race", "leak", "corrupt", "inconsistent", "crash", "break", "wrong", "unsafe", "fatal", "missing"];
+  const density = criticalTokens.filter(t => body.includes(t)).length / criticalTokens.length;
+  
+  const riskHints = density > 0 ? 0.2 + (density * 0.5) : 0;
+  const leverageHints = /(shared|router|workflow|schema|migration|cache|index|reusable|provider|core)/.test(body) ? 0.16 : 0;
+  const valueHints = /(cleanup|follow[- ]up|ticket|later|before shipping|needs test|needs audit|perfection)/.test(body) ? 0.12 : 0;
+  
+  // Entity Linking (RAG-002)
+  const ticketMatch = body.match(/\b([A-Z]+-\d+)\b/);
+  const isLinked = !!ticketMatch;
+
   const riskScore = Math.min(1, (baseScores[note.noteType] ?? 0.25) + riskHints);
   const leverageScore = Math.min(1, 0.3 + leverageHints + (note.filePath?.includes("core/") ? 0.18 : 0));
-  const ticketValueScore = Math.min(1, 0.25 + valueHints + (note.filePath?.startsWith("src/") ? 0.1 : 0));
+  const ticketValueScore = Math.min(1, 0.25 + valueHints + (isLinked ? 0.2 : 0));
   const candidateScore = Number(((riskScore * 0.45) + (leverageScore * 0.25) + (ticketValueScore * 0.3)).toFixed(3));
 
   return {
     riskScore: Number(riskScore.toFixed(3)),
     leverageScore: Number(leverageScore.toFixed(3)),
     ticketValueScore: Number(ticketValueScore.toFixed(3)),
-    candidateScore
+    candidateScore,
+    linkedTicketId: ticketMatch ? ticketMatch[1] : null
   };
 }
 

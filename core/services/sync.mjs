@@ -6,19 +6,26 @@ import { parseIndexedFile } from "../parsers/index.mjs";
 import { deriveCandidateFromNote, reviewCandidates } from "./lifecycle.mjs";
 import { buildProjectSummary, buildSmartProjectStatus, createSearchDocumentsForEntities, importLegacyProjections, writeProjectProjections } from "./projections.mjs";
 import { auditArchitecture } from "./critic.mjs";
+import { SEMANTICS } from "../lib/registry.mjs";
 
 export async function syncProject({ projectRoot = process.cwd(), writeProjections = false } = {}) {
   const store = await openWorkflowStore({ projectRoot });
   const startedAt = new Date().toISOString();
 
+  // LAY-003: Dynamic Artifact Detection
+  const dynamicIgnores = await detectBuildArtifacts(projectRoot);
+
   try {
-    const files = await collectProjectFiles(projectRoot);
+    const files = await collectProjectFiles(projectRoot, { ignore: dynamicIgnores });
     let symbolCount = 0;
     let claimCount = 0;
     let noteCount = 0;
 
     for (const relativePath of files) {
       const file = await readProjectFile(projectRoot, relativePath);
+      if (file.isBinary) {
+        continue;
+      }
       const parsed = parseIndexedFile({ filePath: relativePath, content: file.content });
       const notes = parsed.notes.map((note) => ({
         ...note,
@@ -52,6 +59,10 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
 
     const lifecycle = reviewCandidates(store);
     createSearchDocumentsForEntities(store);
+
+    // RAG-003: Shadow Sync
+    await performShadowSync(store, projectRoot);
+
     store.setMeta("lastSync", {
       startedAt,
       fileCount: files.length,
@@ -80,6 +91,28 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
     };
   } finally {
     store.close();
+  }
+}
+
+async function detectBuildArtifacts(root) {
+  const { readdir } = await import("node:fs/promises");
+  const entries = await readdir(root).catch(() => []);
+  const suspects = ["dist", "build", "target", "out", ".next", ".turbo"];
+  return entries.filter(e => suspects.includes(e));
+}
+
+async function performShadowSync(store, root) {
+  const tickets = store.listEntities({ entityType: "ticket", states: ["open"] });
+  const claims = store.db.prepare("SELECT * FROM claims WHERE lifecycle_state = 'active'").all();
+  
+  for (const ticket of tickets) {
+    // If we find code claims that match ticket keywords, boost confidence or auto-move
+    const keywords = ticket.title.toLowerCase().split(" ").filter(w => w.length > 4);
+    const matches = claims.filter(c => keywords.some(k => (c.object_text ?? "").toLowerCase().includes(k)));
+    
+    if (matches.length > 3 && ticket.lane === "Todo") {
+      store.upsertEntity({ ...ticket, lane: "In Progress", provenance: "shadow-sync-inference" });
+    }
   }
 }
 

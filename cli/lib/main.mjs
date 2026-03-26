@@ -8,6 +8,7 @@ import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, 
 import { runDoctor } from "./doctor.mjs";
 import { handleSetOllamaHw } from "./ollama-hw.mjs";
 import { handleShell } from "./shell.mjs";
+import { handleProviderConnect } from "./provider-connect.mjs";
 import { installAgents } from "./install.mjs";
 import { forgeProjectCodelet, getProjectCodelet, listProjectCodelets, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
@@ -49,6 +50,7 @@ const HELP = `Usage:
   ai-workflow forge codelet <name>
   ai-workflow route <task-class> [--json]
   ai-workflow telegram preview [--json]
+  ai-workflow provider connect <provider-id>
   ai-workflow config get [key]
   ai-workflow config set <key> <value>
 
@@ -116,6 +118,8 @@ export async function main(argv) {
       return handleRoute(rest);
     case "telegram":
       return handleTelegram(rest);
+    case "provider":
+      return handleProvider(rest);
     case "config":
       return handleConfig(rest);
     default:
@@ -460,6 +464,14 @@ async function handleTelegram(rest) {
   }
   process.stdout.write(preview.text);
   return 0;
+}
+
+async function handleProvider(rest) {
+  const [subcommand, providerId] = rest;
+  if (subcommand === "connect") {
+    return await handleProviderConnect(providerId);
+  }
+  printAndExit("Usage: ai-workflow provider connect <provider-id>", 1);
 }
 
 async function handleConfig(rest) {

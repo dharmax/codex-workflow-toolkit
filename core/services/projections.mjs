@@ -168,10 +168,27 @@ export function renderEpicsProjection(store) {
 export async function writeProjectProjections(store, { projectRoot }) {
   const kanban = renderKanbanProjection(store);
   const epics = renderEpicsProjection(store);
-  await Promise.all([
+  const mission = store.getMeta("mission");
+  const gemini = store.getMeta("gemini");
+
+  const writes = [
     writeProjectFile(projectRoot, "kanban.md", kanban),
     writeProjectFile(projectRoot, "epics.md", epics)
-  ]);
+  ];
+
+  if (mission) {
+    writes.push(writeProjectFile(projectRoot, "MISSION.md", mission));
+  }
+  if (gemini) {
+    const geminiPath = (async () => {
+      const { existsSync } = await import("node:fs");
+      if (existsSync(path.resolve(projectRoot, ".gemini", "GEMINI.md"))) return ".gemini/GEMINI.md";
+      return "GEMINI.md";
+    })();
+    writes.push(writeProjectFile(projectRoot, await geminiPath, gemini));
+  }
+
+  await Promise.all(writes);
   return {
     kanbanPath: path.resolve(projectRoot, "kanban.md"),
     epicsPath: path.resolve(projectRoot, "epics.md")
@@ -181,7 +198,16 @@ export async function writeProjectProjections(store, { projectRoot }) {
 export async function importLegacyProjections(store, { projectRoot }) {
   const kanbanText = await readText(path.resolve(projectRoot, "kanban.md"), "");
   const epicsText = await readText(path.resolve(projectRoot, "epics.md"), "");
+  const missionText = await readText(path.resolve(projectRoot, "MISSION.md"), "");
+  const geminiText = await readText(path.resolve(projectRoot, ".gemini", "GEMINI.md"), "") || await readText(path.resolve(projectRoot, "GEMINI.md"), "");
   
+  if (missionText) {
+    store.setMeta("mission", missionText);
+  }
+  if (geminiText) {
+    store.setMeta("gemini", geminiText);
+  }
+
   if (!kanbanText.trim() && !epicsText.trim()) {
     return { importedTickets: 0, importedEpics: 0, skipped: true };
   }

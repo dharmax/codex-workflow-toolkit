@@ -1,38 +1,48 @@
 import { withWorkflowStore } from "./sync.mjs";
 import { readProjectFile } from "../lib/filesystem.mjs";
+import { SEMANTICS } from "../lib/registry.mjs";
 
 /**
  * Context Packer
- * Builds surgical, minimal context for AI tasks by querying the SQLite graph.
+ * Builds surgical, minimal context for AI tasks.
+ * Includes ContextBudgeter logic to prune prompt for maximum efficiency.
  */
 
 export async function buildSurgicalContext(projectRoot, { symbolNames = [], filePaths = [], ticketId = null } = {}) {
+  const budget = SEMANTICS.BUDGET;
+
   return withWorkflowStore(projectRoot, async (store) => {
     const context = {
       files: [],
       symbols: [],
       guidelines: [],
-      ticket: null
+      ticket: null,
+      budgetReached: false
     };
 
-    // 1. Pull Ticket if specified
+    // 1. Pull Ticket (Highest Priority)
     if (ticketId) {
       context.ticket = store.getEntity(ticketId);
     }
 
-    // 2. Pull specified files
-    for (const filePath of filePaths) {
+    // 2. Pull specified files (with Budgeting)
+    const limitedFilePaths = filePaths.slice(0, budget.MAX_FILES);
+    if (filePaths.length > budget.MAX_FILES) context.budgetReached = true;
+
+    for (const filePath of limitedFilePaths) {
       const file = await readProjectFile(projectRoot, filePath);
       const lines = file.content.split("\n");
-      const truncated = lines.length > 500 ? lines.slice(0, 500).join("\n") + "\n... [TRUNCATED for token efficiency]" : file.content;
+      // Surgical Slice: Limit file size to 300 lines or 5000 chars
+      const truncated = lines.slice(0, 300).join("\n");
       context.files.push({
         path: filePath,
-        content: truncated
+        content: truncated.length > 5000 ? truncated.slice(0, 5000) + "... [TRUNCATED]" : truncated
       });
     }
 
-    // 3. Pull specified symbols and their immediate neighbors (1-hop)
-    for (const name of symbolNames) {
+    // 3. Pull specified symbols (with Budgeting)
+    const limitedSymbols = symbolNames.slice(0, budget.MAX_SYMBOLS);
+    for (const name of limitedSymbols) {
       const symbol = store.db.prepare("SELECT * FROM symbols WHERE name = ?").get(name);
       if (symbol) {
         const file = await readProjectFile(projectRoot, symbol.file_path);

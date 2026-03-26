@@ -159,6 +159,27 @@ function mapRouteCandidateToPlanner(candidate, providers) {
 }
 
 export async function planShellRequest(inputText, options) {
+  const segments = inputText.split(/\s+then\s+|\s+and\s+/i);
+  if (segments.length > 1) {
+    const plans = await Promise.all(segments.map(s => planSingleRequest(s.trim(), options)));
+    const combinedActions = plans.flatMap(p => p.actions || []);
+    const confidence = plans.reduce((acc, p) => acc * p.confidence, 1);
+    
+    if (combinedActions.length) {
+      return {
+        kind: "plan",
+        actions: combinedActions.slice(0, 5), // Limit to 5 combined
+        confidence,
+        reason: `Combined multi-intent plan: ${plans.map(p => p.reason).join("; ")}`,
+        strategy: plans.map(p => p.strategy).filter(Boolean).join(" Then ")
+      };
+    }
+  }
+
+  return planSingleRequest(inputText, options);
+}
+
+async function planSingleRequest(inputText, options) {
   const heuristic = planShellRequestHeuristically(inputText, options.plannerContext);
   const useHeuristicOnly = options.noAi || !options.planners.planners.length;
 
@@ -235,6 +256,11 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
 
   if (/^(metrics|stats|usage)$/i.test(text)) {
     return actionPlan([{ type: "metrics" }], 0.98, "Usage metrics request.");
+  }
+
+  if (/^(connect|login|setup)\s+([a-zA-Z0-9_-]+)$/i.test(text)) {
+    const match = text.match(/^(connect|login|setup)\s+([a-zA-Z0-9_-]+)$/i);
+    return actionPlan([{ type: "provider_connect", providerId: match[2] }], 0.98, "Explicit provider connect request.");
   }
 
   if (/^(audit\s+architecture|check\s+wiring|arch\s+audit)$/i.test(text)) {
@@ -387,9 +413,12 @@ export async function planShellRequestWithAgent(inputText, options) {
     "Your goal is to satisfy the developer's intent with extreme precision, strategic foresight, and maximum efficiency.",
     "",
     "## Operational Protocol (STRATEGIC REASONING MANDATORY)",
-    "Before acting, you MUST perform an internal strategic assessment:",
-    "1. **Deconstruct Intent:** What is the user's core objective? (e.g., 'see status' vs 'fix a bug').",
-    "2. **Tool Enablement:** Map the intent to the most effective sequence of actions. You have a suite of tools (catalog below). Use them like a pro.",
+    "Before acting, you MUST perform an internal strategic assessment (Tree of Thought):",
+    "1. **Analyze Intent:** What is the user's core objective?",
+    "2. **Evaluate Paths:** Consider 2-3 sequences of tools. Why is one better?",
+    "3. **Predict Friction:** Identify potential blockers (e.g., stale state, ambiguous IDs).",
+    "4. **Final Strategy:** Explain your logic clearly in the `reason` field using a step-by-step structure.",
+    "",
     "   - To pull specific ticket info, use `extract_ticket` with the ID. If you don't have the ID, use `list_tickets` first.",
     "   - To ensure fresh data, start with `sync`.",
     "   - To investigate project structure, use `search` or `project_summary`.",
@@ -437,11 +466,13 @@ export async function planShellRequestWithAgent(inputText, options) {
       strategy: "The long-term plan or next steps for the developer",
       reply: "human-friendly message (mandatory if kind=reply, optional if kind=plan)",
       actions: [{
-        type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|search|extract_ticket|decompose_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|telegram_preview|add_note|create_ticket|run_codelet",
+        type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|search|extract_ticket|decompose_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key",
         query: "for search",
         ticketId: "for extract_ticket/decompose_ticket/extract_guidelines",
         intent: "for ideate_feature",
         filePath: "for ingest_artifact/add_note",
+        code: "for run_dynamic_codelet (JavaScript snippet)",
+        providerId: "for provider_connect/set_provider_key",
         changed: true,
         taskClass: "for route",
         noteType: "NOTE|TODO|FIXME|HACK|BUG|RISK",
@@ -581,8 +612,15 @@ function validateShellAction(action, plannerContext) {
     case "doctor":
     case "sync":
     case "run_review":
+    case "run_dynamic_codelet":
     case "telegram_preview":
+    case "reprofile":
       return { type };
+    case "provider_connect":
+      if (!String(action.providerId ?? "").trim()) {
+        throw new Error("provider_connect action requires providerId");
+      }
+      return { type, providerId: String(action.providerId).trim() };
     case "set_ollama_hw":
       return { type, global: Boolean(action.global) };
     case "search":
@@ -612,6 +650,11 @@ function validateShellAction(action, plannerContext) {
         ticketId: action.ticketId ? requireTicketId(action.ticketId) : null,
         changed: Boolean(action.changed)
       };
+    case "run_dynamic_codelet":
+      if (!String(action.code ?? "").trim()) {
+        throw new Error("run_dynamic_codelet action requires code");
+      }
+      return { type, code: String(action.code).trim() };
     case "route":
       return { type, taskClass: normalizeTaskClass(action.taskClass, plannerContext) };
     case "add_note":
@@ -713,7 +756,10 @@ export async function runShellTurn(inputText, options) {
   const failed = executed.find((item) => item.ok === false);
   let recovery = null;
   const anyAiPlanner = options.planners.planners[0];
-  if (failed && anyAiPlanner && !options.noAi) {
+  
+  // Item 39: Circuit Breaker - Prevent infinite retry loops
+  options._retryCount = (options._retryCount || 0) + 1;
+  if (failed && anyAiPlanner && !options.noAi && options._retryCount <= 2) {
     recovery = await attemptShellRecovery({
       inputText,
       plan,
@@ -792,6 +838,16 @@ export function compileShellAction(action, { json = false } = {}) {
         ...(action.ticketId ? ["--ticket", action.ticketId] : []),
         ...(action.changed ? ["--changed"] : [])
       ], false);
+    case "run_dynamic_codelet":
+      return {
+        args: [],
+        mutation: true,
+        display: `run dynamic codelet (${(action.code ?? "").length} bytes)`
+      };
+    case "reprofile":
+      return cliCommand(["reprofile", ...(json ? ["--json"] : [])], true);
+    case "provider_connect":
+      return cliCommand(["provider", "connect", action.providerId], true);
     case "route":
       return cliCommand(["route", action.taskClass, ...(json ? ["--json"] : [])], false);
     case "telegram_preview":
@@ -898,6 +954,9 @@ export async function runInteractiveShell(options) {
         if (!line) {
           continue;
         }
+
+        // 0. Ensure bidirectional sync so manual edits are ingested and DB changes are projected
+        await syncProject({ projectRoot: options.root, writeProjections: true });
 
         // 1. Refresh context before every turn so the Brain sees the latest state
         options.plannerContext = await buildShellContext(options.root);
@@ -1016,6 +1075,11 @@ async function runShellActionDirect(action, options) {
       const preview = await buildTelegramPreview({ projectRoot: options.root });
       return options.json ? `${JSON.stringify(preview, null, 2)}\n` : preview.text;
     }
+    case "reprofile":
+      await runDoctor({ root: options.root, json: options.json });
+      return "";
+    case "provider_connect":
+      return await handleProviderConnect(action.providerId, { rl: options.rl }).then(code => code === 0 ? "Connected.\n" : "Connection failed.\n");
     case "set_ollama_hw": {
       const result = await configureOllamaHardware({
         root: options.root,
@@ -1115,6 +1179,34 @@ async function runShellActionDirect(action, options) {
         ...(action.ticketId ? ["--ticket", action.ticketId] : []),
         ...(action.changed ? ["--changed"] : [])
       ], options);
+    case "run_dynamic_codelet": {
+      const effects = analyzeCodeletSideEffects(action.code);
+      if (effects.isMalicious) {
+        throw new Error("Execution blocked: Malicious code pattern detected in forged codelet.");
+      }
+      if (!options.json) {
+        output.write(`Side-Effect Analysis: ${formatSideEffects(effects)}\n`);
+      }
+      const stagedDir = path.resolve(options.root, ".ai-workflow", "staged-codelets");
+      const entryPath = path.resolve(stagedDir, `dynamic-${Date.now()}.mjs`);
+      const source = [
+        "/* Responsibility: Dynamic AI-forged codelet for on-the-fly execution.",
+        "   Context: This script was forged to satisfy a specific user intent. */",
+        "import path from \"node:path\";",
+        "import { openWorkflowStore } from \"./core/db/sqlite-store.mjs\";",
+        "import { getProjectSummary } from \"./core/services/sync.mjs\";",
+        "",
+        "const root = process.cwd();",
+        "async function run() {",
+        action.code,
+        "}",
+        "run().catch(err => { console.error(err); process.exit(1); });"
+      ].join("\n");
+      const { writeFile, mkdir } = await import("node:fs/promises");
+      await mkdir(stagedDir, { recursive: true });
+      await writeFile(entryPath, source, "utf8");
+      return runCodeletById("dynamic", [], { ...options, _dynamicEntry: entryPath });
+    }
     case "run_review":
       return runCodeletById("review", [], options);
     case "run_codelet":
@@ -1125,15 +1217,23 @@ async function runShellActionDirect(action, options) {
 }
 
 async function runCodeletById(codeletId, args, options) {
-  const codelet = [...options.plannerContext.projectCodelets, ...options.plannerContext.toolkitCodelets]
-    .find((item) => item.id === codeletId);
-  if (!codelet?.entry) {
+  let entry = null;
+  if (codeletId === "dynamic" && options._dynamicEntry) {
+    entry = options._dynamicEntry;
+  } else {
+    const codelet = [...options.plannerContext.projectCodelets, ...options.plannerContext.toolkitCodelets]
+      .find((item) => item.id === codeletId);
+    entry = codelet?.entry;
+  }
+
+  if (!entry) {
     throw new Error(`Codelet entry not found for ${codeletId}`);
   }
 
+  const fullEntry = path.resolve(options.root, entry);
   if (!options.json) {
     await new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [codelet.entry, ...args], {
+      const child = spawn(process.execPath, [fullEntry, ...args], {
         cwd: options.root,
         stdio: "inherit"
       });
@@ -1149,7 +1249,7 @@ async function runCodeletById(codeletId, args, options) {
     return STREAMED_STDIO;
   }
 
-  const { stdout, stderr } = await execFileAsync(process.execPath, [codelet.entry, ...args], {
+  const { stdout, stderr } = await execFileAsync(process.execPath, [fullEntry, ...args], {
     cwd: options.root,
     maxBuffer: 16 * 1024 * 1024
   });
@@ -1238,10 +1338,14 @@ function buildActionCatalog(plannerContext) {
     "- ingest_artifact: parse a file (e.g. PRD) into Epics/Tickets",
     "- extract_guidelines: extract task guidance",
     "- route: show provider/model routing for a task class",
+    "- run_dynamic_codelet: execute an on-the-fly JavaScript code snippet to solve a custom problem",
     "- telegram_preview: render Telegram status text",
     "- add_note: add a project note",
     "- create_ticket: create a workflow ticket",
-    "- run_codelet: execute a known codelet by id"
+    "- run_codelet: execute a known codelet by id",
+    "- provider_connect: connect to a new AI provider (browser/API key)",
+    "- reprofile: refresh model capability matrix",
+    "- set_provider_key: set API key for a provider"
   ];
 
   lines.push("");
@@ -1347,56 +1451,35 @@ function renderConfiguredOllamaHardware(result) {
   return `${lines.join("\n")}\n`;
 }
 
-async function attemptShellRecovery({ inputText, plan, failed, options }) {
-  try {
-    const prompt = [
-      "The previous ai-workflow action failed. Produce JSON only.",
-      "Choose one of:",
-      "- kind=reply with a short helpful explanation",
-      "- kind=plan with at most 2 alternative actions from the same allowed shell action schema",
-      "",
-      `Original user request: ${JSON.stringify(inputText)}`,
-      `Previous action: ${JSON.stringify(failed.action)}`,
-      `Failed command: ${failed.command}`,
-      `Error: ${failed.stderr || "unknown error"}`,
-      "",
-      "Do not repeat the same failing action unless you changed its arguments."
-    ].join("\n");
+import { attemptActionCorrection } from "../../core/lib/self-correction.mjs";
+import { analyzeCodeletSideEffects, formatSideEffects } from "../../core/services/side-effects.mjs";
 
-    const completion = await generateWithOllama({
-      host: options.planner.host,
-      model: options.planner.modelId,
-      system: "You are a strict recovery planner for ai-workflow. Return JSON only.",
-      prompt,
-      format: "json"
-    });
-    const recoveredPlan = validateShellPlan(JSON.parse(completion.response), options.plannerContext);
-    if (recoveredPlan.kind !== "plan") {
-      return {
-        kind: "reply",
-        reply: recoveredPlan.reply ?? "Recovery planner could not find a safer action."
-      };
+async function attemptShellRecovery({ inputText, plan, failed, options, planner }) {
+  if (!options.json) {
+    output.write(`Action failed: ${failed.stderr || "Unknown error"}. Attempting automatic correction...\n`);
+  }
+
+  const correctedAction = await attemptActionCorrection({
+    failedAction: failed.action,
+    error: { message: failed.stderr || "Unknown error" },
+    options: { ...options, planner },
+    history: options.history
+  });
+
+  if (correctedAction) {
+    if (!options.json) {
+      const compiled = compileShellAction(correctedAction);
+      output.write(`Corrected to: ${compiled.display}. Running...\n`);
     }
-
-    const executed = [];
-    for (const action of recoveredPlan.actions) {
-      executed.push(await executeShellAction(action, {
-        ...options,
-        yes: true
-      }));
-    }
-
+    const result = await executeShellAction(correctedAction, options);
     return {
       kind: "plan",
-      plan: recoveredPlan,
-      executed
-    };
-  } catch (error) {
-    return {
-      kind: "reply",
-      reply: `Recovery attempt failed: ${error?.message ?? String(error)}`
+      plan: { actions: [correctedAction] },
+      executed: [result]
     };
   }
+
+  return { kind: "reply", reply: "Automatic correction could not find a safe alternative." };
 }
 
 function renderRecovery(recovery) {

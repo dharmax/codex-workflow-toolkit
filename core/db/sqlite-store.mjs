@@ -19,7 +19,6 @@ function parseJson(value, fallback = {}) {
     return fallback;
   }
 }
-
 export async function openWorkflowStore({ projectRoot, dbPath } = {}) {
   const resolvedDbPath = dbPath ?? path.resolve(projectRoot, ".ai-workflow", "state", "workflow.db");
   await mkdir(path.dirname(resolvedDbPath), { recursive: true });
@@ -28,10 +27,25 @@ export async function openWorkflowStore({ projectRoot, dbPath } = {}) {
   db.exec("PRAGMA synchronous = NORMAL;");
   db.exec("PRAGMA busy_timeout = 5000;");
   db.exec(SQLITE_SCHEMA);
-  return new SqliteWorkflowStore({ db, dbPath: resolvedDbPath, projectRoot });
+
+  const store = new SqliteWorkflowStore({ db, dbPath: resolvedDbPath, projectRoot });
+  await store.ensureSchemaConsistency();
+  return store;
 }
 
 export class SqliteWorkflowStore {
+  async ensureSchemaConsistency() {
+    // Item 37: SchemaGuardian - Detect and fix missing columns
+    const columns = this.db.prepare("PRAGMA table_info(entities)").all();
+    const names = columns.map(c => c.name);
+    if (!names.includes("consultation_question")) {
+      this.db.exec("ALTER TABLE entities ADD COLUMN consultation_question TEXT;");
+    }
+    if (!names.includes("parent_id")) {
+      this.db.exec("ALTER TABLE entities ADD COLUMN parent_id TEXT;");
+    }
+  }
+
   constructor({ db, dbPath, projectRoot }) {
     this.db = db;
     this.dbPath = dbPath;

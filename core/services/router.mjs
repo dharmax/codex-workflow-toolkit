@@ -43,11 +43,11 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
 
       const localPreference = preferLocalForTask && provider.local ? 3 : 0;
       
-      // Snappiness bonus for very small models on simple tasks (heuristic from knowledge soon?)
-      const isTinyModel = (model.sizeB ?? 0) > 0 && (model.sizeB ?? 0) <= 4;
-      const snappinessBonus = (isTinyModel && minimumQuality === "low") ? 5 : 0;
+      // Item 35: Historical Success Bias
+      const modelMetrics = providerState.metricsSummary?.byModel?.find(m => m.model_id === model.id);
+      const reliabilityBonus = modelMetrics ? (modelMetrics.success_rate / 20) : 2; // 0-5 bonus based on success rate
 
-      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + snappinessBonus;
+      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + reliabilityBonus;
       
       candidates.push({
         providerId,
