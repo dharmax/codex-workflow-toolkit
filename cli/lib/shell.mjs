@@ -564,9 +564,10 @@ export async function planShellRequestWithAgent(inputText, options) {
     "",
     "## Interaction Rules",
     "- Vague Request: Use `kind=reply` to ask clarifying questions. Reference existing state when helpful.",
-    "- Multi-step Strategy: If a complex task is requested, use `strategy` to explain the next concrete approach, and `actions` for immediate steps.",
+    "- Multi-step Strategy: If a complex task is requested, use `strategy` to explain the next concrete approach, and prefer `graph.nodes` for the executable plan.",
     "- Directives: If the user says 'go ahead', 'do it', or 'proceed', execute the next logical steps of your previously proposed strategy.",
     "- Sound like a serious assistant. Do not sound like a router, planner, or bureaucrat.",
+    "- Prefer graph-shaped plans for multi-step work. Use `actions` only for trivial fallback plans.",
     "- JSON only: Your output must be valid JSON matching the schema.",
   ].join("\n");
 
@@ -584,6 +585,16 @@ export async function planShellRequestWithAgent(inputText, options) {
       reason: "Your internal strategic reasoning (mandatory)",
       strategy: "The long-term plan or next steps for the developer",
       reply: "human-friendly message (mandatory if kind=reply, optional if kind=plan)",
+      graph: {
+        nodes: [{
+          id: "n1",
+          kind: "action|synthesize",
+          dependsOn: ["optional-node-id"],
+          action: {
+            type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|search|extract_ticket|decompose_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key"
+          }
+        }]
+      },
       actions: [{
         type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|search|extract_ticket|decompose_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key",
         query: "for search",
@@ -706,7 +717,17 @@ export function validateShellPlan(plan, plannerContext) {
     };
   }
 
-  const actions = Array.isArray(plan.actions) ? plan.actions.slice(0, 3).map((action) => validateShellAction(action, plannerContext)) : [];
+  const graph = plan.graph?.nodes
+    ? validateShellGraph(plan.graph, plannerContext)
+    : null;
+  const actions = graph
+    ? graph.nodes
+        .filter((node) => node.kind === "action" && node.action)
+        .map((node) => node.action)
+        .slice(0, 5)
+    : Array.isArray(plan.actions)
+      ? plan.actions.slice(0, 5).map((action) => validateShellAction(action, plannerContext))
+      : [];
   if (!actions.length) {
     throw new Error("shell planner produced no actions");
   }
@@ -714,11 +735,72 @@ export function validateShellPlan(plan, plannerContext) {
   return {
     kind: "plan",
     actions,
-    graph: buildActionGraph(actions),
+    graph: graph ?? buildActionGraph(actions),
     confidence: Number(plan.confidence ?? 0.7),
     reason: String(plan.reason ?? "Planner produced a valid action plan."),
     strategy: plan.strategy ? String(plan.strategy) : null
   };
+}
+
+function validateShellGraph(graph, plannerContext) {
+  if (!graph || typeof graph !== "object" || !Array.isArray(graph.nodes) || !graph.nodes.length) {
+    throw new Error("shell planner produced invalid graph");
+  }
+
+  const seen = new Set();
+  const nodes = graph.nodes.slice(0, 8).map((node, index) => {
+    if (!node || typeof node !== "object") {
+      throw new Error("graph node must be an object");
+    }
+    const id = String(node.id ?? `n${index + 1}`).trim();
+    if (!id) {
+      throw new Error("graph node id is required");
+    }
+    if (seen.has(id)) {
+      throw new Error(`duplicate graph node id: ${id}`);
+    }
+    seen.add(id);
+    const kind = node.kind === "synthesize" ? "synthesize" : "action";
+    const dependsOn = Array.isArray(node.dependsOn) ? node.dependsOn.map((value) => String(value).trim()).filter(Boolean) : [];
+    const validated = {
+      id,
+      kind,
+      dependsOn,
+      status: "pending"
+    };
+    if (kind === "action") {
+      validated.action = validateShellAction(node.action, plannerContext);
+      validated.type = validated.action.type;
+    } else {
+      validated.type = "synthesize";
+    }
+    return validated;
+  });
+
+  for (const node of nodes) {
+    for (const depId of node.dependsOn) {
+      if (!seen.has(depId)) {
+        throw new Error(`graph node ${node.id} depends on unknown node ${depId}`);
+      }
+    }
+  }
+
+  if (!nodes.some((node) => node.kind === "action")) {
+    throw new Error("graph has no executable action nodes");
+  }
+
+  if (!nodes.some((node) => node.kind === "synthesize")) {
+    const actionIds = nodes.filter((node) => node.kind === "action").map((node) => node.id);
+    nodes.push({
+      id: `n${nodes.length + 1}`,
+      kind: "synthesize",
+      type: "synthesize",
+      dependsOn: actionIds,
+      status: "pending"
+    });
+  }
+
+  return { nodes };
 }
 
 function shouldAutoNarratePlan(actions, options) {
@@ -1609,6 +1691,7 @@ function buildActionGraph(actions) {
     }
     const node = {
       id,
+      kind: "action",
       type: action.type,
       action,
       dependsOn: Array.from(dependsOn),
@@ -1618,6 +1701,15 @@ function buildActionGraph(actions) {
     previousNodeId = id;
     if (action.type === "sync") lastSyncNodeId = id;
     if (isMutatingAction(action)) lastMutatingNodeId = id;
+  }
+  if (nodes.length) {
+    nodes.push({
+      id: `n${nodes.length + 1}`,
+      kind: "synthesize",
+      type: "synthesize",
+      dependsOn: nodes.map((node) => node.id),
+      status: "pending"
+    });
   }
   return { nodes };
 }
@@ -1638,19 +1730,48 @@ async function executeActionGraph(graph, options) {
     if (!ready.length) {
       break;
     }
-    for (const node of ready) {
-      node.status = "running";
-      node.execution = await executeShellAction(node.action, options);
-      node.status = node.execution.ok ? "ok" : "failed";
-      executions.push(node.execution);
-      if (!node.execution.ok) {
-        for (const waiting of nodeMap.values()) {
-          if (waiting.status === "pending" && waiting.dependsOn.includes(node.id)) {
-            waiting.status = "blocked";
-          }
+    const readyActions = ready.filter((node) => node.kind !== "synthesize");
+    const readySynthesis = ready.filter((node) => node.kind === "synthesize");
+    const parallelReads = readyActions.filter((node) => !isMutatingAction(node.action));
+    const sequentialWrites = readyActions.filter((node) => isMutatingAction(node.action));
+
+    if (parallelReads.length) {
+      for (const node of parallelReads) {
+        node.status = "running";
+      }
+      const batchResults = await Promise.all(parallelReads.map(async (node) => ({
+        node,
+        execution: await executeShellAction(node.action, options)
+      })));
+      for (const item of batchResults) {
+        const recovered = await recoverGraphNode(item, options);
+        item.node.execution = recovered;
+        item.node.status = recovered.ok ? "ok" : "failed";
+        executions.push(recovered);
+        if (!recovered.ok) {
+          blockDependentGraphNodes(nodeMap, item.node.id);
+          return { nodes: Array.from(nodeMap.values()), executions };
         }
+      }
+    }
+
+    for (const node of sequentialWrites) {
+      node.status = "running";
+      const execution = await recoverGraphNode({
+        node,
+        execution: await executeShellAction(node.action, options)
+      }, options);
+      node.execution = execution;
+      node.status = execution.ok ? "ok" : "failed";
+      executions.push(execution);
+      if (!execution.ok) {
+        blockDependentGraphNodes(nodeMap, node.id);
         return { nodes: Array.from(nodeMap.values()), executions };
       }
+    }
+
+    for (const node of readySynthesis) {
+      node.status = "ok";
     }
   }
   return { nodes: Array.from(nodeMap.values()), executions };
@@ -1663,6 +1784,38 @@ function renderActionGraph(graph) {
     const deps = node.dependsOn?.length ? ` <- ${node.dependsOn.join(", ")}` : "";
     return `${node.id}: ${node.type}${deps}`;
   }).join("\n");
+}
+
+function blockDependentGraphNodes(nodeMap, failedNodeId) {
+  for (const waiting of nodeMap.values()) {
+    if (waiting.status === "pending" && waiting.dependsOn.includes(failedNodeId)) {
+      waiting.status = "blocked";
+    }
+  }
+}
+
+async function recoverGraphNode({ node, execution }, options) {
+  if (execution.ok || options.noAi) {
+    return execution;
+  }
+  const planner = options.planners?.planners?.[0];
+  if (!planner) {
+    return execution;
+  }
+  const correctedAction = await attemptActionCorrection({
+    failedAction: node.action,
+    error: { message: execution.stderr || "Unknown error" },
+    options: { ...options, planner },
+    history: options.history
+  }).catch(() => null);
+  if (!correctedAction) {
+    return execution;
+  }
+  const correctedExecution = await executeShellAction(correctedAction, options);
+  correctedExecution.correctedFrom = node.action;
+  node.action = correctedAction;
+  node.type = correctedAction.type;
+  return correctedExecution;
 }
 
 function renderPlannerLine(planner) {

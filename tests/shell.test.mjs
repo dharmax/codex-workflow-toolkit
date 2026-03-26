@@ -269,6 +269,9 @@ const plannerContext = {
       google: { available: true }
     }
   },
+  knowledge: {
+    tasks: ["review", "classification", "summarization"]
+  },
   summary: {
     fileCount: 10,
     activeTickets: [{ id: "TKT-001", title: "Example", lane: "Todo" }],
@@ -285,7 +288,8 @@ test("heuristic shell planner expands sync plus review requests into multiple ac
   ]);
   assert.deepEqual(plan.graph.nodes.map((node) => ({ id: node.id, type: node.type, dependsOn: node.dependsOn })), [
     { id: "n1", type: "sync", dependsOn: [] },
-    { id: "n2", type: "run_review", dependsOn: ["n1"] }
+    { id: "n2", type: "run_review", dependsOn: ["n1"] },
+    { id: "n3", type: "synthesize", dependsOn: ["n1", "n2"] }
   ]);
 });
 
@@ -452,7 +456,30 @@ test("validateShellPlan builds an action graph for agent plans", () => {
   assert.equal(valid.kind, "plan");
   assert.deepEqual(valid.graph.nodes.map((node) => ({ type: node.type, dependsOn: node.dependsOn })), [
     { type: "sync", dependsOn: [] },
-    { type: "search", dependsOn: ["n1"] }
+    { type: "search", dependsOn: ["n1"] },
+    { type: "synthesize", dependsOn: ["n1", "n2"] }
+  ]);
+});
+
+test("validateShellPlan accepts planner-supplied action graphs", () => {
+  const valid = validateShellPlan({
+    kind: "plan",
+    graph: {
+      nodes: [
+        { id: "lookup", kind: "action", action: { type: "provider_status" } },
+        { id: "route", kind: "action", dependsOn: ["lookup"], action: { type: "route", taskClass: "review" } }
+      ]
+    }
+  }, plannerContext);
+  assert.equal(valid.kind, "plan");
+  assert.deepEqual(valid.actions, [
+    { type: "provider_status" },
+    { type: "route", taskClass: "review" }
+  ]);
+  assert.deepEqual(valid.graph.nodes.map((node) => ({ id: node.id, type: node.type, dependsOn: node.dependsOn })), [
+    { id: "lookup", type: "provider_status", dependsOn: [] },
+    { id: "route", type: "route", dependsOn: ["lookup"] },
+    { id: "n3", type: "synthesize", dependsOn: ["lookup", "route"] }
   ]);
 });
 
