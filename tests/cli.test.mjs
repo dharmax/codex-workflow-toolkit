@@ -154,6 +154,15 @@ test("installer supports opting out of the default initial sync", async () => {
   }
 });
 
+test("version reports the installed package version and toolkit root", async () => {
+  const result = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "version", "--json"], { cwd: repoRoot });
+  assert.equal(result.code, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.name, "@dharmax/ai-workflow");
+  assert.equal(payload.version, "0.1.0");
+  assert.equal(payload.toolkitRoot, repoRoot);
+});
+
 test("web tutorial server serves tutorial html and mode-aware tutorial api", async () => {
   const child = spawn(process.execPath, [
     path.join(repoRoot, "cli", "ai-workflow.mjs"),

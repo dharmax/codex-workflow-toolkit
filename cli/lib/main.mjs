@@ -31,6 +31,7 @@ const HELP = `Usage:
   ai-workflow init [options]
   ai-workflow install [--project <path>]
   ai-workflow doctor [--json]
+  ai-workflow version [--json]
   ai-workflow audit architecture [--json]
   ai-workflow set-ollama-hw [options]
   ai-workflow set-provider-key <provider-id> [--global]
@@ -87,6 +88,8 @@ export async function main(argv) {
     case "doctor":
       await runDoctor({ root: process.cwd(), json: rest.includes("--json") });
       return 0;
+    case "version":
+      return handleVersion(rest);
     case "audit":
       return handleAudit(rest);
     case "set-ollama-hw":
@@ -166,6 +169,24 @@ async function handleList(rest) {
   }
 
   process.stdout.write(`${lines.join("\n")}\n`);
+  return 0;
+}
+
+async function handleVersion(rest) {
+  const args = parseArgs(rest);
+  const packageJson = JSON.parse(await readFile(path.resolve(toolkitRoot, "package.json"), "utf8"));
+  const payload = {
+    name: packageJson.name,
+    version: packageJson.version,
+    toolkitRoot
+  };
+
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return 0;
+  }
+
+  process.stdout.write(`${payload.name} ${payload.version}\n${payload.toolkitRoot}\n`);
   return 0;
 }
 
