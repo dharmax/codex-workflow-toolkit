@@ -1,6 +1,9 @@
 import { compactWhitespace } from "./markdown-utils.mjs";
 import { parseKanbanDocument } from "./kanban-edit-utils.mjs";
 
+const TICKET_ID_RE = /\b([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)\b/;
+const TICKET_ID_MARKUP_RE = /\*\*[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\*\*|\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\b/;
+
 export function parseKanban(markdown) {
   const document = parseKanbanDocument(markdown);
   const sections = document.sections.map((section) => ({
@@ -12,7 +15,7 @@ export function parseKanban(markdown) {
   for (const section of document.sections) {
     for (const ticket of section.tickets) {
       const lead = parseTaskLead(ticket.lines[0] ?? "");
-      const title = compactWhitespace(ticket.heading.replace(/\b[A-Z][A-Z0-9]+-\d+\b/, "").replace(/^[-:]\s*/, ""));
+      const title = compactWhitespace(ticket.heading.replace(TICKET_ID_MARKUP_RE, "").replace(/^[-:]\s*/, ""));
       tickets.push({
         id: ticket.id,
         title: title || ticket.heading,
@@ -46,7 +49,7 @@ export function renderTicket(ticket) {
 }
 
 function extractTicketId(heading) {
-  const match = heading.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+  const match = heading.match(TICKET_ID_RE);
   return match ? match[1] : null;
 }
 

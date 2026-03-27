@@ -7,6 +7,7 @@ import { deriveCandidateFromNote, reviewCandidates } from "./lifecycle.mjs";
 import { buildProjectSummary, buildSmartProjectStatus, createSearchDocumentsForEntities, importLegacyProjections, writeProjectProjections } from "./projections.mjs";
 import { auditArchitecture } from "./critic.mjs";
 import { SEMANTICS } from "../lib/registry.mjs";
+import { evaluateReadiness } from "./readiness-evaluator.mjs";
 
 export async function syncProject({ projectRoot = process.cwd(), writeProjections = false } = {}) {
   const store = await openWorkflowStore({ projectRoot });
@@ -163,6 +164,10 @@ export async function getSmartProjectStatus({ projectRoot = process.cwd() } = {}
 
 export async function getProjectMetrics({ projectRoot = process.cwd() } = {}) {
   return withWorkflowStore(projectRoot, async (store) => store.getMetricsSummary());
+}
+
+export async function evaluateProjectReadiness({ projectRoot = process.cwd(), request } = {}) {
+  return withWorkflowStore(projectRoot, async (store) => evaluateReadiness(store, request));
 }
 
 export async function recordMetric({ projectRoot = process.cwd(), metric }) {

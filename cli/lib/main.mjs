@@ -18,11 +18,12 @@ import { routeTask } from "../../core/services/router.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
 import { refreshProviderQuotaState } from "../../core/services/providers.mjs";
 import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection } from "../../core/services/projections.mjs";
-import { addManualNote, createTicket, getProjectMetrics, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { addManualNote, createTicket, evaluateProjectReadiness, getProjectMetrics, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { ingestArtifact } from "../../core/services/orchestrator.mjs";
 import { assertSafeRepairTarget, getToolkitRoot as getOperatingToolkitRoot, resolveOperatingContext } from "../../core/lib/operating-context.mjs";
 import { readLatestRunArtifact } from "../../core/lib/run-artifacts.mjs";
+import { resolveHostRequest } from "../../core/services/host-resolver.mjs";
 
 const toolkitRoot = getToolkitRoot();
 const execFileAsync = promisify(execFile);
@@ -39,6 +40,7 @@ const HELP = `Usage:
   ai-workflow ingest <file> [--json]
   ai-workflow consult
   ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]
+  ai-workflow ask [request...] [--mode <default|tool-dev>] [--root <path>] [--evidence-root <path>] [--json]
   ai-workflow sync [--write-projections] [--json]
   ai-workflow reprofile [--json]
   ai-workflow list [--json]
@@ -48,6 +50,7 @@ const HELP = `Usage:
   ai-workflow update <codelet> <file>
   ai-workflow remove <codelet>
   ai-workflow project summary [--json]
+  ai-workflow project readiness --goal <goal-type> --question <text> [--mode <default|tool-dev>] [--root <path>] [--evidence-root <path>] [--json]
   ai-workflow project search <text> [--json]
   ai-workflow project ticket create --id <id> --title <title> [--lane <lane>] [--epic <epic-id>] [--summary <text>] [--json]
   ai-workflow project note add --type <NOTE|TODO|FIXME|HACK|BUG|RISK> --body <text> [--file <path>] [--line <n>] [--symbol <name>] [--json]
@@ -104,6 +107,8 @@ export async function main(argv) {
       return handleConsult(rest);
     case "shell":
       return handleShell(rest, { cliPath: path.resolve(toolkitRoot, "cli", "ai-workflow.mjs") });
+    case "ask":
+      return handleAsk(rest);
     case "sync":
       return handleSync(rest);
     case "reprofile":
@@ -215,6 +220,55 @@ async function handleSync(rest) {
     lines.push(`Wrote projections: ${result.projections.kanbanPath}, ${result.projections.epicsPath}`);
   }
   process.stdout.write(`${lines.join("\n")}\n`);
+  return 0;
+}
+
+async function handleAsk(rest) {
+  const args = parseArgs(rest);
+  const text = String(args._.join(" ") ?? "").trim();
+  if (!text) {
+    printAndExit("Usage: ai-workflow ask [request...] [--mode <default|tool-dev>] [--root <path>] [--evidence-root <path>] [--json]", 1);
+  }
+
+  const context = await resolveOperatingContext({
+    cwd: process.cwd(),
+    mode: args.mode ? String(args.mode) : null,
+    root: args.root ? String(args.root) : null,
+    evidenceRoot: args["evidence-root"] ? String(args["evidence-root"]) : null,
+    allowExternalTarget: true
+  });
+  const projectRoot = context.mode === "tool-dev" ? context.evidenceRoot : context.repairTargetRoot;
+  const response = await resolveHostRequest({
+    projectRoot,
+    text,
+    continuationState: null,
+    host: {
+      surface: "cli-host",
+      capabilities: {
+        supports_json: true,
+        supports_streaming: false,
+        supports_followups: true
+      }
+    }
+  });
+
+  const payload = {
+    ...response,
+    meta: {
+      ...(response.meta ?? {}),
+      mode: context.mode,
+      repair_target_root: context.repairTargetRoot,
+      evidence_root: context.evidenceRoot,
+      operational_root: projectRoot
+    }
+  };
+
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    return 0;
+  }
+
+  process.stdout.write(formatAskResponse(payload));
   return 0;
 }
 
@@ -350,6 +404,67 @@ async function handleProject(rest) {
     return 0;
   }
 
+  if (subcommand === "readiness") {
+    const goalType = String(args.goal ?? "beta_readiness");
+    const question = String(args.question ?? args._.join(" ") ?? "").trim() || `Is this project ready for ${goalType.replace(/_/g, " ")}?`;
+    const context = await resolveOperatingContext({
+      cwd: process.cwd(),
+      mode: args.mode ? String(args.mode) : null,
+      root: args.root ? String(args.root) : null,
+      evidenceRoot: args["evidence-root"] ? String(args["evidence-root"]) : null,
+      allowExternalTarget: Boolean(args["allow-external-target"])
+    });
+    assertSafeRepairTarget(context, { action: "readiness evaluation" });
+    const projectRoot = context.mode === "tool-dev" ? context.evidenceRoot : context.repairTargetRoot;
+    const response = await evaluateProjectReadiness({
+      projectRoot,
+      request: {
+        protocol_version: "1.0",
+        operation: "evaluate_readiness",
+        goal: {
+          type: goalType,
+          target: "project",
+          question
+        },
+        constraints: {
+          allow_mutation: false,
+          context_budget: "medium",
+          time_budget_ms: 15000,
+          guideline_mode: "advisory"
+        },
+        inputs: {
+          tickets_scope: "active_and_blocked",
+          artifact_scope: "goal_relevant_only",
+          verification_scope: "tests_metrics_docs"
+        },
+        host: {
+          surface: context.mode === "tool-dev" ? "host" : "cli",
+          capabilities: {
+            supports_json: true,
+            supports_streaming: false,
+            supports_followups: true
+          }
+        },
+        continuation_state: null
+      }
+    });
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify({
+        ...response,
+        meta: {
+          ...(response.meta ?? {}),
+          mode: context.mode,
+          repair_target_root: context.repairTargetRoot,
+          evidence_root: context.evidenceRoot,
+          operational_root: projectRoot
+        }
+      }, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(formatReadinessResponse(response));
+    return 0;
+  }
+
   if (subcommand === "search") {
     const query = args._.join(" ");
     if (!query) {
@@ -462,7 +577,7 @@ async function handleProject(rest) {
     return 0;
   }
 
-  printAndExit("Usage: ai-workflow project <summary|search|ticket|note|review-candidates|render|import-projections> ...", 1);
+  printAndExit("Usage: ai-workflow project <summary|readiness|search|ticket|note|review-candidates|render|import-projections> ...", 1);
 }
 
 async function handleRoute(rest) {
@@ -1114,6 +1229,118 @@ function truncateTitle(text, limit = 72) {
   const value = String(text ?? "").replace(/\s+/g, " ").trim();
   if (value.length <= limit) return value || "Toolkit observation";
   return `${value.slice(0, Math.max(0, limit - 3)).trim()}...`;
+}
+
+function formatReadinessResponse(response) {
+  const lines = [
+    `${response.summary}`,
+    `Status: ${response.status}`,
+    `Verdict: ${response.opinion.verdict} (${Math.round(response.opinion.confidence * 100)}% confidence)`
+  ];
+  if (response.evidence?.length) {
+    lines.push("");
+    lines.push("Evidence basis:");
+    for (const item of response.evidence.slice(0, 3)) {
+      const freshness = item.freshness?.status && item.freshness.status !== "unknown"
+        ? ` | freshness: ${item.freshness.status}`
+        : "";
+      lines.push(`- [${item.source}] ${item.ref}: ${item.claim}${freshness}`);
+    }
+  }
+  if (response.blockers?.length) {
+    lines.push("");
+    lines.push("Top blockers:");
+    for (const blocker of response.blockers.slice(0, 4)) {
+      lines.push(`- [${blocker.severity}] ${blocker.title}: ${blocker.reason}`);
+    }
+  }
+  if (response.gaps?.length) {
+    lines.push("");
+    lines.push("Evidence gaps:");
+    for (const gap of response.gaps.slice(0, 4)) {
+      lines.push(`- ${gap}`);
+    }
+  }
+  if (response.recommended_next_actions?.length) {
+    lines.push("");
+    lines.push("Next checks:");
+    for (const item of response.recommended_next_actions.slice(0, 4)) {
+      lines.push(`- ${item}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatAskResponse(response) {
+  if (response.response_type === "composite" && response.payload?.project_status && response.payload?.readiness) {
+    return formatCombinedAskResponse(response.payload);
+  }
+
+  if (response.response_type === "protocol" && response.payload?.operation === "evaluate_readiness") {
+    return formatAssistantReadinessResponse(response.payload);
+  }
+
+  const lines = [];
+  if (response.payload?.answer) {
+    lines.push(response.payload.answer);
+  } else if (response.payload?.summary) {
+    lines.push(response.payload.summary);
+  }
+  if (Array.isArray(response.payload?.recommended_next_actions) && response.payload.recommended_next_actions.length) {
+    lines.push("");
+    lines.push("Next:");
+    for (const item of response.payload.recommended_next_actions.slice(0, 3)) {
+      lines.push(`- ${item}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatCombinedAskResponse(payload) {
+  const lines = [];
+  const status = payload?.project_status ?? {};
+  const focus = Array.isArray(status.focus_tickets) ? status.focus_tickets : [];
+  lines.push(`Project status: ${Number(status.active_ticket_count ?? 0)} active tickets, ${Number(status.candidate_count ?? 0)} candidates, ${Number(status.note_count ?? 0)} notes.`);
+  if (focus.length) {
+    lines.push(`Current focus: ${focus.slice(0, 3).map((ticket) => `${ticket.id} (${ticket.lane})`).join(", ")}.`);
+  }
+  lines.push("");
+  lines.push(formatAssistantReadinessResponse(payload.readiness).trimEnd());
+  return `${lines.join("\n")}\n`;
+}
+
+function formatAssistantReadinessResponse(payload) {
+  const verdict = String(payload?.opinion?.verdict ?? "unknown");
+  const confidence = Number(payload?.opinion?.confidence ?? 0);
+  const blockers = Array.isArray(payload?.blockers) ? payload.blockers : [];
+  const nextChecks = Array.isArray(payload?.recommended_next_actions) ? payload.recommended_next_actions : [];
+  const lines = [];
+  lines.push(verdict === "ready"
+    ? `Beta readiness: ready (${Math.round(confidence * 100)}% confidence).`
+    : `Beta readiness: not ready yet (${Math.round(confidence * 100)}% confidence).`);
+  if (blockers.length) {
+    lines.push(`Main blockers: ${blockers.length} total${formatBlockerSeveritySummary(blockers)}.`);
+    for (const blocker of blockers.slice(0, 3)) {
+      lines.push(`- ${String(blocker.title ?? blocker.reason ?? "").trim()}`);
+    }
+  }
+  if (nextChecks.length) {
+    lines.push(`Next step: ${String(nextChecks[0])}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatBlockerSeveritySummary(blockers) {
+  const counts = blockers.reduce((acc, blocker) => {
+    const key = String(blocker?.severity ?? "").toLowerCase();
+    if (key) acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
+  const parts = [];
+  if (counts.high) parts.push(`${counts.high} high`);
+  if (counts.medium) parts.push(`${counts.medium} medium`);
+  if (counts.low) parts.push(`${counts.low} low`);
+  return parts.length ? `, including ${parts.join(", ")}` : "";
 }
 
 function normalizeModeValue(value) {

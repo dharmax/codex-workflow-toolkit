@@ -250,6 +250,24 @@ test("CLI sync, summary, ticket creation, note creation, route, and telegram pre
     const summaryPayload = JSON.parse(summary.stdout);
     assert.equal(summaryPayload.fileCount >= 8, true);
 
+    const readiness = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "readiness",
+      "--goal",
+      "beta_readiness",
+      "--question",
+      "Is this ready for beta testing?",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(readiness.code, 0, readiness.stderr || readiness.stdout);
+    const readinessPayload = JSON.parse(readiness.stdout);
+    assert.equal(readinessPayload.protocol_version, "1.0");
+    assert.equal(readinessPayload.operation, "evaluate_readiness");
+    assert.equal(["complete", "insufficient_evidence"].includes(readinessPayload.status), true);
+    assert.equal(Array.isArray(readinessPayload.blockers), true);
+    assert.equal(Array.isArray(readinessPayload.gaps), true);
+
     const ticket = await runNode([
       path.join(repoRoot, "cli", "ai-workflow.mjs"),
       "project",
@@ -292,6 +310,43 @@ test("CLI sync, summary, ticket creation, note creation, route, and telegram pre
     assert.equal(telegram.code, 0, telegram.stderr || telegram.stdout);
     const telegramPayload = JSON.parse(telegram.stdout);
     assert.match(telegramPayload.text, /AI Workflow Status/);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("CLI project readiness supports tool-dev evidence-root mode", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-cli-readiness-tool-dev-"));
+  const fixtureRoot = path.join(repoRoot, "tests", "fixtures", "workflow-repo");
+
+  try {
+    await cp(fixtureRoot, targetRoot, { recursive: true });
+
+    const sync = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: targetRoot });
+    assert.equal(sync.code, 0, sync.stderr || sync.stdout);
+
+    const readiness = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "readiness",
+      "--mode",
+      "tool-dev",
+      "--evidence-root",
+      targetRoot,
+      "--goal",
+      "beta_readiness",
+      "--question",
+      "Is this ready for beta testing?",
+      "--json"
+    ], { cwd: repoRoot });
+
+    assert.equal(readiness.code, 0, readiness.stderr || readiness.stdout);
+    const payload = JSON.parse(readiness.stdout);
+    assert.equal(payload.operation, "evaluate_readiness");
+    assert.equal(payload.meta.mode, "tool-dev");
+    assert.equal(payload.meta.evidence_root, targetRoot);
+    assert.equal(payload.meta.operational_root, targetRoot);
+    assert.equal(Array.isArray(payload.blockers), true);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

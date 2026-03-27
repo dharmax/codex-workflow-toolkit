@@ -10,9 +10,9 @@ import { getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
 import { listProjectCodelets } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
 import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
-import { decomposeTicket, ideateFeature, sweepBugs } from "../../core/services/orchestrator.mjs";
+import { decomposeTicket, executeTicket, ideateFeature, sweepBugs } from "../../core/services/orchestrator.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
-import { addManualNote, createTicket, getProjectMetrics, getProjectSummary, getSmartProjectStatus, recordMetric, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { addManualNote, createTicket, evaluateProjectReadiness, getProjectMetrics, getProjectSummary, getSmartProjectStatus, recordMetric, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTicketEntity } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/lib/cli.mjs";
@@ -22,8 +22,11 @@ import { configureOllamaHardware } from "./ollama-hw.mjs";
 
 const execFileAsync = promisify(execFile);
 const STREAMED_STDIO = "__STREAMED_STDIO__";
+const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
+const CONTINUATION_REQUEST_RE = /^(?:continue|go deeper|branch on that|why did that fail\??|what failed\??|keep going)$/i;
+const TICKET_ID_PATTERN = "[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+";
 
-const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw", "ideate_feature", "sweep_bugs", "ingest_artifact"]);
+const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
 const NOTE_TYPES = ["NOTE", "TODO", "FIXME", "HACK", "BUG", "RISK"];
 const KNOWN_TASK_CLASSES = [
   "summarization",
@@ -70,6 +73,8 @@ export async function handleShell(rest, { cliPath } = {}) {
 
   const prompt = args._.join(" ").trim();
   if (prompt) {
+    await syncProject({ projectRoot: root, writeProjections: true });
+    options.plannerContext = await buildShellContext(root);
     const result = await runShellTurn(prompt, options);
     return emitShellResult(result, options);
   }
@@ -104,11 +109,13 @@ export async function buildShellContext(root = process.cwd()) {
     getSmartProjectStatus({ projectRoot: root }).catch(() => "Status unavailable.")
   ]);
 
-  const [mission, kanban, gemini, guidelines] = await Promise.all([
+  const [mission, kanbanEntry, gemini, guidelines] = await Promise.all([
     readFileIfExists(path.resolve(root, "MISSION.md")),
-    readFirstExisting([
+    readFirstExistingEntry([
       path.resolve(root, ".gemini", "KANBAN.md"),
       path.resolve(root, ".gemini", "kanban.md"),
+      path.resolve(root, "docs", "KANBAN.md"),
+      path.resolve(root, "docs", "kanban.md"),
       path.resolve(root, "KANBAN.md"),
       path.resolve(root, "kanban.md")
     ]),
@@ -133,7 +140,8 @@ export async function buildShellContext(root = process.cwd()) {
     providerState,
     knowledge: providerState.knowledge,
     mission,
-    kanban,
+    kanban: kanbanEntry?.content ?? null,
+    kanbanPath: kanbanEntry?.path ? path.relative(root, kanbanEntry.path) : null,
     gemini,
     guidelines
   };
@@ -153,6 +161,16 @@ async function readFirstExisting(filePaths) {
     const content = await readFileIfExists(filePath);
     if (content) {
       return content;
+    }
+  }
+  return null;
+}
+
+async function readFirstExistingEntry(filePaths) {
+  for (const filePath of filePaths) {
+    const content = await readFileIfExists(filePath);
+    if (content) {
+      return { path: filePath, content };
     }
   }
   return null;
@@ -224,6 +242,12 @@ function mapRouteCandidateToPlanner(candidate, providers) {
 }
 
 export async function planShellRequest(inputText, options) {
+  const intent = analyzeShellIntent(inputText, options.plannerContext);
+  const routing = routeShellIntent(intent);
+  if (routing.mode === "staged-core") {
+    return planSingleRequest(inputText, options);
+  }
+
   const segments = inputText.split(/\s+then\s+|\s+and\s+/i);
   if (segments.length > 1) {
     const plans = await Promise.all(segments.map(s => planSingleRequest(s.trim(), options)));
@@ -272,10 +296,15 @@ export async function planShellRequest(inputText, options) {
 }
 
 async function planSingleRequest(inputText, options) {
-  const heuristic = planShellRequestHeuristically(inputText, options.plannerContext);
+  const intent = analyzeShellIntent(inputText, options.plannerContext);
+  const routing = routeShellIntent(intent);
+  const heuristic = planShellRequestHeuristically(inputText, options.plannerContext, {
+    activeGraphState: options.activeGraphState ?? null
+  });
   const useHeuristicOnly = options.noAi || !options.planners.planners.length;
+  const preferAiPlanner = routing.mode === "staged-core" && !useHeuristicOnly;
 
-  if (useHeuristicOnly || heuristic.confidence >= 0.92) {
+  if (!preferAiPlanner && (useHeuristicOnly || heuristic.confidence >= 0.92)) {
     return {
       ...heuristic,
       planner: {
@@ -314,7 +343,7 @@ async function planSingleRequest(inputText, options) {
   return {
     ...heuristic,
     planner: {
-      mode: "heuristic-fallback",
+      mode: preferAiPlanner ? "ai-fallback-to-heuristic" : "heuristic-fallback",
       reason: errors.join("; ")
     }
   };
@@ -331,17 +360,83 @@ function shouldSurfacePlannerFailure(inputText, heuristic) {
   return false;
 }
 
-export function planShellRequestHeuristically(inputText, plannerContext) {
+export function planShellRequestHeuristically(inputText, plannerContext, options = {}) {
   const text = String(inputText ?? "").trim();
   const lower = text.toLowerCase();
   const normalizedQuestion = normalizeConversationText(text);
+  const activeGraphState = options.activeGraphState ?? null;
+  const implicitTicketId = resolveImplicitTicketId(plannerContext, text);
+  const intent = analyzeShellIntent(text, plannerContext);
+  const routing = routeShellIntent(intent);
+  const asksCurrentWork = /\b(working on right now|working on now|what are we working on|what were working on|current work|current focus)\b/.test(normalizedQuestion);
+  const asksRelatedArtifacts = /\b(artifact|artifacts|relates to it|related to it|relate to it)\b/.test(normalizedQuestion);
+  const readinessGoal = extractReadinessGoal(text);
+  const asksProjectStatus = /\b(project status|status update|whats the project status|what is the project status|hows the project|how is the project)\b/.test(normalizedQuestion);
+  const asksReadiness = Boolean(readinessGoal);
+  const wantsCombinedStatusReadiness = asksProjectStatus && asksReadiness;
+  const readinessContinuationPlan = buildReadinessContinuationPlan({
+    text,
+    plannerContext,
+    activeGraphState
+  });
 
   if (!text) {
     return replyPlan("Tell me what you want to do. Example: `sync and show review hotspots`.");
   }
 
+  if (CONTINUATION_REQUEST_RE.test(text) && activeGraphState?.graph?.nodes?.length) {
+    return replyPlan([
+      "The last graph has already been executed.",
+      renderContinuationState(activeGraphState),
+      "If you want another pass, ask for the next concrete step or specify what to branch on."
+    ].join("\n\n"), 0.82, "Continuation request grounded in prior graph state.");
+  }
+
   if (["help", "/help", "what can you do", "commands"].includes(normalizedQuestion)) {
     return replyPlan(renderShellHelp(plannerContext));
+  }
+
+  if (readinessContinuationPlan) {
+    return readinessContinuationPlan;
+  }
+
+  if (wantsCombinedStatusReadiness) {
+    return {
+      kind: "plan",
+      actions: [
+        { type: "project_summary" },
+        { type: "evaluate_readiness", goalType: readinessGoal.type, question: readinessGoal.question }
+      ],
+      graph: buildActionGraph([
+        { type: "project_summary" },
+        { type: "evaluate_readiness", goalType: readinessGoal.type, question: readinessGoal.question }
+      ]),
+      confidence: 0.98,
+      reason: "Combined project-status and readiness request routed to summary plus shared readiness evaluation.",
+      planner: {
+        mode: "heuristic",
+        reason: "Combined status/readiness request."
+      },
+      presentation: "assistant-first"
+    };
+  }
+
+  if (readinessGoal && !intent.requestedMutations.executeCurrent && !intent.requestedMutations.prioritizeRemaining && !intent.requestedMutations.resolveNeededForGoal) {
+    return {
+      ...actionPlan([{
+      type: "evaluate_readiness",
+      goalType: readinessGoal.type,
+      question: readinessGoal.question
+    }], 0.97, "Readiness judgment request routed to the shared readiness evaluator."),
+      presentation: "assistant-first"
+    };
+  }
+
+  if (routing.mode === "staged-core") {
+    const stagedPlan = buildGoalDirectedShellPlan(intent, plannerContext);
+    if (stagedPlan) {
+      return stagedPlan;
+    }
   }
 
   const contextualReply = buildContextualShellReply(text, plannerContext);
@@ -360,6 +455,29 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
 
   if (/^(status|summary|project summary|show status|show tickets|list tickets)$/i.test(text)) {
     return actionPlan([{ type: "project_summary" }], 0.98, "Explicit summary/status/tickets request.");
+  }
+
+  if ((/\b(explain|describe|summarize|detail|details)\b/.test(lower) || /\bwhat functionality\b/.test(lower))
+    && /\bticket\b/.test(lower)
+    && implicitTicketId) {
+    const actions = hasKnownCodelet(plannerContext, "context-pack")
+      ? [{ type: "run_codelet", codeletId: "context-pack", args: buildTicketContextPackArgs(plannerContext, implicitTicketId) }]
+      : [{ type: "extract_ticket", ticketId: implicitTicketId }];
+    return actionPlan(actions, 0.91, "Implicit ticket explanation request resolved from active ticket state.");
+  }
+
+  if (asksCurrentWork && implicitTicketId) {
+    const actions = hasKnownCodelet(plannerContext, "context-pack")
+      ? [{ type: "run_codelet", codeletId: "context-pack", args: buildTicketContextPackArgs(plannerContext, implicitTicketId) }]
+      : [{ type: "extract_ticket", ticketId: implicitTicketId }];
+    return actionPlan(actions, 0.93, "Current work request resolved from active in-progress ticket.");
+  }
+
+  if (/\b(complete|finish|resolve|do|handle)\b/.test(lower)
+    && /\b(ticket|issue)\b/.test(lower)
+    && /\b(in progress|in-progress|current)\b/.test(lower)
+    && implicitTicketId) {
+    return actionPlan([{ type: "execute_ticket", ticketId: implicitTicketId, apply: true }], 0.94, "Implicit execute current in-progress ticket request.");
   }
 
   if (/^(metrics|stats|usage)$/i.test(text)) {
@@ -449,13 +567,22 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     return actionPlan([{ type: "search", query: searchMatch[1].trim() }], 0.95, "Explicit search request.");
   }
 
-  const ticketMatch = text.match(/(?:extract\s+ticket|show\s+ticket|ticket|decompose\s+ticket|break\s+down)\s+([A-Z]+-\d+)/i);
+  const ticketMatch = text.match(new RegExp(`(?:extract\\s+ticket|show\\s+ticket|ticket|decompose\\s+ticket|break\\s+down)\\s+(${TICKET_ID_PATTERN})`, "i"));
   if (ticketMatch) {
     const isDecompose = /\b(?:decompose|break down|split)\b/i.test(text);
     return actionPlan([{
       type: isDecompose ? "decompose_ticket" : "extract_ticket",
       ticketId: ticketMatch[1].toUpperCase()
     }], 0.94, `Explicit ticket ${isDecompose ? "decomposition" : "extraction"} request.`);
+  }
+
+  const executeTicketMatch = text.match(new RegExp(`^(?:fix|resolve|complete|finish|execute|handle|work\\s+on|do)\\s+(?:ticket\\s+|issue\\s+)?(${TICKET_ID_PATTERN})$`, "i"));
+  if (executeTicketMatch) {
+    return actionPlan([{
+      type: "execute_ticket",
+      ticketId: executeTicketMatch[1].toUpperCase(),
+      apply: true
+    }], 0.96, "Explicit ticket execution request.");
   }
 
   const featureMatch = text.match(/^(?:add|create|new)\s+(?:new\s+)?(?:feature|epic|big task)\b\s*(?:for\s+)?(.*)$/i);
@@ -470,7 +597,7 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
     return actionPlan([{ type: "sweep_bugs" }], 0.98, "Automated bug sweeping request.");
   }
 
-  const guidelinesMatch = text.match(/(?:extract\s+guidelines|guidelines)(?:\s+for)?(?:\s+([A-Z]+-\d+))?/i);
+  const guidelinesMatch = text.match(new RegExp(`(?:extract\\s+guidelines|guidelines)(?:\\s+for)?(?:\\s+(${TICKET_ID_PATTERN}))?`, "i"));
   if (guidelinesMatch && /guideline/i.test(text)) {
     return actionPlan([{
       type: "extract_guidelines",
@@ -502,6 +629,230 @@ export function planShellRequestHeuristically(inputText, plannerContext) {
   ].join("\n"), 0.45, "No high-confidence heuristic match.");
 }
 
+function analyzeShellIntent(inputText, plannerContext = {}) {
+  const text = String(inputText ?? "").trim();
+  const normalized = normalizeConversationText(text);
+  const summary = plannerContext?.summary ?? {};
+  const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
+  const implicitTicketId = resolveImplicitTicketId(plannerContext, text);
+  const clauses = splitShellIntentClauses(text);
+  const goal = extractShellGoal(text);
+  const mentionsCurrentTicket = (/\b(in progress|in-progress|current|active)\b/.test(normalized)
+      && /\b(ticket|issue|task|bug|item|work)\b/.test(normalized))
+    || /\b(currently in flight|underway|active now|what is active now)\b/.test(normalized);
+  const mentionsRemainingTickets = /\b(rest of the tickets|remaining tickets|rest of the work|remaining work|everything else|what else|the rest)\b/.test(normalized);
+  const wantsExecuteCurrent = /\b(resolve|complete|finish|handle|work through|do|wrap up|take care of)\b/.test(normalized)
+    && mentionsCurrentTicket;
+  const wantsPrioritize = /\b(prioriti[sz]e|reprioriti[sz]e|rank|order|sort)\b/.test(normalized)
+    || mentionsRemainingTickets;
+  const isReadinessQuestion = /\b(ready|readiness)\b/.test(normalized)
+    && /\b(beta|release|handoff)\b/.test(normalized);
+  const wantsGoalResolution = !isReadinessQuestion
+    && /\b(resolve what is needed|what is needed|achieve that goal|before beta|for beta|launch readiness|make it ready|get it ready|make this ready|make the project ready)\b/.test(normalized);
+  const imperativeMatches = normalized.match(/\b(resolve|complete|finish|handle|prioriti[sz]e|reprioriti[sz]e|rank|sort|tell|explain|decide|inspect|review|work through|prepare|wrap up|take care of)\b/g) ?? [];
+  const orderingLanguage = /\b(then|after|before|according to|while|and then|the rest)\b/.test(normalized);
+  const complexity = [
+    clauses.length > 1,
+    imperativeMatches.length >= 2,
+    Boolean(goal.text),
+    orderingLanguage,
+    wantsExecuteCurrent && wantsPrioritize,
+    wantsGoalResolution
+  ].filter(Boolean).length;
+
+  return {
+    text,
+    normalized,
+    clauses,
+    implicitTicketId,
+    entities: {
+      currentTicketId: implicitTicketId,
+      activeTicketCount: activeTickets.length
+    },
+    requestedMutations: {
+      executeCurrent: wantsExecuteCurrent,
+      prioritizeRemaining: wantsPrioritize,
+      resolveNeededForGoal: wantsGoalResolution
+    },
+    ordering: {
+      preserveUserOrder: wantsExecuteCurrent && (wantsPrioritize || wantsGoalResolution),
+      explicitSequence: orderingLanguage
+    },
+    goal,
+    complexity
+  };
+}
+
+function splitShellIntentClauses(text) {
+  return String(text ?? "")
+    .split(/\b(?:and then|then|,\s+then|,\s+and\s+then|,\s+|;)\b/i)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function extractShellGoal(text) {
+  const source = String(text ?? "").trim();
+  if (!source) {
+    return { text: "", type: null, keywords: [] };
+  }
+  let goalText = "";
+  const explicitGoalMatch = source.match(/\baccording to the goal\b[\s,:-]*(.*)$/i);
+  if (explicitGoalMatch?.[1]) {
+    goalText = explicitGoalMatch[1].replace(/^(which is|that is)\s+/i, "").trim();
+  } else {
+    const betaMatch = source.match(/\b(before beta|for beta(?:[- ]testing)?|beta readiness|launch readiness|stability,? not features)\b.*$/i);
+    if (betaMatch?.[0]) {
+      goalText = betaMatch[0].trim();
+    }
+  }
+  const type = /\bbeta|launch readiness|stability\b/i.test(goalText || source)
+    ? "beta-readiness"
+    : "";
+  const keywordSource = goalText || source;
+  const keywords = Array.from(new Set(
+    normalizeConversationText(keywordSource)
+      .split(/\s+/)
+      .filter((token) => token.length >= 4)
+      .filter((token) => !new Set(["which", "according", "ticket", "tickets", "resolve", "prioritize", "goal", "needed", "achieve", "preparing", "system"]).has(token))
+  ));
+  return { text: goalText, type: type || null, keywords };
+}
+
+function routeShellIntent(intent) {
+  if (!intent?.text) {
+    return { mode: "simple-heuristic", reason: "Empty input." };
+  }
+  const wantsCurrentExecution = intent.requestedMutations.executeCurrent;
+  const wantsPrioritization = intent.requestedMutations.prioritizeRemaining;
+  const wantsGoalWork = intent.requestedMutations.resolveNeededForGoal || Boolean(intent.goal?.text);
+  if (!wantsPrioritization && !wantsGoalWork) {
+    return { mode: "simple-heuristic", reason: "Single current-ticket action request." };
+  }
+  if (intent.complexity >= 2 && (wantsCurrentExecution || wantsPrioritization || wantsGoalWork)) {
+    return { mode: "staged-core", reason: "Complex goal-directed request." };
+  }
+  return { mode: "simple-heuristic", reason: "Simple shell request." };
+}
+
+function buildGoalDirectedShellPlan(intent, plannerContext) {
+  const ticketId = intent.entities.currentTicketId;
+  const actions = [];
+  const nodes = [];
+  let previousNodeId = null;
+  const addActionNode = (action) => {
+    actions.push(action);
+    const id = `n${nodes.length + 1}`;
+    nodes.push({
+      id,
+      kind: "action",
+      type: action.type,
+      action,
+      dependsOn: previousNodeId ? [previousNodeId] : [],
+      status: "pending"
+    });
+    previousNodeId = id;
+    return id;
+  };
+
+  if (ticketId) {
+    const currentTicketAction = hasKnownCodelet(plannerContext, "context-pack")
+      ? { type: "run_codelet", codeletId: "context-pack", args: buildTicketContextPackArgs(plannerContext, ticketId) }
+      : { type: "extract_ticket", ticketId };
+    addActionNode(currentTicketAction);
+    if (intent.requestedMutations.executeCurrent) {
+      addActionNode({ type: "execute_ticket", ticketId, apply: false });
+    }
+  }
+
+  if (intent.requestedMutations.prioritizeRemaining || intent.requestedMutations.resolveNeededForGoal) {
+    addActionNode({ type: "list_tickets" });
+  }
+
+  if (!actions.length) {
+    return null;
+  }
+
+  nodes.push({
+    id: `n${nodes.length + 1}`,
+    kind: "synthesize",
+    type: "synthesize",
+    dependsOn: nodes.map((node) => node.id),
+    status: "pending"
+  });
+
+  const ranked = rankTicketsAgainstGoal(plannerContext?.summary?.activeTickets, {
+    goal: intent.goal,
+    excludeId: ticketId
+  });
+  const topRanked = ranked.slice(0, 3).map((item) => `${item.id}${item.score > 0 ? ` (${item.score})` : ""}`);
+  const strategyParts = [];
+  if (intent.requestedMutations.executeCurrent && ticketId) {
+    strategyParts.push(`First, inspect and dry-run ${ticketId} so execution is grounded before any mutation.`);
+  }
+  if (intent.requestedMutations.prioritizeRemaining) {
+    strategyParts.push("Then inspect the remaining active tickets and rank them against the stated goal.");
+  }
+  if (intent.requestedMutations.resolveNeededForGoal) {
+    strategyParts.push("Finally, propose the smallest remaining work needed to reach that goal before asking to mutate board state.");
+  }
+  if (intent.goal?.text) {
+    strategyParts.push(`Goal: ${intent.goal.text}.`);
+  }
+  if (topRanked.length) {
+    strategyParts.push(`Likely remaining priorities from current metadata: ${topRanked.join(", ")}.`);
+  }
+
+  return {
+    kind: "plan",
+    actions,
+    graph: { nodes },
+    confidence: 0.96,
+    reason: "Complex goal-directed request routed through staged core planning.",
+    strategy: strategyParts.join(" "),
+    planner: {
+      mode: "staged-core",
+      reason: "Complex goal-directed request."
+    },
+    presentation: "assistant-first"
+  };
+}
+
+function rankTicketsAgainstGoal(activeTickets, { goal, excludeId } = {}) {
+  const tickets = Array.isArray(activeTickets) ? activeTickets : [];
+  const goalKeywords = new Set(goal?.keywords ?? []);
+  const betaBias = goal?.type === "beta-readiness";
+  return tickets
+    .filter((ticket) => String(ticket.id ?? "") !== String(excludeId ?? ""))
+    .map((ticket) => {
+      const lane = String(ticket.lane ?? "").toLowerCase();
+      const haystack = normalizeConversationText(`${ticket.id ?? ""} ${ticket.title ?? ""}`);
+      let score = 0;
+      if (/bugs p1|bugs p2|bugs/.test(lane)) score += 10;
+      else if (/todo/.test(lane)) score += 6;
+      else if (/in progress/.test(lane)) score += 5;
+      else if (/backlog/.test(lane)) score += 2;
+      else if (/suggestion/.test(lane)) score -= 1;
+      for (const keyword of goalKeywords) {
+        if (haystack.includes(keyword)) score += 3;
+      }
+      if (betaBias) {
+        if (/\b(beta|stab|stability|auth|invite|feedback|quota|core|ux|bug|overlay|route|routing|modal)\b/.test(haystack)) {
+          score += 4;
+        }
+        if (/\b(admin|metrics|analytics|creator|marketplace|social|audio|spatial)\b/.test(haystack)) {
+          score -= 1;
+        }
+      }
+      return {
+        id: String(ticket.id ?? ""),
+        title: String(ticket.title ?? ""),
+        lane: String(ticket.lane ?? ""),
+        score
+      };
+    })
+    .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+}
+
 export async function summarizeHistory(history) {
   if (!history.length) return { recentMemory: null, longTermMemorySummary: null };
 
@@ -517,109 +868,162 @@ export async function summarizeHistory(history) {
   return { recentMemory, longTermMemorySummary };
 }
 
-export async function planShellRequestWithAgent(inputText, options) {
-  const catalog = buildActionCatalog(options.plannerContext);
-  const { summary = {}, smartStatus, mission, kanban, gemini, guidelines } = options.plannerContext;
-  const history = options.history ?? [];
+function buildShellPlannerJsonSchema() {
+  return {
+    kind: "plan|reply|exit",
+    confidence: 0.8,
+    reason: "Your internal strategic reasoning (mandatory)",
+    strategy: "The long-term plan or next steps for the developer",
+    reply: "human-friendly message (mandatory if kind=reply, optional if kind=plan)",
+    graph: {
+      nodes: [{
+        id: "n1",
+        kind: "action|branch|assert|synthesize|replan",
+        dependsOn: ["optional-node-id"],
+        condition: {
+          node: "node-id",
+          path: "ok|classification|summary|structuredPayload.any.path",
+          equals: "optional value",
+          includes: "optional substring",
+          matches: "optional regex source",
+          exists: true
+        },
+        message: "for assert failure explanations",
+        ifTrue: [{ type: "search", query: "something" }],
+        ifFalse: [{ type: "sync" }],
+        instruction: "for replan nodes; explain how to generate the next graph fragment from prior results",
+        action: {
+          type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key"
+        }
+      }]
+    },
+    actions: [{
+      type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key",
+      query: "for search",
+      goalType: "for evaluate_readiness",
+      question: "for evaluate_readiness",
+      ticketId: "for extract_ticket/decompose_ticket/execute_ticket/extract_guidelines",
+      intent: "for ideate_feature",
+      filePath: "for ingest_artifact/add_note",
+      code: "for run_dynamic_codelet (JavaScript snippet)",
+      providerId: "for provider_connect/set_provider_key",
+      changed: true,
+      taskClass: "for route",
+      noteType: "NOTE|TODO|FIXME|HACK|BUG|RISK",
+      body: "for add_note",
+      line: 12,
+      id: "for create_ticket",
+      title: "for create_ticket",
+      lane: "optional",
+      epicId: "optional",
+      summary: "optional",
+      codeletId: "for run_codelet",
+      args: ["optional", "args"]
+    }]
+  };
+}
 
-  // Memory Strategy:
-  // 1. One interaction back (User + AI Result)
-  // 2. Summary of older history
+function buildShellPlannerRuntimeContext(plannerContext = {}, options = {}) {
+  const summary = plannerContext.summary ?? {};
+  const providers = plannerContext.providerState?.providers ?? {};
+  const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
+  const providerSummary = Object.entries(providers)
+    .filter(([, provider]) => provider?.available || provider?.configured)
+    .map(([providerId, provider]) => {
+      if (provider.local) {
+        return `${providerId}:local${provider.host ? `@${provider.host}` : ""}`;
+      }
+      return `${providerId}:${provider.configured ? "configured" : "available"}`;
+    });
+
+  const lines = [
+    `cwd: ${options.root ?? plannerContext.root ?? process.cwd()}`,
+    `project: ${path.basename(plannerContext.root ?? options.root ?? process.cwd())}`,
+    `active-ticket-count: ${activeTickets.length}`
+  ];
+  if (providerSummary.length) {
+    lines.push(`available-providers: ${providerSummary.join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function buildShellPlannerNotesLoreExtra({ recentMemory, longTermMemorySummary, activeGraphState }) {
+  const sections = [];
+  if (longTermMemorySummary) {
+    sections.push(`### Notes / Lore / Extra: Prior Interaction Summary\n${longTermMemorySummary}`);
+  }
+  if (recentMemory) {
+    sections.push(`### Notes / Lore / Extra: Recent Interaction\n${recentMemory}`);
+  }
+  if (activeGraphState) {
+    sections.push(`### Notes / Lore / Extra: Active Graph State\n${renderContinuationState(activeGraphState)}`);
+  }
+  return sections.join("\n\n");
+}
+
+export async function buildShellPlannerPrompt(inputText, options) {
+  const catalog = buildActionCatalog(options.plannerContext);
+  const history = options.history ?? [];
+  const activeGraphState = options.activeGraphState ?? null;
   const { recentMemory, longTermMemorySummary } = await summarizeHistory(history);
+  const runtimeContext = buildShellPlannerRuntimeContext(options.plannerContext, options);
+  const notesLoreExtra = buildShellPlannerNotesLoreExtra({ recentMemory, longTermMemorySummary, activeGraphState });
+  const schema = buildShellPlannerJsonSchema();
 
   const system = [
-    "You are the conversational coding assistant inside ai-workflow.",
-    "Behave like a strong engineer with tools, not like a command classifier.",
-    "Your goal is to satisfy the developer's intent with precision, initiative, and clear judgment.",
+    "You are the shell planning brain inside ai-workflow.",
+    "Behave like a strong operator that decides how to use tools, not like a chatty project summarizer.",
+    "Your first job is to infer what information is needed, then choose the smallest truthful tool graph to get it.",
     "",
-    "## Operating Style",
-    "- Start from the user's real intent, not the nearest command shape.",
-    "- If a direct answer is possible, prefer `kind=reply`.",
-    "- Use actions when they materially improve the answer or are required to carry out work.",
-    "- Ask for clarification only when it is genuinely blocking.",
-    "- Hide tool mechanics unless they matter to the user.",
-    "",
-    "## Tool Judgment",
-    "- To pull specific ticket info, use `extract_ticket` with the ID. If you don't have the ID, use `list_tickets` first.",
-    "- To ensure fresh data, use `sync` when stale state is the blocker.",
-    "- To investigate project structure, use `search` or `project_summary`.",
-    "- For direct questions, you may answer with `kind=reply` after using tools, but synthesize the answer instead of dumping raw data.",
-    "- Never invent facts. If a ticket or file is not in context, find it or say so.",
-    "",
-    "## System Philosophy",
-    "- We use a 'Database-First' architecture where the Kanban and Epics are the source of truth.",
-    "- We perform 'Surgical Strikes' using SEARCH/REPLACE blocks (in the main OS) to minimize token usage.",
-    "",
-    "## Project Foundation",
-    mission ? `### MISSION.md\n${mission}\n` : "",
-    gemini ? `### GEMINI.md\n${gemini}\n` : "",
-    kanban ? `### KANBAN.md\n${kanban}\n` : "",
-    guidelines ? `### GUIDELINES\n${guidelines}\n` : "",
-    "",
-    "## Project Current Status (Smart Summary)",
-    smartStatus || "Status unavailable.",
+    "## Operating Contract",
+    "- Convert the user request into a JSON action graph or a direct reply when the answer is purely shell-local.",
+    "- For project-state questions, prefer discovery actions before answering.",
+    "- Do not assume project facts that have not been discovered in this turn or a prior node result.",
+    "- Keep the first graph minimal, then use branch/assert/replan to go deeper from results.",
     "",
     "## Available Actions (Your Capabilities):",
     catalog,
     "",
-    "## Interaction Rules",
-    "- Vague Request: Use `kind=reply` to ask clarifying questions. Reference existing state when helpful.",
-    "- Multi-step Strategy: If a complex task is requested, use `strategy` to explain the next concrete approach, and prefer `graph.nodes` for the executable plan.",
-    "- Directives: If the user says 'go ahead', 'do it', or 'proceed', execute the next logical steps of your previously proposed strategy.",
-    "- Sound like a serious assistant. Do not sound like a router, planner, or bureaucrat.",
-    "- Prefer graph-shaped plans for multi-step work. Use `actions` only for trivial fallback plans.",
-    "- JSON only: Your output must be valid JSON matching the schema.",
+    "## Graph Contract",
+    "- Build conditional action graphs using `action`, `branch`, `assert`, `synthesize`, and `replan` nodes.",
+    "- Use `assert` to gate risky work on verification or baseline health.",
+    "- Use `branch` when later steps depend on observed results.",
+    "- Use `replan` when the next graph fragment should be generated from prior node outputs.",
+    "- Prefer graph-shaped plans over flat `actions` except for trivial fallback plans.",
+    "",
+    "## Planning Rules",
+    "- Start with the user's intent, then decide what context must be pulled.",
+    "- Pull project info only when the request makes that context necessary.",
+    "- Prefer targeted discovery like `project_summary`, `extract_ticket`, `search`, `route`, or codelets over broad context dumps.",
+    "- If the question is only about shell usage or capabilities, `kind=reply` is allowed without tool execution.",
+    "- If the answer depends on project state, use tools first unless the needed state is already present in prior node results.",
+    "- For multi-clause, goal-driven, ordered, or ambiguous requests, prefer a graph plan over a direct reply.",
+    "- Preserve the user's requested order unless observed tool results prove a blocker.",
+    "- When the user states a goal or success criterion, use it to choose discovery steps and rank remaining work.",
+    "- Do not collapse a long request into a shallow answer just because one phrase matches a simpler pattern.",
+    "- Never invent facts. If a ticket, file, or condition is unknown, discover it or say so.",
+    "- JSON only: your output must be valid JSON matching the schema.",
   ].join("\n");
 
-  const memoryBlock = [
-    longTermMemorySummary ? `### Contextual Summary (Past Interactions):\n${longTermMemorySummary}\n` : "",
-    recentMemory ? `### Recent Interaction (Last Turn):\n${recentMemory}\n` : ""
-  ].filter(Boolean).join("\n");
-
-  const prompt = [
-    memoryBlock,
+  const promptSections = [
+    "## Runtime Context",
+    runtimeContext,
+    notesLoreExtra ? `\n${notesLoreExtra}` : "",
+    "",
     "## Allowed JSON Schema:",
-    JSON.stringify({
-      kind: "plan|reply|exit",
-      confidence: 0.8,
-      reason: "Your internal strategic reasoning (mandatory)",
-      strategy: "The long-term plan or next steps for the developer",
-      reply: "human-friendly message (mandatory if kind=reply, optional if kind=plan)",
-      graph: {
-        nodes: [{
-          id: "n1",
-          kind: "action|synthesize",
-          dependsOn: ["optional-node-id"],
-          action: {
-            type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|search|extract_ticket|decompose_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key"
-          }
-        }]
-      },
-      actions: [{
-        type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|search|extract_ticket|decompose_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key",
-        query: "for search",
-        ticketId: "for extract_ticket/decompose_ticket/extract_guidelines",
-        intent: "for ideate_feature",
-        filePath: "for ingest_artifact/add_note",
-        code: "for run_dynamic_codelet (JavaScript snippet)",
-        providerId: "for provider_connect/set_provider_key",
-        changed: true,
-        taskClass: "for route",
-        noteType: "NOTE|TODO|FIXME|HACK|BUG|RISK",
-        body: "for add_note",
-        line: 12,
-        id: "for create_ticket",
-        title: "for create_ticket",
-        lane: "optional",
-        epicId: "optional",
-        summary: "optional",
-        codeletId: "for run_codelet",
-        args: ["optional", "args"]
-      }]
-    }, null, 2),
+    JSON.stringify(schema, null, 2),
     "",
     `## Current User Request:\n"${inputText}"\n\nYour Response (JSON):`
-  ].join("\n");
+  ];
+
+  return {
+    system,
+    prompt: promptSections.join("\n")
+  };
+}
+
+export async function planShellRequestWithAgent(inputText, options) {
+  const { system, prompt } = await buildShellPlannerPrompt(inputText, options);
 
   const start = Date.now();
   let completion;
@@ -743,6 +1147,10 @@ export function validateShellPlan(plan, plannerContext) {
 }
 
 function validateShellGraph(graph, plannerContext) {
+  return validateShellGraphInternal(graph, plannerContext, { fragment: false });
+}
+
+function validateShellGraphInternal(graph, plannerContext, options = {}) {
   if (!graph || typeof graph !== "object" || !Array.isArray(graph.nodes) || !graph.nodes.length) {
     throw new Error("shell planner produced invalid graph");
   }
@@ -760,17 +1168,40 @@ function validateShellGraph(graph, plannerContext) {
       throw new Error(`duplicate graph node id: ${id}`);
     }
     seen.add(id);
-    const kind = node.kind === "synthesize" ? "synthesize" : "action";
+    const kind = normalizeGraphNodeKind(node.kind);
     const dependsOn = Array.isArray(node.dependsOn) ? node.dependsOn.map((value) => String(value).trim()).filter(Boolean) : [];
     const validated = {
       id,
       kind,
       dependsOn,
-      status: "pending"
+      status: "pending",
+      failureMode: typeof node.failureMode === "string" ? node.failureMode : null
     };
+    if (node.condition !== undefined) {
+      validated.condition = validateShellCondition(node.condition);
+    }
     if (kind === "action") {
       validated.action = validateShellAction(node.action, plannerContext);
       validated.type = validated.action.type;
+    } else if (kind === "branch") {
+      validated.type = "branch";
+      validated.ifTrue = validateGraphTemplate(node.ifTrue, plannerContext);
+      validated.ifFalse = validateGraphTemplate(node.ifFalse, plannerContext);
+    } else if (kind === "assert") {
+      if (!validated.condition) {
+        throw new Error(`assert node ${id} requires condition`);
+      }
+      validated.type = "assert";
+      validated.message = String(node.message ?? "Assertion failed.").trim();
+    } else if (kind === "replan") {
+      validated.type = "replan";
+      validated.message = node.message ? String(node.message).trim() : null;
+      validated.instruction = node.instruction ? String(node.instruction).trim() : null;
+      validated.append = validateGraphTemplate(node.append ?? node.graph?.nodes ?? node.graph, plannerContext);
+      validated.maxAttempts = Math.max(1, Math.min(3, Number(node.maxAttempts ?? 1) || 1));
+      if (!validated.instruction && !validated.append.length) {
+        throw new Error(`replan node ${id} requires instruction or append graph`);
+      }
     } else {
       validated.type = "synthesize";
     }
@@ -789,8 +1220,8 @@ function validateShellGraph(graph, plannerContext) {
     throw new Error("graph has no executable action nodes");
   }
 
-  if (!nodes.some((node) => node.kind === "synthesize")) {
-    const actionIds = nodes.filter((node) => node.kind === "action").map((node) => node.id);
+  if (!options.fragment && !nodes.some((node) => node.kind === "synthesize")) {
+    const actionIds = nodes.filter((node) => node.kind !== "synthesize").map((node) => node.id);
     nodes.push({
       id: `n${nodes.length + 1}`,
       kind: "synthesize",
@@ -803,14 +1234,77 @@ function validateShellGraph(graph, plannerContext) {
   return { nodes };
 }
 
+function normalizeGraphNodeKind(kind) {
+  const normalized = String(kind ?? "action").trim().toLowerCase();
+  if (!SHELL_GRAPH_NODE_KINDS.has(normalized)) {
+    throw new Error(`unsupported graph node kind: ${kind}`);
+  }
+  return normalized;
+}
+
+function validateGraphTemplate(template, plannerContext) {
+  if (!template) {
+    return [];
+  }
+  if (!Array.isArray(template) || !template.length) {
+    throw new Error("graph fragment must be a non-empty array when provided");
+  }
+  if (template.every((item) => item && typeof item === "object" && "type" in item && !("kind" in item))) {
+    const actions = template.map((item) => validateShellAction(item, plannerContext));
+    return buildActionGraph(actions).nodes;
+  }
+  return validateShellGraphInternal({ nodes: template }, plannerContext, { fragment: true }).nodes;
+}
+
+function validateShellCondition(condition) {
+  if (typeof condition === "boolean") {
+    return condition;
+  }
+  if (!condition || typeof condition !== "object") {
+    throw new Error("graph condition must be a boolean or object");
+  }
+  if (Array.isArray(condition.all)) {
+    return { all: condition.all.map((item) => validateShellCondition(item)) };
+  }
+  if (Array.isArray(condition.any)) {
+    return { any: condition.any.map((item) => validateShellCondition(item)) };
+  }
+  if (condition.not !== undefined) {
+    return { not: validateShellCondition(condition.not) };
+  }
+
+  const nodeId = String(condition.node ?? "").trim();
+  if (!nodeId) {
+    throw new Error("graph condition leaf requires node");
+  }
+
+  const leaf = {
+    node: nodeId,
+    path: condition.path ? String(condition.path).trim() : "ok"
+  };
+  if ("equals" in condition) leaf.equals = condition.equals;
+  if ("notEquals" in condition) leaf.notEquals = condition.notEquals;
+  if ("includes" in condition) leaf.includes = String(condition.includes);
+  if ("matches" in condition) leaf.matches = String(condition.matches);
+  if ("exists" in condition) leaf.exists = Boolean(condition.exists);
+  return leaf;
+}
+
 function shouldAutoNarratePlan(actions, options) {
-  if (options.json || options.planOnly || options.yes) {
+  if (options.json || options.planOnly) {
     return false;
   }
   if (!Array.isArray(actions) || !actions.length) {
     return false;
   }
   return actions.every((action) => !isMutatingAction(action));
+}
+
+function shouldNarrateShellPlan(plan, options) {
+  if (plan?.presentation === "assistant-first" && !options.json && !options.planOnly) {
+    return true;
+  }
+  return shouldAutoNarratePlan(plan?.actions, options);
 }
 
 async function synthesizeShellExecutionReply({ inputText, plan, executed, options, planner }) {
@@ -840,7 +1334,7 @@ async function synthesizeShellExecutionReply({ inputText, plan, executed, option
   }
 
   if (!planner || options.noAi) {
-    return renderFallbackAssistantReply({ inputText, plan, executed });
+    return renderFallbackAssistantReply({ inputText, plan, executed, plannerContext: options.plannerContext });
   }
 
   try {
@@ -871,19 +1365,28 @@ async function synthesizeShellExecutionReply({ inputText, plan, executed, option
       }
     });
     const text = String(completion.response ?? "").trim();
-    return text || renderFallbackAssistantReply({ inputText, plan, executed });
+    return text || renderFallbackAssistantReply({ inputText, plan, executed, plannerContext: options.plannerContext });
   } catch {
-    return renderFallbackAssistantReply({ inputText, plan, executed });
+    return renderFallbackAssistantReply({ inputText, plan, executed, plannerContext: options.plannerContext });
   }
 }
 
-function renderFallbackAssistantReply({ inputText, plan, executed }) {
-  const first = executed?.graphNodes?.[0]?.execution ?? executed?.[0];
+function renderFallbackAssistantReply({ inputText, plan, executed, plannerContext }) {
+  const graphExecutions = (executed?.graphNodes ?? [])
+    .map((node) => node.execution)
+    .filter(Boolean);
+  const first = graphExecutions[0] ?? executed?.[0];
   const raw = String(first?.ok ? first?.stdout : `${first?.stdout ?? ""}${first?.stderr ?? ""}`).trim();
   if (!raw) {
     return null;
   }
+  if (plan.actions.some((action) => action.type === "execute_ticket") && plan.actions.some((action) => action.type === "evaluate_readiness")) {
+    return renderExecutionPlusReadinessReply(graphExecutions);
+  }
   const actionType = plan.actions[0]?.type;
+  if (plan.actions.some((action) => action.type === "project_summary") && plan.actions.some((action) => action.type === "evaluate_readiness")) {
+    return renderCombinedStatusReadinessReply(graphExecutions);
+  }
   if (actionType === "provider_status") {
     return raw;
   }
@@ -893,13 +1396,65 @@ function renderFallbackAssistantReply({ inputText, plan, executed }) {
   if (actionType === "project_summary") {
     return `Here is the current project status:\n${raw}`;
   }
+  if (actionType === "evaluate_readiness") {
+    return renderReadinessReply(first?.structuredPayload, raw);
+  }
   if (actionType === "metrics") {
     return `Here are the current workflow metrics:\n${raw}`;
   }
   if (actionType === "doctor") {
     return `Here is the current diagnostics report:\n${raw}`;
   }
+  const goalDirectedReply = renderGoalDirectedFallbackReply({ inputText, plan, graphExecutions, plannerContext });
+  if (goalDirectedReply) {
+    return goalDirectedReply;
+  }
+  const renderedExecutions = graphExecutions
+    .map((item) => String(item.ok ? item.stdout : `${item.stdout ?? ""}${item.stderr ?? ""}`).trim())
+    .filter((item) => item && item !== STREAMED_STDIO);
+  if (renderedExecutions.length > 1) {
+    return renderedExecutions.join("\n\n");
+  }
   return raw;
+}
+
+function renderGoalDirectedFallbackReply({ inputText, plan, graphExecutions, plannerContext }) {
+  const actions = Array.isArray(plan?.actions) ? plan.actions : [];
+  if (!actions.some((action) => action.type === "list_tickets")) {
+    return null;
+  }
+  if (!actions.some((action) => action.type === "execute_ticket" || action.type === "extract_ticket" || action.type === "run_codelet")) {
+    return null;
+  }
+
+  const executeAction = actions.find((action) => action.type === "execute_ticket");
+  const goal = extractShellGoal(inputText);
+  const ranked = rankTicketsAgainstGoal(plannerContext?.summary?.activeTickets, {
+    goal,
+    excludeId: executeAction?.ticketId ?? null
+  }).slice(0, 3);
+  const lines = [];
+  if (executeAction?.ticketId) {
+    lines.push(`I treated this as a staged request. First I planned the current ticket ${executeAction.ticketId} without applying mutations.`);
+  } else {
+    lines.push("I treated this as a staged request: inspect the current work first, then evaluate the remaining tickets.");
+  }
+  if (goal.text) {
+    lines.push(`Goal used for prioritization: ${goal.text}`);
+  }
+  if (ranked.length) {
+    lines.push(`Suggested remaining priorities: ${ranked.map((item) => `${item.id} (${item.lane})`).join(", ")}.`);
+  }
+  lines.push("Proposed mutation steps should be confirmed before changing board state.");
+
+  const renderedExecutions = graphExecutions
+    .map((item) => String(item.ok ? item.stdout : `${item.stdout ?? ""}${item.stderr ?? ""}`).trim())
+    .filter((item) => item && item !== STREAMED_STDIO);
+  if (renderedExecutions.length) {
+    lines.push("");
+    lines.push(renderedExecutions.join("\n\n"));
+  }
+  return lines.join("\n");
 }
 
 function validateShellAction(action, plannerContext) {
@@ -917,6 +1472,7 @@ function validateShellAction(action, plannerContext) {
     case "version":
     case "sync":
     case "run_review":
+    case "evaluate_readiness":
     case "run_dynamic_codelet":
     case "telegram_preview":
     case "reprofile":
@@ -933,10 +1489,28 @@ function validateShellAction(action, plannerContext) {
         throw new Error("search action requires query");
       }
       return { type, query: String(action.query).trim() };
+    case "evaluate_readiness":
+      if (!String(action.goalType ?? "").trim()) {
+        throw new Error("evaluate_readiness action requires goalType");
+      }
+      if (!String(action.question ?? "").trim()) {
+        throw new Error("evaluate_readiness action requires question");
+      }
+      return {
+        type,
+        goalType: String(action.goalType).trim(),
+        question: String(action.question).trim()
+      };
     case "extract_ticket":
       return { type, ticketId: requireTicketId(action.ticketId) };
     case "decompose_ticket":
       return { type, ticketId: requireTicketId(action.ticketId) };
+    case "execute_ticket":
+      return {
+        type,
+        ticketId: requireTicketId(action.ticketId),
+        apply: action.apply !== false
+      };
     case "ideate_feature":
       if (!String(action.intent ?? "").trim()) {
         throw new Error("ideate_feature action requires intent");
@@ -1048,7 +1622,8 @@ export async function runShellTurn(inputText, options) {
   }
 
   let preRendered = false;
-  const shouldRenderRawPlan = !options.json && !shouldAutoNarratePlan(plan.actions, options);
+  const shouldNarrate = shouldNarrateShellPlan(plan, options);
+  const shouldRenderRawPlan = !options.json && !shouldNarrate;
   if (shouldRenderRawPlan) {
     const activePlanner = plan.planner ?? options.planners.planners[0] ?? options.planners.heuristic;
     output.write(`${renderPlannerLine(activePlanner)}\n${renderActionList(plan.actions)}\n`);
@@ -1056,7 +1631,7 @@ export async function runShellTurn(inputText, options) {
   }
 
   const executed = [];
-  const executedGraph = plan.graph ? await executeActionGraph(plan.graph, options) : { nodes: [], executions: [] };
+  const executedGraph = plan.graph ? await executeActionGraph(plan.graph, options) : { nodes: [], executions: [], branchPath: [] };
   for (const node of executedGraph.nodes) {
     if (node.execution) {
       executed.push(node.execution);
@@ -1081,7 +1656,7 @@ export async function runShellTurn(inputText, options) {
 
   const narrationPlanner = plan.planner?.providerId ? plan.planner : (anyAiPlanner ?? null);
   let assistantReply = null;
-  if (!failed && !recovery && shouldAutoNarratePlan(plan.actions, options)) {
+  if (!failed && !recovery && shouldNarrate) {
     assistantReply = await synthesizeShellExecutionReply({
       inputText,
       plan,
@@ -1090,23 +1665,112 @@ export async function runShellTurn(inputText, options) {
       planner: narrationPlanner
     });
   }
+  if (!assistantReply && shouldNarrate) {
+    assistantReply = renderFallbackAssistantReply({
+      inputText,
+      plan,
+      executed: { graphNodes: executedGraph.nodes, executions: executed },
+      plannerContext: options.plannerContext
+    });
+  }
 
   return {
-      input: inputText,
-      plan,
-      executed,
-      executedGraph,
-      preRendered,
-      recovery,
-      assistantReply
+    input: inputText,
+    plan,
+    executed,
+    executedGraph,
+    continuationState: buildContinuationState({ inputText, plan, executedGraph }),
+    preRendered,
+    recovery,
+    assistantReply
   };
 }
 
 export async function executeShellAction(action, options) {
   const compiled = compileShellAction(action, { json: options.json });
   try {
+    if (action.type === "project_summary") {
+      const payload = await getProjectSummary({ projectRoot: options.root });
+      return attachStructuredExecution({
+        action,
+        command: compiled.display,
+        mutation: compiled.mutation,
+        ok: true,
+        stdout: formatProjectSummary(payload, options.json),
+        stderr: "",
+        structuredPayload: payload,
+        summary: `Project summary loaded with ${payload.activeTickets.length} active tickets.`
+      });
+    }
+    if (action.type === "evaluate_readiness") {
+      const payload = await evaluateProjectReadiness({
+        projectRoot: options.root,
+        request: {
+          protocol_version: "1.0",
+          operation: "evaluate_readiness",
+          goal: {
+            type: action.goalType,
+            target: "project",
+            question: action.question
+          },
+          constraints: {
+            allow_mutation: false,
+            context_budget: "medium",
+            time_budget_ms: 15000,
+            guideline_mode: "advisory"
+          },
+          inputs: {
+            tickets_scope: "active_and_blocked",
+            artifact_scope: "goal_relevant_only",
+            verification_scope: "tests_metrics_docs"
+          },
+          host: {
+            surface: "shell",
+            capabilities: {
+              supports_json: true,
+              supports_streaming: false,
+              supports_followups: true
+            }
+          },
+          continuation_state: null
+        }
+      });
+      return attachStructuredExecution({
+        action,
+        command: compiled.display,
+        mutation: compiled.mutation,
+        ok: true,
+        stdout: formatReadinessEvaluation(payload, options.json),
+        stderr: "",
+        structuredPayload: {
+          ...payload,
+          goalType: action.goalType,
+          question: action.question
+        },
+        summary: payload.summary
+      });
+    }
+    if (action.type === "execute_ticket") {
+      const payload = await executeTicket({
+        root: options.root,
+        ticketId: action.ticketId,
+        apply: action.apply !== false
+      });
+      const ok = action.apply === false ? true : Boolean(payload.success);
+      const rendered = options.json ? `${JSON.stringify(payload, null, 2)}\n` : renderExecuteTicketResult(action, payload);
+      return attachStructuredExecution({
+        action,
+        command: compiled.display,
+        mutation: compiled.mutation,
+        ok,
+        stdout: ok ? rendered : "",
+        stderr: ok ? "" : (payload.error ? `${payload.error}\n` : "Ticket execution failed.\n"),
+        structuredPayload: payload,
+        summary: payload.status ?? (payload.success ? "ok" : "failed")
+      });
+    }
     const stdout = await runShellActionDirect(action, options);
-    return {
+    const execution = {
       action,
       command: compiled.display,
       mutation: compiled.mutation,
@@ -1114,8 +1778,9 @@ export async function executeShellAction(action, options) {
       stdout,
       stderr: ""
     };
+    return attachStructuredExecution(execution);
   } catch (error) {
-    return {
+    const execution = {
       action,
       command: compiled.display,
       mutation: compiled.mutation,
@@ -1123,6 +1788,7 @@ export async function executeShellAction(action, options) {
       stdout: "",
       stderr: error?.message ?? String(error)
     };
+    return attachStructuredExecution(execution);
   }
 }
 
@@ -1151,12 +1817,20 @@ export function compileShellAction(action, { json = false } = {}) {
       return cliCommand(["sync", ...(json ? ["--json"] : [])], true);
     case "run_review":
       return cliCommand(["run", "review"], false);
+    case "evaluate_readiness":
+      return cliCommand(["project", "readiness", "--goal", action.goalType, "--question", action.question, ...(json ? ["--json"] : [])], false);
     case "search":
       return cliCommand(["project", "search", action.query, ...(json ? ["--json"] : [])], false);
     case "extract_ticket":
       return cliCommand(["extract", "ticket", action.ticketId], false);
     case "decompose_ticket":
       return cliCommand(["decompose", "ticket", action.ticketId], false);
+    case "execute_ticket":
+      return {
+        args: [],
+        mutation: Boolean(action.apply !== false),
+        display: `${action.apply === false ? "plan" : "execute"} ticket ${action.ticketId}`
+      };
     case "ideate_feature":
       return cliCommand(["ideate", "feature", action.intent], true);
     case "sweep_bugs":
@@ -1235,6 +1909,7 @@ export async function runInteractiveShell(options) {
   options.rl = rl;
   options.blacklist = new Set();
   options.history = [];
+  const processingIndicator = createShellProcessingIndicator(options);
   try {
     const primary = options.noAi
       ? { ...options.planners.heuristic, mode: "heuristic-forced", reason: "AI planning disabled for this shell session." }
@@ -1294,12 +1969,17 @@ export async function runInteractiveShell(options) {
         }
 
         // 0. Ensure bidirectional sync so manual edits are ingested and DB changes are projected
+        processingIndicator.update("syncing project");
         await syncProject({ projectRoot: options.root, writeProjections: true });
 
         // 1. Refresh context before every turn so the Brain sees the latest state
+        processingIndicator.update("refreshing context");
         options.plannerContext = await buildShellContext(options.root);
 
+        processingIndicator.update("planning and running");
         const result = await runShellTurn(line, options);
+        processingIndicator.clear();
+        options.activeGraphState = result.continuationState ?? null;
         if (result.plan.kind === "exit") {
           break;
         }
@@ -1337,6 +2017,7 @@ export async function runInteractiveShell(options) {
         }
         renderHumanShellResult(result);
       } catch (error) {
+        processingIndicator.clear();
         output.write(`shell error: ${error?.message ?? String(error)}\n`);
         continue;
       }
@@ -1347,10 +2028,28 @@ export async function runInteractiveShell(options) {
   return 0;
 }
 
+function createShellProcessingIndicator(options) {
+  const enabled = !options.json && process.stdin.isTTY && process.stdout.isTTY;
+  let active = false;
+  return {
+    update(message) {
+      if (!enabled) return;
+      active = true;
+      output.write(`${renderShellStatusLine(`processing: ${message}...`)}`);
+    },
+    clear() {
+      if (!enabled || !active) return;
+      active = false;
+      output.write(clearShellStatusLine());
+    }
+  };
+}
+
 async function confirmPlan(plan, options) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     return false;
   }
+  output.write(clearShellStatusLine());
   const rl = options.rl ?? readline.createInterface({ input, output });
   try {
     output.write(`Planned actions:\n${renderActionList(plan.actions)}\n`);
@@ -1380,6 +2079,14 @@ async function promptShellQuestion(rl, prompt) {
     }
     throw error;
   }
+}
+
+function renderShellStatusLine(message) {
+  return `\r\x1b[2K${message}`;
+}
+
+function clearShellStatusLine() {
+  return "\r\x1b[2K";
 }
 
 async function runShellActionDirect(action, options) {
@@ -1422,6 +2129,41 @@ async function runShellActionDirect(action, options) {
     }
     case "sync":
       return formatSyncResult(await syncProject({ projectRoot: options.root }), options.json);
+    case "evaluate_readiness": {
+      const response = await evaluateProjectReadiness({
+        projectRoot: options.root,
+        request: {
+          protocol_version: "1.0",
+          operation: "evaluate_readiness",
+          goal: {
+            type: action.goalType,
+            target: "project",
+            question: action.question
+          },
+          constraints: {
+            allow_mutation: false,
+            context_budget: "medium",
+            time_budget_ms: 15000,
+            guideline_mode: "advisory"
+          },
+          inputs: {
+            tickets_scope: "active_and_blocked",
+            artifact_scope: "goal_relevant_only",
+            verification_scope: "tests_metrics_docs"
+          },
+          host: {
+            surface: "shell",
+            capabilities: {
+              supports_json: true,
+              supports_streaming: false,
+              supports_followups: true
+            }
+          },
+          continuation_state: null
+        }
+      });
+      return formatReadinessEvaluation(response, options.json);
+    }
     case "search":
       return formatSearchResults(await searchProject({ projectRoot: options.root, query: action.query }), options.json);
     case "route":
@@ -1515,6 +2257,17 @@ async function runShellActionDirect(action, options) {
       return options.json 
         ? `${JSON.stringify(plan, null, 2)}\n` 
         : `Decomposition plan for ${action.ticketId}:\n${plan.map((t, i) => `${i + 1}. [${t.class}] ${t.summary}${t.file ? ` (${t.file})` : ""}`).join("\n")}\n`;
+    }
+    case "execute_ticket": {
+      const payload = await executeTicket({
+        root: options.root,
+        ticketId: action.ticketId,
+        apply: action.apply !== false
+      });
+      if (options.json) {
+        return `${JSON.stringify(payload, null, 2)}\n`;
+      }
+      return renderExecuteTicketResult(action, payload);
     }
     case "ideate_feature":
       return ideateFeature(action.intent, options);
@@ -1643,7 +2396,7 @@ function renderHumanShellResult(result) {
   }
   if (result.assistantReply) {
     output.write(`${String(result.assistantReply).trim()}\n`);
-    if (result.recovery) {
+    if (result.recovery && result.plan.presentation !== "assistant-first") {
       output.write(`\nAI recovery:\n${renderRecovery(result.recovery)}`);
     }
     return;
@@ -1661,7 +2414,7 @@ function renderHumanShellResult(result) {
       output.write("Command failed.\n");
     }
   }
-  if (result.recovery) {
+  if (result.recovery && result.plan.presentation !== "assistant-first") {
     output.write(`\nAI recovery:\n${renderRecovery(result.recovery)}`);
   }
 }
@@ -1719,9 +2472,11 @@ async function executeActionGraph(graph, options) {
     ...node,
     dependsOn: Array.isArray(node.dependsOn) ? [...node.dependsOn] : [],
     status: "pending",
-    execution: null
+    execution: null,
+    result: null
   }]));
   const executions = [];
+  const branchPath = [];
   while (true) {
     const ready = Array.from(nodeMap.values()).filter((node) =>
       node.status === "pending"
@@ -1730,7 +2485,8 @@ async function executeActionGraph(graph, options) {
     if (!ready.length) {
       break;
     }
-    const readyActions = ready.filter((node) => node.kind !== "synthesize");
+    const readyActions = ready.filter((node) => node.kind === "action");
+    const readyConditionals = ready.filter((node) => node.kind === "branch" || node.kind === "assert" || node.kind === "replan");
     const readySynthesis = ready.filter((node) => node.kind === "synthesize");
     const parallelReads = readyActions.filter((node) => !isMutatingAction(node.action));
     const sequentialWrites = readyActions.filter((node) => isMutatingAction(node.action));
@@ -1746,11 +2502,12 @@ async function executeActionGraph(graph, options) {
       for (const item of batchResults) {
         const recovered = await recoverGraphNode(item, options);
         item.node.execution = recovered;
+        item.node.result = buildNodeResultEnvelope(item.node, recovered);
         item.node.status = recovered.ok ? "ok" : "failed";
         executions.push(recovered);
         if (!recovered.ok) {
           blockDependentGraphNodes(nodeMap, item.node.id);
-          return { nodes: Array.from(nodeMap.values()), executions };
+          return { nodes: Array.from(nodeMap.values()), executions, branchPath };
         }
       }
     }
@@ -1762,19 +2519,39 @@ async function executeActionGraph(graph, options) {
         execution: await executeShellAction(node.action, options)
       }, options);
       node.execution = execution;
+      node.result = buildNodeResultEnvelope(node, execution);
       node.status = execution.ok ? "ok" : "failed";
       executions.push(execution);
       if (!execution.ok) {
         blockDependentGraphNodes(nodeMap, node.id);
-        return { nodes: Array.from(nodeMap.values()), executions };
+        return { nodes: Array.from(nodeMap.values()), executions, branchPath };
+      }
+    }
+
+    for (const node of readyConditionals) {
+      node.status = "running";
+      const outcome = await executeConditionalGraphNode(node, { nodeMap, options, branchPath });
+      node.execution = outcome.execution;
+      node.result = outcome.result;
+      node.status = outcome.ok ? "ok" : "failed";
+      if (outcome.execution) {
+        executions.push(outcome.execution);
+      }
+      if (Array.isArray(outcome.appendedNodes) && outcome.appendedNodes.length) {
+        appendGraphFragment(nodeMap, node, outcome.appendedNodes);
+      }
+      if (!outcome.ok) {
+        blockDependentGraphNodes(nodeMap, node.id);
+        return { nodes: Array.from(nodeMap.values()), executions, branchPath };
       }
     }
 
     for (const node of readySynthesis) {
+      node.result = buildSynthesisNodeResult(node, nodeMap);
       node.status = "ok";
     }
   }
-  return { nodes: Array.from(nodeMap.values()), executions };
+  return { nodes: Array.from(nodeMap.values()), executions, branchPath };
 }
 
 function renderActionGraph(graph) {
@@ -1782,6 +2559,9 @@ function renderActionGraph(graph) {
   if (!nodes.length) return "(empty)";
   return nodes.map((node) => {
     const deps = node.dependsOn?.length ? ` <- ${node.dependsOn.join(", ")}` : "";
+    if (node.kind === "branch" || node.kind === "assert" || node.kind === "replan") {
+      return `${node.id}: ${node.kind}${deps}`;
+    }
     return `${node.id}: ${node.type}${deps}`;
   }).join("\n");
 }
@@ -1815,7 +2595,416 @@ async function recoverGraphNode({ node, execution }, options) {
   correctedExecution.correctedFrom = node.action;
   node.action = correctedAction;
   node.type = correctedAction.type;
-  return correctedExecution;
+  return attachStructuredExecution(correctedExecution);
+}
+
+function attachStructuredExecution(execution) {
+  if (!execution || typeof execution !== "object") {
+    return execution;
+  }
+  const text = String(execution.ok ? execution.stdout : `${execution.stdout ?? ""}${execution.stderr ?? ""}`).trim();
+  const structuredPayload = execution.structuredPayload ?? parseExecutionPayload(text);
+  return {
+    ...execution,
+    summary: execution.summary ?? summarizeExecutionText(text, execution.ok),
+    structuredPayload,
+    evidence: execution.evidence ?? buildExecutionEvidence(execution, text),
+    artifacts: execution.artifacts ?? [],
+    classification: execution.classification ?? (execution.ok ? "completed" : "failed")
+  };
+}
+
+function buildNodeResultEnvelope(node, execution) {
+  return {
+    summary: execution.summary ?? summarizeExecutionText(String(execution.stdout ?? execution.stderr ?? ""), execution.ok),
+    structuredPayload: execution.structuredPayload ?? null,
+    evidence: execution.evidence ?? [],
+    artifacts: execution.artifacts ?? [],
+    classification: execution.classification ?? (execution.ok ? "completed" : "failed"),
+    ok: execution.ok
+  };
+}
+
+function buildSynthesisNodeResult(node, nodeMap) {
+  const deps = (node.dependsOn ?? []).map((depId) => nodeMap.get(depId)).filter(Boolean);
+  const completed = deps.filter((item) => item.status === "ok").length;
+  const failed = deps.filter((item) => item.status === "failed").length;
+  return {
+    summary: `Synthesized ${completed} successful prerequisite node${completed === 1 ? "" : "s"}${failed ? `, ${failed} failed` : ""}.`,
+    structuredPayload: {
+      dependencyIds: deps.map((item) => item.id),
+      completed,
+      failed
+    },
+    evidence: deps.map((item) => ({ node: item.id, classification: item.result?.classification ?? item.status })),
+    artifacts: [],
+    classification: failed ? "partial" : "synthesized",
+    ok: failed === 0
+  };
+}
+
+async function executeConditionalGraphNode(node, { nodeMap, options, branchPath }) {
+  if (node.kind === "assert") {
+    const evaluation = evaluateShellCondition(node.condition, nodeMap);
+    const ok = Boolean(evaluation.match);
+    return {
+      ok,
+      execution: createSyntheticNodeExecution(node, {
+        ok,
+        summary: ok ? "Assertion passed." : (node.message || "Assertion failed."),
+        structuredPayload: evaluation
+      }),
+      result: {
+        summary: ok ? "Assertion passed." : (node.message || "Assertion failed."),
+        structuredPayload: evaluation,
+        evidence: [{ condition: node.condition, actual: evaluation.actual }],
+        artifacts: [],
+        classification: ok ? "asserted" : "assertion-failed",
+        ok
+      }
+    };
+  }
+
+  if (node.kind === "branch") {
+    const evaluation = evaluateShellCondition(node.condition ?? true, nodeMap);
+    const branchKey = evaluation.match ? "ifTrue" : "ifFalse";
+    const appendedNodes = evaluation.match ? node.ifTrue : node.ifFalse;
+    branchPath.push({ nodeId: node.id, branch: branchKey });
+    return {
+      ok: true,
+      appendedNodes,
+      execution: createSyntheticNodeExecution(node, {
+        ok: true,
+        summary: `Branch selected ${branchKey}.`,
+        structuredPayload: { ...evaluation, branch: branchKey }
+      }),
+      result: {
+        summary: `Branch selected ${branchKey}.`,
+        structuredPayload: { ...evaluation, branch: branchKey },
+        evidence: [{ condition: node.condition ?? true, actual: evaluation.actual }],
+        artifacts: [],
+        classification: "branched",
+        ok: true
+      }
+    };
+  }
+
+  if (node.kind === "replan") {
+    const evaluation = evaluateShellCondition(node.condition ?? true, nodeMap);
+    if (!evaluation.match) {
+      return {
+        ok: true,
+        execution: createSyntheticNodeExecution(node, {
+          ok: true,
+          summary: "Replan condition not met.",
+          structuredPayload: evaluation
+        }),
+        result: {
+          summary: "Replan condition not met.",
+          structuredPayload: evaluation,
+          evidence: [{ condition: node.condition ?? true, actual: evaluation.actual }],
+          artifacts: [],
+          classification: "skipped",
+          ok: true
+        }
+      };
+    }
+
+    let appendedNodes = node.append;
+    if (!appendedNodes.length && node.instruction) {
+      appendedNodes = await generateReplanGraphFragment({
+        node,
+        nodeMap,
+        options
+      });
+    }
+    return {
+      ok: true,
+      appendedNodes,
+      execution: createSyntheticNodeExecution(node, {
+        ok: true,
+        summary: appendedNodes.length ? `Appended ${appendedNodes.length} replanned node${appendedNodes.length === 1 ? "" : "s"}.` : "Replan produced no additional nodes.",
+        structuredPayload: {
+          appendedNodeCount: appendedNodes.length,
+          instruction: node.instruction ?? null
+        }
+      }),
+      result: {
+        summary: appendedNodes.length ? `Appended ${appendedNodes.length} replanned node${appendedNodes.length === 1 ? "" : "s"}.` : "Replan produced no additional nodes.",
+        structuredPayload: {
+          appendedNodeCount: appendedNodes.length,
+          instruction: node.instruction ?? null
+        },
+        evidence: Array.from(nodeMap.values())
+          .filter((item) => item.result)
+          .map((item) => ({ node: item.id, classification: item.result.classification })),
+        artifacts: [],
+        classification: appendedNodes.length ? "replanned" : "no-op",
+        ok: true
+      }
+    };
+  }
+
+  throw new Error(`Unsupported conditional node kind: ${node.kind}`);
+}
+
+function createSyntheticNodeExecution(node, { ok, summary, structuredPayload }) {
+  return attachStructuredExecution({
+    action: { type: node.kind },
+    command: `${node.kind} node ${node.id}`,
+    mutation: false,
+    ok,
+    stdout: ok ? `${summary}\n` : "",
+    stderr: ok ? "" : `${summary}\n`,
+    summary,
+    structuredPayload,
+    evidence: [{ nodeId: node.id }],
+    artifacts: [],
+    classification: ok ? "completed" : "failed"
+  });
+}
+
+function evaluateShellCondition(condition, nodeMap) {
+  if (typeof condition === "boolean") {
+    return { match: condition, actual: condition };
+  }
+  if (condition.all) {
+    const items = condition.all.map((item) => evaluateShellCondition(item, nodeMap));
+    return { match: items.every((item) => item.match), actual: items };
+  }
+  if (condition.any) {
+    const items = condition.any.map((item) => evaluateShellCondition(item, nodeMap));
+    return { match: items.some((item) => item.match), actual: items };
+  }
+  if (condition.not !== undefined) {
+    const item = evaluateShellCondition(condition.not, nodeMap);
+    return { match: !item.match, actual: item.actual };
+  }
+
+  const node = nodeMap.get(condition.node);
+  const actual = resolveConditionValue(node, condition.path);
+  let match = true;
+  if ("exists" in condition) {
+    match = condition.exists ? actual !== undefined && actual !== null : actual === undefined || actual === null;
+  }
+  if ("equals" in condition) {
+    match = match && actual === condition.equals;
+  }
+  if ("notEquals" in condition) {
+    match = match && actual !== condition.notEquals;
+  }
+  if ("includes" in condition) {
+    match = match && String(actual ?? "").includes(condition.includes);
+  }
+  if ("matches" in condition) {
+    match = match && new RegExp(condition.matches, "i").test(String(actual ?? ""));
+  }
+  if (!("exists" in condition) && !("equals" in condition) && !("notEquals" in condition) && !("includes" in condition) && !("matches" in condition)) {
+    match = Boolean(actual);
+  }
+  return { match, actual };
+}
+
+function resolveConditionValue(node, path) {
+  if (!node) {
+    return undefined;
+  }
+  const source = {
+    id: node.id,
+    status: node.status,
+    ok: node.execution?.ok ?? node.result?.ok,
+    summary: node.result?.summary ?? node.execution?.summary,
+    classification: node.result?.classification ?? node.execution?.classification,
+    structuredPayload: node.result?.structuredPayload ?? node.execution?.structuredPayload,
+    result: node.result,
+    execution: node.execution
+  };
+  const segments = String(path ?? "ok").split(".").filter(Boolean);
+  let cursor = source;
+  for (const segment of segments) {
+    if (cursor == null) {
+      return undefined;
+    }
+    cursor = cursor[segment];
+  }
+  return cursor;
+}
+
+function appendGraphFragment(nodeMap, parentNode, templateNodes) {
+  const nodes = cloneGraphNodes(templateNodes);
+  if (!nodes.length) {
+    return;
+  }
+
+  const idMap = new Map();
+  const appendedIds = new Set();
+  for (const node of nodes) {
+    const nextId = makeUniqueGraphNodeId(nodeMap, `${parentNode.id}_${node.id}`);
+    idMap.set(node.id, nextId);
+    appendedIds.add(nextId);
+  }
+
+  const internalIds = new Set(nodes.map((node) => node.id));
+  for (const node of nodes) {
+    const nextId = idMap.get(node.id);
+    const remappedDeps = (node.dependsOn ?? []).map((depId) => idMap.get(depId) ?? depId);
+    const dependsOn = remappedDeps.length ? remappedDeps : [parentNode.id];
+    nodeMap.set(nextId, {
+      ...node,
+      id: nextId,
+      dependsOn,
+      status: "pending",
+      execution: null,
+      result: null
+    });
+  }
+
+  const terminalIds = getTerminalFragmentIds(nodes, idMap, internalIds);
+  for (const waiting of nodeMap.values()) {
+    if (waiting.id === parentNode.id || appendedIds.has(waiting.id) || waiting.status !== "pending" || !waiting.dependsOn.includes(parentNode.id)) {
+      continue;
+    }
+    waiting.dependsOn = waiting.dependsOn.flatMap((depId) => depId === parentNode.id ? terminalIds : [depId]);
+  }
+}
+
+function cloneGraphNodes(nodes) {
+  return (nodes ?? []).map((node) => ({
+    ...node,
+    dependsOn: Array.isArray(node.dependsOn) ? [...node.dependsOn] : []
+  }));
+}
+
+function makeUniqueGraphNodeId(nodeMap, baseId) {
+  let nextId = String(baseId).replace(/[^A-Za-z0-9_-]/g, "_");
+  let index = 1;
+  while (nodeMap.has(nextId)) {
+    nextId = `${baseId}_${index}`;
+    index += 1;
+  }
+  return nextId;
+}
+
+function getTerminalFragmentIds(nodes, idMap, internalIds) {
+  const dependedOn = new Set();
+  for (const node of nodes) {
+    for (const depId of node.dependsOn ?? []) {
+      if (internalIds.has(depId)) {
+        dependedOn.add(depId);
+      }
+    }
+  }
+  const synth = nodes.filter((node) => node.kind === "synthesize");
+  const terminals = (synth.length ? synth : nodes.filter((node) => !dependedOn.has(node.id))).map((node) => idMap.get(node.id)).filter(Boolean);
+  return terminals.length ? terminals : [idMap.get(nodes[nodes.length - 1].id)];
+}
+
+async function generateReplanGraphFragment({ node, nodeMap, options }) {
+  const planner = options.planners?.planners?.[0];
+  if (!planner || options.noAi) {
+    return [];
+  }
+
+  const completion = await generateCompletion({
+    providerId: planner.providerId,
+    modelId: planner.modelId,
+    system: [
+      "You are replanning a shell execution graph for ai-workflow.",
+      "Use prior node results to produce the next graph fragment only.",
+      "Return JSON only.",
+      "Schema: {\"nodes\":[{\"id\":\"n1\",\"kind\":\"action|branch|assert|replan|synthesize\",\"dependsOn\":[\"optional\"],\"condition\":{},\"action\":{...}}]}"
+    ].join("\n"),
+    prompt: [
+      `Instruction:\n${node.instruction}`,
+      "",
+      "Observed node results:",
+      Array.from(nodeMap.values())
+        .filter((item) => item.result)
+        .map((item) => JSON.stringify({
+          id: item.id,
+          kind: item.kind,
+          status: item.status,
+          result: item.result
+        }))
+        .join("\n")
+    ].join("\n"),
+    config: {
+      apiKey: planner.apiKey,
+      baseUrl: planner.baseUrl,
+      host: planner.host,
+      format: "json"
+    }
+  });
+
+  const parsed = JSON.parse(String(completion.response ?? "{}"));
+  return validateGraphTemplate(parsed.nodes ?? parsed.graph?.nodes ?? parsed.graph ?? [], options.plannerContext);
+}
+
+function parseExecutionPayload(text) {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function summarizeExecutionText(text, ok) {
+  const normalized = String(text ?? "").trim();
+  if (!normalized) {
+    return ok ? "Completed with no textual output." : "Failed with no textual output.";
+  }
+  return normalized.split("\n").find(Boolean)?.slice(0, 220) ?? normalized.slice(0, 220);
+}
+
+function buildExecutionEvidence(execution, text) {
+  return [
+    { command: execution.command },
+    ...(text ? [{ snippet: text.slice(0, 400) }] : [])
+  ];
+}
+
+function buildContinuationState({ inputText, plan, executedGraph }) {
+  const nodes = executedGraph?.nodes ?? [];
+  const pending = nodes.filter((node) => node.status === "pending").map((node) => node.id);
+  const failed = nodes.filter((node) => node.status === "failed").map((node) => node.id);
+  return {
+    request: inputText,
+    active: pending.length > 0,
+    graph: {
+      nodes: nodes.map((node) => ({
+        id: node.id,
+        kind: node.kind,
+        type: node.type,
+        dependsOn: node.dependsOn ?? [],
+        status: node.status,
+        result: node.result ?? null
+      })),
+      branchPath: executedGraph?.branchPath ?? []
+    },
+    outcome: {
+      planKind: plan.kind,
+      failed,
+      pending
+    }
+  };
+}
+
+function renderContinuationState(state) {
+  if (!state?.graph?.nodes?.length) {
+    return "No active graph state.";
+  }
+  const lines = state.graph.nodes.map((node) => {
+    const summary = node.result?.summary ? ` - ${node.result.summary}` : "";
+    return `${node.id} [${node.status}] ${node.kind}${summary}`;
+  });
+  if (state.graph.branchPath?.length) {
+    lines.push(`Branch path: ${state.graph.branchPath.map((item) => `${item.nodeId}:${item.branch}`).join(", ")}`);
+  }
+  return lines.join("\n");
 }
 
 function renderPlannerLine(planner) {
@@ -1903,10 +3092,12 @@ function buildActionCatalog(plannerContext) {
     "- version: show the current ai-workflow build and toolkit root",
     "- sync: sync the workflow DB",
     "- run_review: run the review summary codelet",
+    "- evaluate_readiness: issue a structured beta/release/handoff readiness opinion",
     "- search: search indexed project data",
     "- extract_ticket: extract a specific ticket",
     "- next_ticket: find the next priority ticket to work on",
     "- decompose_ticket: decompose a ticket into sub-tasks",
+    "- execute_ticket: plan or execute a specific ticket with verification gating",
     "- ideate_feature: scope a new feature into an Epic and Tickets",
     "- sweep_bugs: automated bug-fixing loop for Todo lane",
     "- ingest_artifact: parse a file (e.g. PRD) into Epics/Tickets",
@@ -1945,7 +3136,33 @@ function shellQuote(value) {
 }
 
 function isMutatingAction(action) {
+  if (action?.type === "execute_ticket") {
+    return action.apply !== false;
+  }
   return MUTATING_ACTIONS.has(action.type);
+}
+
+function extractReadinessGoal(text) {
+  const source = String(text ?? "").trim();
+  if (!source) {
+    return null;
+  }
+  const normalized = normalizeConversationText(source);
+  if (!/\b(ready|readiness)\b/.test(normalized) && !/\b(before beta|before release|for beta|for release|for handoff)\b/.test(normalized)) {
+    return null;
+  }
+  if (!/\b(beta|release|handoff)\b/.test(normalized)) {
+    return null;
+  }
+  const type = normalized.includes("release")
+    ? "release_readiness"
+    : normalized.includes("handoff")
+      ? "handoff_readiness"
+      : "beta_readiness";
+  return {
+    type,
+    question: source
+  };
 }
 
 function normalizeTaskClass(value, plannerContext) {
@@ -1961,7 +3178,7 @@ function normalizeNoteType(value) {
 
 function requireTicketId(value) {
   const id = String(value ?? "").trim().toUpperCase();
-  if (!/^[A-Z]+-\d+$/.test(id)) {
+  if (!(new RegExp(`^${TICKET_ID_PATTERN}$`)).test(id)) {
     throw new Error(`invalid ticket id: ${value}`);
   }
   return id;
@@ -2034,6 +3251,7 @@ function buildContextualShellReply(inputText, plannerContext) {
   const normalized = normalizeConversationText(text);
   const summary = plannerContext?.summary ?? {};
   const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
+  const kanbanInProgress = extractKanbanTicketsInSection(plannerContext?.kanban, "In Progress");
   const modules = Array.isArray(summary.modules) ? summary.modules : [];
   const providerState = plannerContext?.providerState ?? {};
   const providerMap = providerState.providers ?? {};
@@ -2044,13 +3262,17 @@ function buildContextualShellReply(inputText, plannerContext) {
     || /\bwhat (?:project|repo|repository)\b/.test(normalized);
   const asksNext = /\b(work on|do next|focus on|start with|next task|next thing)\b/.test(normalized)
     || /what should i (work on|do) next/.test(normalized)
+    || /what do you think we should do next/.test(normalized)
+    || /what should we do next/.test(normalized)
     || /\bwhat is next\b/.test(normalized);
+  const asksTellAboutProject = /\b(tell me about the project|tell me about this project|tell me about the repo|tell me about this repo)\b/.test(normalized);
   const asksCapabilities = /\b(what can you do|how can you help|what are you capable of|what do you do here)\b/.test(normalized);
   const asksGreeting = /\b(how are you|hows it going|how is it going|are you feeling well|ready to help|you there)\b/.test(normalized);
   const asksStatus = /\b(status|shape|state of the project|how is the project)\b/.test(normalized);
   const asksCodebaseAssessment = /\bwhat do you think about the codebase\b/.test(normalized)
     || /\bwhat do you think about this repo\b/.test(normalized);
   const asksActiveTickets = /\b(next tickets|active tickets|open tickets|current tickets|what tickets)\b/.test(normalized);
+  const asksInProgress = /\b(in progress|in-progress)\b/.test(normalized);
   const asksModules = /\b(modules|areas|major parts|subsystems)\b/.test(normalized);
   const asksClaims = /\bwhat does claims mean|what do claims mean|what are claims\b/.test(normalized);
   const asksSetupOpenAiOllama = /\b(set this up|setting this up|set up|setup|configure)\b/.test(normalized) && /\bopenai\b/.test(normalized) && /\bollama\b/.test(normalized);
@@ -2061,6 +3283,18 @@ function buildContextualShellReply(inputText, plannerContext) {
       "I can inspect project state, answer questions about the repo, search code and tickets, sync the workflow DB, prepare context, and run guided workflow actions.",
       "If you want to change code or project state, say that directly and I’ll plan or execute the next step."
     ].join("\n"), 0.7, "Capability explanation.");
+  }
+
+  if (asksInProgress && /\bwhat(s| is)?\b/.test(normalized)) {
+    const inProgressTickets = activeTickets.filter((ticket) => /in progress/i.test(String(ticket.lane ?? "")));
+    const effectiveInProgress = inProgressTickets.length ? inProgressTickets : kanbanInProgress.map((ticket) => ({ ...ticket, lane: "In Progress" }));
+    if (!effectiveInProgress.length) {
+      return replyPlan("There are no tickets in progress right now.", 0.89, "Answered from current summary.");
+    }
+    return replyPlan([
+      "Tickets currently in progress:",
+      ...effectiveInProgress.map((ticket) => `- ${ticket.id}: ${ticket.title}`)
+    ].join("\n"), 0.9, "Answered from current summary.");
   }
 
   if (asksActiveTickets || ["what are the next tickets", "what are the active tickets", "can you list the active tickets"].includes(normalized)) {
@@ -2119,7 +3353,7 @@ function buildContextualShellReply(inputText, plannerContext) {
     ].join("\n"), 0.82, "Grounded codebase assessment reply.");
   }
 
-  if ((hasProjectQuestion || /\bproject am i in\b/.test(normalized)) && asksNext) {
+  if ((hasProjectQuestion || asksTellAboutProject || /\bproject am i in\b/.test(normalized)) && asksNext) {
     const top = activeTickets[0];
     if (!top) {
       return replyPlan(`You are in \`${projectName}\`. I do not see an obvious active ticket yet.`, 0.88, "Answered from project root and summary.");
@@ -2164,6 +3398,86 @@ function buildContextualShellReply(inputText, plannerContext) {
   return null;
 }
 
+function resolveImplicitTicketId(plannerContext, inputText) {
+  const text = String(inputText ?? "");
+  const explicitMatches = text.match(new RegExp(`\\b(${TICKET_ID_PATTERN})\\b`, "ig")) ?? [];
+  const explicit = explicitMatches.find((candidate) => /\d/.test(candidate));
+  if (explicit) {
+    return explicit.toUpperCase();
+  }
+
+  const activeTickets = Array.isArray(plannerContext?.summary?.activeTickets) ? plannerContext.summary.activeTickets : [];
+  const inProgress = activeTickets.filter((ticket) => /in progress/i.test(String(ticket.lane ?? "")));
+  const kanbanInProgress = extractKanbanTicketsInSection(plannerContext?.kanban, "In Progress");
+  const effectiveInProgress = inProgress.length ? inProgress.map((ticket) => ({ id: String(ticket.id) })) : kanbanInProgress;
+
+  if (/\b(in progress|in-progress|current ticket|active ticket|current task|active task|current issue)\b/i.test(text)) {
+    if (effectiveInProgress.length === 1) {
+      return String(effectiveInProgress[0].id);
+    }
+    if (!inProgress.length && activeTickets.length === 1) {
+      return String(activeTickets[0].id);
+    }
+  }
+
+  if (/\b(working on right now|working on now|what are we working on|what we're working on|what were working on|current work|current focus)\b/i.test(text)) {
+    if (effectiveInProgress.length === 1) {
+      return String(effectiveInProgress[0].id);
+    }
+  }
+
+  if (/\bthat ticket\b/i.test(text) && effectiveInProgress.length === 1) {
+    return String(effectiveInProgress[0].id);
+  }
+
+  if (/\bticket\b/i.test(text) && effectiveInProgress.length === 1) {
+    return String(effectiveInProgress[0].id);
+  }
+
+  return null;
+}
+
+function extractKanbanTicketsInSection(kanbanText, sectionName) {
+  const text = String(kanbanText ?? "");
+  if (!text) {
+    return [];
+  }
+
+  const lines = text.split(/\r?\n/);
+  const results = [];
+  let inSection = false;
+  for (const line of lines) {
+    if (/^##\s+/.test(line)) {
+      inSection = new RegExp(`^##\\s+${escapeRegExp(sectionName)}\\s*$`, "i").test(line.trim());
+      continue;
+    }
+    if (!inSection) {
+      continue;
+    }
+    const match = line.match(new RegExp(`\\*\\*(${TICKET_ID_PATTERN})\\*\\*:\\s*(.+)$`));
+    if (match) {
+      results.push({ id: match[1], title: match[2].trim() });
+    }
+  }
+  return results;
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasKnownCodelet(plannerContext, codeletId) {
+  return [...(plannerContext?.toolkitCodelets ?? []), ...(plannerContext?.projectCodelets ?? [])].some((item) => item.id === codeletId);
+}
+
+function buildTicketContextPackArgs(plannerContext, ticketId) {
+  return [
+    "--ticket",
+    ticketId,
+    ...(plannerContext?.kanbanPath ? ["--kanban", plannerContext.kanbanPath] : [])
+  ];
+}
+
 function normalizeConversationText(text) {
   return String(text ?? "")
     .toLowerCase()
@@ -2177,7 +3491,7 @@ import { attemptActionCorrection } from "../../core/lib/self-correction.mjs";
 import { analyzeCodeletSideEffects, formatSideEffects } from "../../core/services/side-effects.mjs";
 
 async function attemptShellRecovery({ inputText, plan, failed, options, planner }) {
-  if (!options.json) {
+  if (!options.json && plan?.presentation !== "assistant-first") {
     output.write(`Action failed: ${failed.stderr || "Unknown error"}. Attempting automatic correction...\n`);
   }
 
@@ -2221,6 +3535,252 @@ function renderRecovery(recovery) {
     lines.push(rendered || (execution.ok ? "OK" : "Command failed."));
   }
   return `${lines.join("\n")}\n`;
+}
+
+function buildReadinessContinuationPlan({ text, plannerContext, activeGraphState }) {
+  const normalized = normalizeConversationText(text);
+  if (!/\b(make|get)\s+(it|this|the project)\s+ready\b/.test(normalized)
+    && !/\b(resolve|fix|handle|clear)\b.*\b(those|the)\b.*\b(blockers|blocking issues|beta blockers)\b/.test(normalized)
+    && !/\bcan you\b.*\bresolve\b.*\bblockers\b/.test(normalized)) {
+    return null;
+  }
+
+  const readinessState = extractLatestReadinessState(activeGraphState);
+  const actionableBlockers = (readinessState?.blockers ?? [])
+    .map((item) => String(item?.title ?? "").match(new RegExp(TICKET_ID_PATTERN))?.[0] ?? null)
+    .filter(Boolean)
+    .filter((id) => !String(id).startsWith("HUMAN-"));
+  const rankedFallback = rankTicketsAgainstGoal(plannerContext?.summary?.activeTickets, {
+    goal: readinessState?.goal ?? extractShellGoal(text)
+  })
+    .filter((ticket) => /^BUG-|^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+$/.test(ticket.id))
+    .filter((ticket) => !String(ticket.id).startsWith("HUMAN-"))
+    .map((ticket) => ticket.id);
+  const nextTicketId = actionableBlockers[0] ?? rankedFallback[0] ?? null;
+  if (!nextTicketId) {
+    return null;
+  }
+
+  const goalType = readinessState?.goalType ?? "beta_readiness";
+  const question = readinessState?.question ?? "Is this project ready for beta testing?";
+  return {
+    kind: "plan",
+    actions: [
+      { type: "execute_ticket", ticketId: nextTicketId, apply: true },
+      { type: "evaluate_readiness", goalType, question }
+    ],
+    graph: buildActionGraph([
+      { type: "execute_ticket", ticketId: nextTicketId, apply: true },
+      { type: "evaluate_readiness", goalType, question }
+    ]),
+    confidence: 0.98,
+    reason: "Continuation request mapped to the highest-priority actionable readiness blocker, followed by a readiness re-check.",
+    strategy: `Start with ${nextTicketId}, which is the highest-priority actionable blocker from the latest readiness result, then re-check readiness.`,
+    planner: {
+      mode: "heuristic",
+      reason: "Continuation from readiness result."
+    },
+    presentation: "assistant-first"
+  };
+}
+
+function extractLatestReadinessState(activeGraphState) {
+  const nodes = activeGraphState?.graph?.nodes ?? [];
+  const readinessNode = [...nodes]
+    .reverse()
+    .find((node) => node.type === "evaluate_readiness" && node.result?.structuredPayload?.operation === "evaluate_readiness");
+  const payload = readinessNode?.result?.structuredPayload;
+  if (!payload) {
+    return null;
+  }
+  return {
+    blockers: Array.isArray(payload.blockers) ? payload.blockers : [],
+    goalType: String(payload.goalType ?? payload.goal?.type ?? "beta_readiness"),
+    question: String(payload.question ?? payload.meta?.question ?? "Is this project ready for beta testing?"),
+    goal: extractShellGoal(String(payload.question ?? ""))
+  };
+}
+
+function renderCombinedStatusReadinessReply(executions) {
+  const projectSummaryRaw = executions.find((item) => item.action?.type === "project_summary");
+  const readinessExecution = executions.find((item) => item.action?.type === "evaluate_readiness");
+  const summary = parseProjectSummaryText(String(projectSummaryRaw?.stdout ?? ""));
+  const readiness = parseReadinessText(String(readinessExecution?.stdout ?? ""));
+
+  const lines = [];
+  if (summary.ticketCount != null) {
+    lines.push(`Project status: ${summary.ticketCount} active tickets, ${summary.candidateCount ?? 0} candidates, ${summary.noteCount ?? 0} notes.`);
+  } else {
+    lines.push("Project status is available, but the summary output was weaker than expected.");
+  }
+  const rankedTickets = rankStatusTickets(summary.topTickets);
+  if (rankedTickets.length) {
+    lines.push(`Current focus: ${rankedTickets.slice(0, 3).map((ticket) => `${ticket.id} (${ticket.lane})`).join(", ")}.`);
+  }
+  lines.push("");
+  lines.push(renderReadinessReply(readinessExecution?.structuredPayload, String(readinessExecution?.stdout ?? "")));
+  return lines.join("\n").trim();
+}
+
+function renderExecutionPlusReadinessReply(executions) {
+  const execution = executions.find((item) => item.action?.type === "execute_ticket");
+  const readiness = executions.find((item) => item.action?.type === "evaluate_readiness");
+  const ticketPayload = execution?.structuredPayload ?? null;
+  const readinessReply = renderReadinessReply(readiness?.structuredPayload, String(readiness?.stdout ?? ""));
+  const lines = [];
+  if (ticketPayload?.success) {
+    lines.push(`I started on ${execution.action.ticketId} and the execution path completed successfully.`);
+    if (Array.isArray(ticketPayload.changedFiles) && ticketPayload.changedFiles.length) {
+      lines.push(`Changed files: ${ticketPayload.changedFiles.join(", ")}.`);
+    }
+  } else if (ticketPayload?.status) {
+    lines.push(`I started with ${execution.action.ticketId}, but it did not complete safely.`);
+    lines.push(`Why it stopped: ${ticketPayload.error ?? ticketPayload.status}.`);
+    if (ticketPayload.executionPlan?.concerns?.length) {
+      lines.push(`Current concerns: ${ticketPayload.executionPlan.concerns.join("; ")}.`);
+    }
+  } else {
+    lines.push(`I started with ${execution?.action?.ticketId ?? "the highest-priority blocker"}.`);
+  }
+  lines.push("");
+  lines.push(readinessReply);
+  return lines.join("\n").trim();
+}
+
+function renderReadinessReply(structuredPayload, rawText) {
+  const parsed = structuredPayload?.operation === "evaluate_readiness"
+    ? parseReadinessPayload(structuredPayload)
+    : parseReadinessText(rawText);
+  const lines = [];
+  const blockerCount = parsed.blockers.length;
+  const severitySummary = summarizeBlockerSeverities(parsed.blockers);
+  if (parsed.verdict === "ready") {
+    lines.push(`Beta readiness: ready with ${Math.round(parsed.confidence * 100)}% confidence.`);
+  } else {
+    lines.push(`Beta readiness: not ready yet (${Math.round(parsed.confidence * 100)}% confidence).`);
+  }
+  if (blockerCount) {
+    lines.push(`Main blockers: ${blockerCount} total${severitySummary ? `, including ${severitySummary}` : ""}.`);
+    for (const blocker of parsed.blockers.slice(0, 3)) {
+      lines.push(`- ${blocker.title}`);
+    }
+  }
+  if (parsed.nextChecks.length) {
+    lines.push(`Next step: ${parsed.nextChecks[0]}`);
+  }
+  return lines.join("\n");
+}
+
+function parseReadinessPayload(payload) {
+  return {
+    verdict: String(payload?.opinion?.verdict ?? "unknown"),
+    confidence: Number(payload?.opinion?.confidence ?? 0),
+    blockers: Array.isArray(payload?.blockers) ? payload.blockers.map((item) => ({
+      title: String(item.title ?? item.reason ?? "").trim(),
+      severity: String(item.severity ?? "").trim()
+    })) : [],
+    nextChecks: Array.isArray(payload?.recommended_next_actions) ? payload.recommended_next_actions.map(String) : []
+  };
+}
+
+function parseReadinessText(text) {
+  const lines = String(text ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const verdictLine = lines.find((line) => line.startsWith("Verdict:")) ?? "";
+  const verdictMatch = verdictLine.match(/Verdict:\s+([a-z_]+)\s+\((\d+)% confidence\)/i);
+  const blockers = [];
+  let inBlockers = false;
+  let inNext = false;
+  const nextChecks = [];
+  for (const line of lines) {
+    if (line === "Top blockers:") {
+      inBlockers = true;
+      inNext = false;
+      continue;
+    }
+    if (line === "Next checks:") {
+      inBlockers = false;
+      inNext = true;
+      continue;
+    }
+    if (!line.startsWith("-")) {
+      continue;
+    }
+    if (inBlockers) {
+      const match = line.match(/^- \[([a-z]+)\]\s+(.+?)(?::\s+.+)?$/i);
+      blockers.push({
+        severity: match?.[1]?.toLowerCase() ?? "",
+        title: match?.[2] ?? line.slice(2)
+      });
+    } else if (inNext) {
+      nextChecks.push(line.replace(/^- /, ""));
+    }
+  }
+  return {
+    verdict: verdictMatch?.[1] ?? "unknown",
+    confidence: verdictMatch?.[2] ? Number(verdictMatch[2]) / 100 : 0,
+    blockers,
+    nextChecks
+  };
+}
+
+function summarizeBlockerSeverities(blockers) {
+  const counts = blockers.reduce((acc, blocker) => {
+    const key = blocker.severity || "unknown";
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
+  const parts = [];
+  if (counts.high) parts.push(`${counts.high} high`);
+  if (counts.medium) parts.push(`${counts.medium} medium`);
+  if (counts.low) parts.push(`${counts.low} low`);
+  return parts.join(", ");
+}
+
+function parseProjectSummaryText(text) {
+  const lines = String(text ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const counts = {
+    ticketCount: Number(lines.find((line) => line.startsWith("Tickets:"))?.split(":")[1]?.trim() ?? NaN),
+    candidateCount: Number(lines.find((line) => line.startsWith("Candidates:"))?.split(":")[1]?.trim() ?? NaN),
+    noteCount: Number(lines.find((line) => line.startsWith("Notes tracked:"))?.split(":")[1]?.trim() ?? NaN)
+  };
+  const topTickets = [];
+  let inTickets = false;
+  for (const line of lines) {
+    if (line === "Active Tickets:") {
+      inTickets = true;
+      continue;
+    }
+    if (!line.startsWith("-")) {
+      inTickets = false;
+      continue;
+    }
+    if (inTickets) {
+      const match = line.match(/^- \[([^\]]+)\]\s+([A-Z0-9-]+):\s+(.+)$/);
+      if (match) {
+        topTickets.push({ lane: match[1], id: match[2], title: match[3] });
+      }
+    }
+  }
+  return {
+    ...counts,
+    topTickets
+  };
+}
+
+function rankStatusTickets(tickets = []) {
+  const laneRank = new Map([
+    ["In Progress", 0],
+    ["Bugs P1", 1],
+    ["Bugs P2/P3", 2],
+    ["Human Inspection", 3],
+    ["Todo", 4],
+    ["Suggestions", 5],
+    ["Backlog", 6],
+    ["Deep Backlog", 7]
+  ]);
+  return tickets
+    .slice()
+    .sort((left, right) => (laneRank.get(left.lane) ?? 99) - (laneRank.get(right.lane) ?? 99) || left.id.localeCompare(right.id));
 }
 
 export function chooseShellPlannerModel(ollamaProvider) {
@@ -2364,6 +3924,49 @@ function formatProjectMetrics(metrics, json) {
   return lines.join("\n") + "\n";
 }
 
+function formatReadinessEvaluation(response, json) {
+  if (json) {
+    return `${JSON.stringify(response, null, 2)}\n`;
+  }
+  const lines = [
+    response.summary,
+    `Status: ${response.status}`,
+    `Verdict: ${response.opinion.verdict} (${Math.round(response.opinion.confidence * 100)}% confidence)`
+  ];
+  if (response.evidence?.length) {
+    lines.push("");
+    lines.push("Evidence basis:");
+    for (const item of response.evidence.slice(0, 3)) {
+      const freshness = item.freshness?.status && item.freshness.status !== "unknown"
+        ? ` | freshness: ${item.freshness.status}`
+        : "";
+      lines.push(`- [${item.source}] ${item.ref}: ${item.claim}${freshness}`);
+    }
+  }
+  if (response.blockers?.length) {
+    lines.push("");
+    lines.push("Top blockers:");
+    for (const blocker of response.blockers.slice(0, 4)) {
+      lines.push(`- [${blocker.severity}] ${blocker.title}: ${blocker.reason}`);
+    }
+  }
+  if (response.gaps?.length) {
+    lines.push("");
+    lines.push("Evidence gaps:");
+    for (const gap of response.gaps.slice(0, 4)) {
+      lines.push(`- ${gap}`);
+    }
+  }
+  if (response.recommended_next_actions?.length) {
+    lines.push("");
+    lines.push("Next checks:");
+    for (const item of response.recommended_next_actions.slice(0, 4)) {
+      lines.push(`- ${item}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function formatSyncResult(result, json) {
   if (json) {
     return `${JSON.stringify(result, null, 2)}\n`;
@@ -2394,6 +3997,28 @@ function formatRoute(route, json) {
     return `No route available for ${route.taskClass}\n`;
   }
   return `${route.recommended.providerId}:${route.recommended.modelId}\n${route.recommended.reason}\n`;
+}
+
+function renderExecuteTicketResult(action, payload) {
+  const lines = [
+    `Ticket: ${action.ticketId}`,
+    `Status: ${payload.status ?? (payload.success ? "ok" : "failed")}`,
+    `Apply: ${action.apply === false ? "no" : "yes"}`,
+    `Ready: ${payload.executionPlan?.ready ? "yes" : "no"}`
+  ];
+  if (payload.executionPlan?.verificationCommands?.length) {
+    lines.push(`Verification: ${payload.executionPlan.verificationCommands.map((item) => item.command).join(" | ")}`);
+  }
+  if (payload.executionPlan?.workingSet?.length) {
+    lines.push(`Files: ${payload.executionPlan.workingSet.join(", ")}`);
+  }
+  if (payload.changedFiles?.length) {
+    lines.push(`Changed files: ${payload.changedFiles.join(", ")}`);
+  }
+  if (payload.error) {
+    lines.push(`Error: ${payload.error}`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 const SHELL_HELP = `

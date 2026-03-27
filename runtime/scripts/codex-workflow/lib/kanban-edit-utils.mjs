@@ -1,5 +1,7 @@
 import { compactWhitespace } from "./markdown-utils.mjs";
 
+const TICKET_ID_RE = /\b([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)\b/;
+
 export function parseKanbanDocument(markdown) {
   const lines = String(markdown).replace(/\r\n/g, "\n").split("\n");
   const settingsStart = lines.findIndex((line) => /^%%\s*kanban:settings\s*$/i.test(line.trim()));
@@ -381,7 +383,7 @@ function appendArchivedTicket(archiveMarkdown, ticket) {
 }
 
 function extractTicketId(heading) {
-  const match = heading.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+  const match = heading.match(TICKET_ID_RE);
   return match ? match[1] : null;
 }
 

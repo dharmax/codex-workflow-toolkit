@@ -1,0 +1,73 @@
+{
+  "id": "run-2026-03-27T11-51-56-068Z-4f5a8f39",
+  "recordedAt": "2026-03-27T11:51:56.068Z",
+  "kind": "ticket-proving-run",
+  "mode": "tool-dev",
+  "repairTargetRoot": "/home/dharmax/work/codex-workflow-toolkit",
+  "evidenceRoot": "/tmp/ai-workflow-tool-dev-evidence-fFU4Zt",
+  "operationalRoot": "/tmp/ai-workflow-tool-dev-evidence-fFU4Zt",
+  "ok": true,
+  "payload": {
+    "ok": true,
+    "mode": "tool-dev",
+    "repairTargetRoot": "/home/dharmax/work/codex-workflow-toolkit",
+    "evidenceRoot": "/tmp/ai-workflow-tool-dev-evidence-fFU4Zt",
+    "root": "/tmp/ai-workflow-tool-dev-evidence-fFU4Zt",
+    "dbPath": "/tmp/ai-workflow-tool-dev-evidence-fFU4Zt/.ai-workflow/state/workflow.db",
+    "evaluatedFrom": "explicit",
+    "requestedLimit": 25,
+    "total": 1,
+    "passed": 1,
+    "codeContextPassed": 1,
+    "verificationPlanned": 1,
+    "verificationExecuted": 0,
+    "verificationPassed": 0,
+    "verificationBaselineRed": 0,
+    "ticketIds": [
+      "BUG-OVERLAY-01"
+    ],
+    "failures": [],
+    "tickets": [
+      {
+        "id": "BUG-OVERLAY-01",
+        "title": "Restore global overlay handling for non-dialog modals after the app-shell refactor.",
+        "lane": "Bugs P1",
+        "expectedCodeContext": true,
+        "ok": true,
+        "reasons": [],
+        "ticketSourcePath": "workflow-db",
+        "workingSet": [
+          "src/ui/components/dialog/modal.riot"
+        ],
+        "relevantSymbols": [],
+        "executionPlan": {
+          "ticketId": "BUG-OVERLAY-01",
+          "packageManager": "npm",
+          "verificationCommands": [
+            {
+              "command": "npm run test:e2e",
+              "source": "ticket-verification"
+            },
+            {
+              "command": "npm run --silent test:e2e",
+              "source": "ui-flow"
+            },
+            {
+              "command": "npm run --silent test:unit",
+              "source": "unit-coverage"
+            }
+          ],
+          "ready": true,
+          "concerns": [],
+          "workingSet": [
+            "src/ui/components/dialog/modal.riot"
+          ],
+          "relevantSymbols": []
+        },
+        "verificationRun": null,
+        "guidanceOk": true,
+        "contextOk": true
+      }
+    ]
+  }
+}

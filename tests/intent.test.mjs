@@ -7,7 +7,7 @@ const plannerContext = {
   projectCodelets: [],
   summary: {
     fileCount: 100,
-    activeTickets: [],
+    activeTickets: [{ id: "REF-APP-SHELL-01", title: "Continue app-shell hardening", lane: "In Progress" }],
     knowledge: { tasks: ["summarization", "review"] }
   }
 };
@@ -55,6 +55,7 @@ const TEST_CASES = [
   { input: "show ticket TKT-123", expected: "extract_ticket" },
   { input: "decompose ticket TKT-123", expected: "decompose_ticket" },
   { input: "break down TKT-123", expected: "decompose_ticket" },
+  { input: "complete the ticket in progress", expected: "execute_ticket" },
 
   // 9. Guidelines
   { input: "guidelines", expected: "extract_guidelines" },

@@ -87,6 +87,40 @@ async function appendAuditBlock(knowledgePath, config) {
   await writeFile(knowledgePath, current + block, "utf8");
 }
 
+async function createShellFixtureProject() {
+  const targetRoot = await makeTempDir();
+  await runNode(["scripts/init-project.mjs", "--target", targetRoot], { cwd: repoRoot });
+  await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+  await mkdir(path.join(targetRoot, "src", "ui", "components", "dialog"), { recursive: true });
+  await mkdir(path.join(targetRoot, "tests"), { recursive: true });
+  await writeFile(
+    path.join(targetRoot, "package.json"),
+    JSON.stringify({
+      name: "shell-current-work-test",
+      type: "module",
+      scripts: {
+        "test:e2e": "node -e \"console.log('e2e ok')\"",
+        "test:unit": "node -e \"console.log('unit ok')\""
+      }
+    }, null, 2),
+    "utf8"
+  );
+  await writeFile(
+    path.join(targetRoot, "docs", "kanban.md"),
+    [
+      "# Kanban",
+      "",
+      "## In Progress",
+      "- [ ] **REF-APP-SHELL-01**: Continue app-shell and modal-surface refactor hardening after review findings.",
+      "  - Outcome: restore overlay handling and deep-link routing."
+    ].join("\n"),
+    "utf8"
+  );
+  await writeFile(path.join(targetRoot, "src", "ui", "components", "dialog", "modal.riot"), "<modal></modal>\n", "utf8");
+  await writeFile(path.join(targetRoot, "tests", "modal.e2e.spec.ts"), "test('modal', () => {})\n", "utf8");
+  return targetRoot;
+}
+
 test("installer dry-run reports files without writing them", async () => {
   const targetRoot = await makeTempDir();
 
@@ -226,6 +260,304 @@ test("web tutorial server serves tutorial html and mode-aware tutorial api", asy
   }
 });
 
+test("web tutorial readiness api exposes the shared readiness evaluator in tool-dev mode", async () => {
+  const evidenceRoot = await createShellFixtureProject();
+  const sync = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: evidenceRoot });
+  assert.equal(sync.code, 0, sync.stderr || sync.stdout);
+
+  const child = spawn(process.execPath, [
+    path.join(repoRoot, "cli", "ai-workflow.mjs"),
+    "web",
+    "tutorial",
+    "--mode",
+    "tool-dev",
+    "--evidence-root",
+    evidenceRoot,
+    "--port",
+    "0",
+    "--json"
+  ], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  try {
+    const started = await new Promise((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      const timeout = setTimeout(() => reject(new Error(`tutorial readiness server timeout\nstdout: ${stdout}\nstderr: ${stderr}`)), 5000);
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+        const trimmed = stdout.trim();
+        if (!trimmed) return;
+        try {
+          const payload = JSON.parse(trimmed);
+          clearTimeout(timeout);
+          resolve(payload);
+        } catch {
+          // wait for complete payload
+        }
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.on("exit", (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`tutorial readiness server exited early with code ${code}\nstdout: ${stdout}\nstderr: ${stderr}`));
+      });
+    });
+
+    const response = await fetch(new URL("/api/readiness?goal=beta_readiness&question=Is%20this%20ready%20for%20beta%20testing%3F", started.url));
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.operation, "evaluate_readiness");
+    assert.equal(payload.meta.mode, "tool-dev");
+    assert.equal(payload.meta.evidence_root, evidenceRoot);
+    assert.equal(payload.meta.operational_root, evidenceRoot);
+    assert.equal(Array.isArray(payload.gaps), true);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => child.on("exit", resolve));
+    await cleanup(evidenceRoot);
+  }
+});
+
+test("web tutorial host ask api routes natural-language readiness requests through the shared host resolver", async () => {
+  const evidenceRoot = await createShellFixtureProject();
+  const sync = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: evidenceRoot });
+  assert.equal(sync.code, 0, sync.stderr || sync.stdout);
+
+  const child = spawn(process.execPath, [
+    path.join(repoRoot, "cli", "ai-workflow.mjs"),
+    "web",
+    "tutorial",
+    "--mode",
+    "tool-dev",
+    "--evidence-root",
+    evidenceRoot,
+    "--port",
+    "0",
+    "--json"
+  ], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  try {
+    const started = await new Promise((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      const timeout = setTimeout(() => reject(new Error(`tutorial host server timeout\nstdout: ${stdout}\nstderr: ${stderr}`)), 5000);
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+        const trimmed = stdout.trim();
+        if (!trimmed) return;
+        try {
+          const payload = JSON.parse(trimmed);
+          clearTimeout(timeout);
+          resolve(payload);
+        } catch {
+          // wait for full json
+        }
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.on("exit", (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`tutorial host server exited early with code ${code}\nstdout: ${stdout}\nstderr: ${stderr}`));
+      });
+    });
+
+    const response = await fetch(new URL("/api/ask?text=Is%20this%20project%20ready%20for%20beta%20testing%3F", started.url));
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.route.operation, "evaluate_readiness");
+    assert.equal(payload.route.intent, "readiness_question");
+    assert.equal(payload.response_type, "protocol");
+    assert.equal(payload.payload.operation, "evaluate_readiness");
+    assert.equal(payload.meta.mode, "tool-dev");
+    assert.equal(payload.meta.evidence_root, evidenceRoot);
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => child.on("exit", resolve));
+    await cleanup(evidenceRoot);
+  }
+});
+
+test("web tutorial host ask api routes current-work questions without shell-only behavior", async () => {
+  const evidenceRoot = await createShellFixtureProject();
+  const sync = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: evidenceRoot });
+  assert.equal(sync.code, 0, sync.stderr || sync.stdout);
+
+  const child = spawn(process.execPath, [
+    path.join(repoRoot, "cli", "ai-workflow.mjs"),
+    "web",
+    "tutorial",
+    "--mode",
+    "tool-dev",
+    "--evidence-root",
+    evidenceRoot,
+    "--port",
+    "0",
+    "--json"
+  ], {
+    cwd: repoRoot,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  try {
+    const started = await new Promise((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      const timeout = setTimeout(() => reject(new Error(`tutorial host server timeout\nstdout: ${stdout}\nstderr: ${stderr}`)), 5000);
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
+        const trimmed = stdout.trim();
+        if (!trimmed) return;
+        try {
+          const payload = JSON.parse(trimmed);
+          clearTimeout(timeout);
+          resolve(payload);
+        } catch {
+          // wait for full json
+        }
+      });
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      child.on("exit", (code) => {
+        clearTimeout(timeout);
+        reject(new Error(`tutorial host server exited early with code ${code}\nstdout: ${stdout}\nstderr: ${stderr}`));
+      });
+    });
+
+    const response = await fetch(new URL("/api/ask?text=What%20are%20we%20working%20on%20right%20now%3F", started.url));
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.route.operation, "project_summary");
+    assert.equal(payload.route.intent, "current_work");
+    assert.equal(payload.response_type, "summary");
+    assert.match(payload.payload.answer, /REF-APP-SHELL-01/);
+    assert.equal(payload.meta.mode, "tool-dev");
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise((resolve) => child.on("exit", resolve));
+    await cleanup(evidenceRoot);
+  }
+});
+
+test("ask command routes natural-language readiness requests for real host-style usage", async () => {
+  const evidenceRoot = await createShellFixtureProject();
+  const sync = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: evidenceRoot });
+  assert.equal(sync.code, 0, sync.stderr || sync.stdout);
+
+  try {
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "ask",
+      "--mode",
+      "tool-dev",
+      "--evidence-root",
+      evidenceRoot,
+      "Is this project ready for beta testing?",
+      "--json"
+    ], { cwd: repoRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.route.operation, "evaluate_readiness");
+    assert.equal(payload.route.intent, "readiness_question");
+    assert.equal(payload.response_type, "protocol");
+    assert.equal(payload.payload.operation, "evaluate_readiness");
+    assert.equal(payload.meta.mode, "tool-dev");
+    assert.equal(payload.meta.evidence_root, evidenceRoot);
+  } finally {
+    await cleanup(evidenceRoot);
+  }
+});
+
+test("ask command renders readiness in assistant-first language for plugin-style CLI use", async () => {
+  const evidenceRoot = await createShellFixtureProject();
+  const sync = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: evidenceRoot });
+  assert.equal(sync.code, 0, sync.stderr || sync.stdout);
+
+  try {
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "ask",
+      "--mode",
+      "tool-dev",
+      "--evidence-root",
+      evidenceRoot,
+      "Is this project ready for beta testing?"
+    ], { cwd: repoRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Beta readiness: not ready yet/i);
+    assert.match(result.stdout, /Next step:/);
+    assert.doesNotMatch(result.stdout, /Status: complete/);
+    assert.doesNotMatch(result.stdout, /Evidence basis:/);
+  } finally {
+    await cleanup(evidenceRoot);
+  }
+});
+
+test("ask command handles combined project status and beta readiness questions", async () => {
+  const evidenceRoot = await createShellFixtureProject();
+  const sync = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: evidenceRoot });
+  assert.equal(sync.code, 0, sync.stderr || sync.stdout);
+
+  try {
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "ask",
+      "--mode",
+      "tool-dev",
+      "--evidence-root",
+      evidenceRoot,
+      "what's the project status? how ready is it for beta test?"
+    ], { cwd: repoRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Project status:/);
+    assert.match(result.stdout, /Current focus:/);
+    assert.match(result.stdout, /Beta readiness: not ready yet/i);
+    assert.doesNotMatch(result.stdout, /Routed to:/);
+    assert.doesNotMatch(result.stdout, /Status: complete/);
+  } finally {
+    await cleanup(evidenceRoot);
+  }
+});
+
+test("ask command routes current-work questions without the tutorial server wrapper", async () => {
+  const evidenceRoot = await createShellFixtureProject();
+  const sync = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: evidenceRoot });
+  assert.equal(sync.code, 0, sync.stderr || sync.stdout);
+
+  try {
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "ask",
+      "--mode",
+      "tool-dev",
+      "--evidence-root",
+      evidenceRoot,
+      "What are we working on right now?",
+      "--json"
+    ], { cwd: repoRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.route.operation, "project_summary");
+    assert.equal(payload.route.intent, "current_work");
+    assert.equal(payload.response_type, "summary");
+    assert.match(payload.payload.answer, /REF-APP-SHELL-01/);
+  } finally {
+    await cleanup(evidenceRoot);
+  }
+});
+
 test("non-interactive shell answers provider status directly without prompting for Ollama hardware", async () => {
   const child = spawn(process.execPath, [
     path.join(repoRoot, "cli", "ai-workflow.mjs"),
@@ -314,6 +646,128 @@ test("one-shot shell request still works when boolean flags come before natural 
 
   assert.equal(result.code, 0);
   assert.match(result.stdout, /inspect project state/i);
+});
+
+test("one-shot shell can answer current-work questions with related artifacts", async () => {
+  const targetRoot = await createShellFixtureProject();
+
+  try {
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "--no-ai",
+      "tell me what we're working on right now and what should we do about it. which artifacts relates to it."
+    ], { cwd: targetRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /REF-APP-SHELL-01/);
+    assert.match(result.stdout, /Files: .*modal\.riot.*modal\.e2e\.spec\.ts/i);
+    assert.match(result.stdout, /Review focus/i);
+    assert.doesNotMatch(result.stdout, /Action failed|AI recovery|couldn't map it to CLI actions/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("one-shot shell can answer in-progress questions from docs kanban without failure chatter", async () => {
+  const targetRoot = await createShellFixtureProject();
+
+  try {
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "--no-ai",
+      "what's in-progress?"
+    ], { cwd: targetRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /REF-APP-SHELL-01/);
+    assert.doesNotMatch(result.stdout, /Action failed|AI recovery|couldn't map it to CLI actions/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("one-shot shell can explain the current ticket with artifacts instead of emitting a strategy error", async () => {
+  const targetRoot = await createShellFixtureProject();
+
+  try {
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "--no-ai",
+      "explain ticket. which artifacts it relates to and what functionality exactly."
+    ], { cwd: targetRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Ticket: REF-APP-SHELL-01/i);
+    assert.match(result.stdout, /Files: .*modal\.riot.*modal\.e2e\.spec\.ts/i);
+    assert.match(result.stdout, /Resume prompt/i);
+    assert.doesNotMatch(result.stdout, /Action failed|AI recovery|couldn't map it to CLI actions/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("one-shot shell handles complex goal-driven ticket requests as staged planning instead of shallow status", async () => {
+  const targetRoot = await createShellFixtureProject();
+
+  try {
+    await writeFile(
+      path.join(targetRoot, "docs", "kanban.md"),
+      [
+        "# Kanban",
+        "",
+        "## In Progress",
+        "- [ ] **REF-APP-SHELL-01**: Continue app-shell and modal-surface refactor hardening after review findings.",
+        "",
+        "## Todo",
+        "- [ ] **BETA-STAB-01**: Stabilize beta-critical invite, auth, feedback, quota, and core UX flows without adding features.",
+        "- [ ] **ADMIN-METRICS-01**: Replace estimated AI spend with real usage metrics and a detailed metrics screen."
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "--no-ai",
+      "resolve the in-progress ticket, prioritize the rest of the tickets according to the goal, which is preparing the system to a non-embaracing beta-testing and resolve what is needed to achieve that goal"
+    ], { cwd: targetRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /I treated this as a staged request/i);
+    assert.match(result.stdout, /Ticket: REF-APP-SHELL-01/i);
+    assert.match(result.stdout, /Apply: no/i);
+    assert.match(result.stdout, /Suggested remaining priorities: BETA-STAB-01/i);
+    assert.doesNotMatch(result.stdout, /^Tickets currently in progress:/m);
+    assert.doesNotMatch(result.stdout, /Action failed|AI recovery|couldn't map it to CLI actions/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("one-shot shell combines project status and readiness into a conversational answer without protocol leakage", async () => {
+  const targetRoot = await createShellFixtureProject();
+
+  try {
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "--no-ai",
+      "what's the project status? how ready is it for beta test?"
+    ], { cwd: targetRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Project status:/);
+    assert.match(result.stdout, /Beta readiness:/);
+    assert.doesNotMatch(result.stdout, /Status: complete/);
+    assert.doesNotMatch(result.stdout, /Not ready for beta readiness/i);
+    assert.doesNotMatch(result.stdout, /Evidence basis:/);
+    assert.doesNotMatch(result.stdout, /Action failed|AI recovery|assert node/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
 });
 
 test("generated helper scripts work against initialized project state", async () => {

@@ -4,9 +4,10 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { addManualNote, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../core/services/sync.mjs";
+import { addManualNote, evaluateProjectReadiness, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../core/services/sync.mjs";
 import { buildTicketEntity, renderKanbanProjection } from "../core/services/projections.mjs";
 import { openWorkflowStore } from "../core/db/sqlite-store.mjs";
+import { PROTOCOL_VERSION, validateEvaluateReadinessResponse } from "../core/contracts/dual-surface-protocol.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureRoot = path.join(repoRoot, "tests", "fixtures", "workflow-repo");
@@ -342,6 +343,213 @@ test("project summary excludes done tickets and sync suppresses projection/progr
     assert.equal(summary.activeTickets.some((ticket) => ticket.lane === "Done"), false);
     assert.equal(result.summary.notes.some((note) => note.filePath === "kanban.md"), false);
     assert.equal(result.summary.notes.some((note) => note.filePath === "progress.md"), false);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("evaluateProjectReadiness returns insufficient_evidence when verification proof is missing", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-readiness-gap-"));
+
+  try {
+    await cp(fixtureRoot, targetRoot, { recursive: true });
+    await syncProject({ projectRoot: targetRoot });
+
+    const response = await evaluateProjectReadiness({
+      projectRoot: targetRoot,
+      request: {
+        protocol_version: PROTOCOL_VERSION,
+        operation: "evaluate_readiness",
+        goal: {
+          type: "beta_readiness",
+          target: "project",
+          question: "Is this fixture ready for beta testing?"
+        }
+      }
+    });
+
+    validateEvaluateReadinessResponse(response);
+    assert.equal(response.status, "insufficient_evidence");
+    assert.equal(response.opinion.verdict, "not_ready");
+    assert.equal(response.gaps.some((item) => /verification artifact/i.test(item)), true);
+    assert.equal(response.recommended_next_actions.length >= 1, true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("evaluateProjectReadiness returns complete when checklist and verification artifacts exist without blockers", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-readiness-complete-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "README.md"), "# Ready Fixture\n", "utf8");
+    await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+    await mkdir(path.join(targetRoot, "tests"), { recursive: true });
+    await writeFile(path.join(targetRoot, "docs", "beta-checklist.md"), [
+      "# Beta Checklist",
+      "",
+      "- Critical flow smoke test",
+      "- No open blockers"
+    ].join("\n"), "utf8");
+    await writeFile(path.join(targetRoot, "tests", "smoke.test.js"), [
+      "export function smoke() {",
+      "  return true;",
+      "}"
+    ].join("\n"), "utf8");
+    await writeFile(path.join(targetRoot, "kanban.md"), [
+      "# Kanban",
+      "",
+      "## Done",
+      "",
+      "- [x] REL-001 Release preparation complete"
+    ].join("\n"), "utf8");
+
+    await syncProject({ projectRoot: targetRoot });
+
+    const response = await evaluateProjectReadiness({
+      projectRoot: targetRoot,
+      request: {
+        protocol_version: PROTOCOL_VERSION,
+        operation: "evaluate_readiness",
+        goal: {
+          type: "beta_readiness",
+          target: "project",
+          question: "Is this ready for beta testing?"
+        }
+      }
+    });
+
+    validateEvaluateReadinessResponse(response);
+    assert.equal(response.status, "complete");
+    assert.equal(response.opinion.verdict, "ready");
+    assert.equal(response.gaps.length, 0);
+    assert.equal(response.opinion.confidence >= 0.6, true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("evaluateProjectReadiness uses recent run artifacts as explicit verification evidence", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-readiness-run-artifact-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "README.md"), "# Ready Fixture\n", "utf8");
+    await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+    await mkdir(path.join(targetRoot, "tests"), { recursive: true });
+    await mkdir(path.join(targetRoot, ".ai-workflow", "state", "run-artifacts"), { recursive: true });
+    await writeFile(path.join(targetRoot, "docs", "beta-checklist.md"), "# Beta Checklist\n- smoke\n", "utf8");
+    await writeFile(path.join(targetRoot, "tests", "smoke.test.js"), "export const smoke = true;\n", "utf8");
+    await writeFile(path.join(targetRoot, "kanban.md"), "# Kanban\n\n## Done\n- [x] REL-001 Ready\n", "utf8");
+
+    const recordedAt = new Date().toISOString();
+    await writeFile(path.join(targetRoot, ".ai-workflow", "state", "run-artifacts", "latest.json"), JSON.stringify({
+      id: "run-recent",
+      recordedAt
+    }, null, 2));
+    await writeFile(path.join(targetRoot, ".ai-workflow", "state", "run-artifacts", "run-recent.json"), JSON.stringify({
+      id: "run-recent",
+      recordedAt,
+      kind: "execution-dry-run",
+      ok: true,
+      payload: {
+        verificationRun: {
+          ok: true
+        }
+      }
+    }, null, 2));
+
+    await syncProject({ projectRoot: targetRoot });
+
+    const response = await evaluateProjectReadiness({
+      projectRoot: targetRoot,
+      request: {
+        protocol_version: PROTOCOL_VERSION,
+        operation: "evaluate_readiness",
+        goal: {
+          type: "beta_readiness",
+          target: "project",
+          question: "Is this ready for beta testing?"
+        }
+      }
+    });
+
+    validateEvaluateReadinessResponse(response);
+    assert.equal(response.status, "complete");
+    assert.equal(response.evidence.some((item) => item.source === "test_results" && /run-recent/.test(item.ref)), true);
+    assert.equal(response.meta.freshness.verification_status, "fresh");
+    assert.equal(response.opinion.confidence >= 0.7, true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("evaluateProjectReadiness returns blocked for invalidated continuation state", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-readiness-continuation-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "README.md"), "# Ready Fixture\n", "utf8");
+    await mkdir(path.join(targetRoot, "docs"), { recursive: true });
+    await mkdir(path.join(targetRoot, "tests"), { recursive: true });
+    await writeFile(path.join(targetRoot, "docs", "beta-checklist.md"), "# Beta Checklist\n- smoke\n", "utf8");
+    await writeFile(path.join(targetRoot, "tests", "smoke.test.js"), "export const smoke = true;\n", "utf8");
+    await writeFile(path.join(targetRoot, "kanban.md"), "# Kanban\n\n## Done\n- [x] REL-001 Ready\n", "utf8");
+
+    await syncProject({ projectRoot: targetRoot });
+
+    const staleCreatedAt = new Date(Date.now() - (2 * 24 * 60 * 60 * 1000)).toISOString();
+    const response = await evaluateProjectReadiness({
+      projectRoot: targetRoot,
+      request: {
+        protocol_version: PROTOCOL_VERSION,
+        operation: "evaluate_readiness",
+        goal: {
+          type: "beta_readiness",
+          target: "project",
+          question: "Is this ready for beta testing?"
+        },
+        continuation_state: {
+          token: "eval-readiness:stale-token",
+          originating_operation: "evaluate_readiness",
+          next_allowed_operations: ["discover_work_context"],
+          created_at: staleCreatedAt
+        }
+      }
+    });
+
+    validateEvaluateReadinessResponse(response);
+    assert.equal(response.status, "blocked");
+    assert.equal(response.opinion.verdict, "unknown");
+    assert.equal(response.gaps.some((item) => /continuation state/i.test(item)), true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("evaluateProjectReadiness returns structured error responses for protocol mismatches", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-readiness-contract-"));
+
+  try {
+    await cp(fixtureRoot, targetRoot, { recursive: true });
+    await syncProject({ projectRoot: targetRoot });
+
+    const response = await evaluateProjectReadiness({
+      projectRoot: targetRoot,
+      request: {
+        protocol_version: "2.0",
+        operation: "evaluate_readiness",
+        goal: {
+          type: "beta_readiness",
+          target: "project",
+          question: "Is this fixture ready for beta testing?"
+        }
+      }
+    });
+
+    validateEvaluateReadinessResponse(response);
+    assert.equal(response.status, "error");
+    assert.equal(response.opinion.verdict, "unknown");
+    assert.equal(response.meta.error_kind, "contract_mismatch");
+    assert.equal(response.gaps.some((item) => /unsupported protocol version/i.test(item)), true);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

@@ -47,11 +47,15 @@ test("Agentic planner correctly uses DB definitions, active tickets, and history
     
     assert.equal(plan.kind, "reply");
     
-    // Check that the system prompt still includes the planner contract and action catalog.
+    // Check that the system prompt includes the planner contract and action catalog, not the old status dump.
     assert.match(lastSystem, /## Available Actions \(Your Capabilities\):/);
-    assert.match(lastSystem, /## Project Current Status \(Smart Summary\)\nStatus unavailable\./);
+    assert.match(lastSystem, /## Operating Contract/);
+    assert.match(lastSystem, /## Graph Contract/);
+    assert.doesNotMatch(lastSystem, /## Project Current Status \(Smart Summary\)/);
 
-    // Check that the prompt includes the history
+    // Check that the prompt includes runtime context and history-derived notes
+    assert.match(lastPrompt, /## Runtime Context/);
+    assert.match(lastPrompt, /### Notes \/ Lore \/ Extra: Recent Interaction/);
     assert.match(lastPrompt, /You have TKT-001 in Todo\./);
 
     // Verify the mock server received enough context to formulate the correct reply

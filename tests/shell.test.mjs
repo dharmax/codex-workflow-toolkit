@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chooseShellPlannerModel, compileShellAction, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, planShellRequestWithAgent, resolveShellPlanners, runShellTurn } from "../cli/lib/shell.mjs";
+import { chooseShellPlannerModel, compileShellAction, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, buildShellPlannerPrompt, planShellRequestWithAgent, resolveShellPlanners, runShellTurn } from "../cli/lib/shell.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
 
 test("buildShellContext reads foundational project files", async (t) => {
@@ -74,7 +74,7 @@ test("resolveShellPlanners prefers local shell planning when remote access is en
   }
 });
 
-test("planShellRequestWithAgent uses sophisticated context and memory", async (t) => {
+test("planShellRequestWithAgent uses operator-first prompt design and interaction memory", async (t) => {
   // Mock provider
   let capturedPrompt = null;
   registerProvider("mock-planner", {
@@ -119,10 +119,46 @@ test("planShellRequestWithAgent uses sophisticated context and memory", async (t
   assert.equal(plan.actions[0].type, "ingest_artifact");
   assert.equal(plan.strategy, "Parse PRD and create tickets");
 
-  // Verify context and memory
-  assert.match(capturedPrompt.system, /### MISSION\.md\nBuild the future\./);
-  assert.match(capturedPrompt.system, /## Project Current Status \(Smart Summary\)\nSmart status here\./);
-  assert.match(capturedPrompt.prompt, /### Recent Interaction \(Last Turn\):\nUser: Previous turn\nBrain: Previous reply/);
+  assert.match(capturedPrompt.system, /## Operating Contract/);
+  assert.match(capturedPrompt.system, /## Available Actions \(Your Capabilities\):/);
+  assert.match(capturedPrompt.system, /## Graph Contract/);
+  assert.match(capturedPrompt.system, /## Planning Rules/);
+  assert.doesNotMatch(capturedPrompt.system, /### MISSION\.md/);
+  assert.doesNotMatch(capturedPrompt.system, /## Project Current Status \(Smart Summary\)/);
+  assert.match(capturedPrompt.prompt, /## Runtime Context/);
+  assert.match(capturedPrompt.prompt, /### Notes \/ Lore \/ Extra: Recent Interaction/);
+  assert.match(capturedPrompt.prompt, /User: Previous turn\nBrain: Previous reply/);
+});
+
+test("buildShellPlannerPrompt keeps first-turn runtime context minimal by default", async () => {
+  const { system, prompt } = await buildShellPlannerPrompt("what should we do next?", {
+    root: "/tmp/example-project",
+    plannerContext: {
+      root: "/tmp/example-project",
+      mission: "Build the future.",
+      kanban: "## Todo\n- TKT-001",
+      guidelines: "Use ESM.",
+      smartStatus: "Smart status here.",
+      providerState: {
+        providers: {
+          ollama: { available: true, local: true, host: "http://127.0.0.1:11434" }
+        }
+      },
+      summary: {
+        activeTickets: [{ id: "TKT-001", title: "Example", lane: "Todo" }]
+      },
+      toolkitCodelets: [],
+      projectCodelets: []
+    },
+    history: []
+  });
+
+  assert.match(system, /## Operating Contract/);
+  assert.match(system, /## Available Actions \(Your Capabilities\):/);
+  assert.doesNotMatch(system, /MISSION\.md|KANBAN\.md|GUIDELINES|Smart status here\./);
+  assert.match(prompt, /## Runtime Context\ncwd: \/tmp\/example-project\nproject: example-project\nactive-ticket-count: 1/);
+  assert.match(prompt, /available-providers: ollama:local@http:\/\/127\.0\.0\.1:11434/);
+  assert.doesNotMatch(prompt, /Build the future\.|## Todo|Use ESM\.|Smart status here\./);
 });
 
 test("planShellRequestWithAgent handles vague requests by asking for clarification", async (t) => {
@@ -179,6 +215,71 @@ test("planShellRequestWithAgent handles multi-step strategy", async (t) => {
   assert.equal(result.kind, "plan");
   assert.equal(result.actions.length, 2);
   assert.equal(result.strategy, "First ideate, then sync, then show the new tickets");
+});
+
+test("planShellRequest prefers the AI graph planner for semantic paraphrases of complex requests", async () => {
+  const seen = [];
+  registerProvider("mock-complex-semantic", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async ({ prompt }) => {
+      seen.push(prompt);
+      return {
+        response: JSON.stringify({
+          kind: "plan",
+          confidence: 0.99,
+          reason: "Complex goal-driven request requires graph planning",
+          strategy: "Inspect current ticket, plan its execution, inspect remaining tickets, then rank them against the goal.",
+          actions: [
+            { type: "extract_ticket", ticketId: "REF-APP-SHELL-01" },
+            { type: "execute_ticket", ticketId: "REF-APP-SHELL-01", apply: false },
+            { type: "list_tickets" }
+          ]
+        })
+      };
+    }
+  });
+
+  const options = {
+    root: "/tmp",
+    planner: { providerId: "mock-complex-semantic", modelId: "brain-v1" },
+    planners: {
+      planners: [{ providerId: "mock-complex-semantic", modelId: "brain-v1" }],
+      heuristic: { mode: "heuristic", reason: "fallback" }
+    },
+    plannerContext: {
+      ...plannerContext,
+      summary: {
+        ...plannerContext.summary,
+        activeTickets: [
+          { id: "REF-APP-SHELL-01", title: "Continue app-shell hardening", lane: "In Progress" },
+          { id: "BETA-STAB-01", title: "Stabilize beta-critical invite, auth, feedback, quota, and core UX flows without adding features.", lane: "Todo" }
+        ]
+      }
+    },
+    history: []
+  };
+
+  const paraphrases = [
+    "resolve the in-progress ticket, prioritize the rest of the tickets according to the goal, which is preparing the system to a non-embaracing beta-testing and resolve what is needed to achieve that goal",
+    "wrap up whatever is active now, then figure out what else should come first if the goal is a beta that is not embarrassing",
+    "take care of the thing currently in flight and afterwards sort the remaining work around beta readiness rather than feature ambition",
+    "finish what's underway, inspect the rest, and tell me the right order if we're trying to get to a solid beta",
+    "work through the active item first, then rank everything else by what most reduces beta risk"
+  ];
+
+  for (const input of paraphrases) {
+    const plan = await planShellRequest(input, options);
+    assert.equal(plan.kind, "plan", input);
+    assert.equal(plan.planner.providerId, "mock-complex-semantic", input);
+    assert.equal(plan.actions[0].type, "extract_ticket", input);
+    assert.equal(plan.actions[1].type, "execute_ticket", input);
+    assert.equal(plan.actions[2].type, "list_tickets", input);
+  }
+
+  assert.equal(seen.length, paraphrases.length);
+  assert.match(seen[0], /Current User Request:/);
 });
 
 test("planShellRequestWithAgent handles plan with missing actions gracefully", async (t) => {
@@ -356,6 +457,194 @@ test("heuristic shell planner answers capability and greeting prompts like an as
   assert.match(greeting.reply, /Ready\./);
 });
 
+test("heuristic shell planner handles broad project-next questions and implicit in-progress ticket references", () => {
+  const projectNext = planShellRequestHeuristically("so what can you tell me about the project? what do you think we should do next?", plannerContext);
+  assert.equal(projectNext.kind, "reply");
+  assert.match(projectNext.reply, /example-project/);
+  assert.match(projectNext.reply, /TKT-001/);
+
+  const inProgress = planShellRequestHeuristically("what's in-progress?", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [{ id: "REF-APP-SHELL-01", title: "Continue app-shell hardening", lane: "In Progress" }]
+    }
+  });
+  assert.equal(inProgress.kind, "reply");
+  assert.match(inProgress.reply, /REF-APP-SHELL-01/);
+
+  const explain = planShellRequestHeuristically("explain ticket. which artifacts it relates to and what functionality exactly.", {
+    ...plannerContext,
+    toolkitCodelets: [...plannerContext.toolkitCodelets, { id: "context-pack", summary: "Build ticket context." }],
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [{ id: "REF-APP-SHELL-01", title: "Continue app-shell hardening", lane: "In Progress" }]
+    }
+  });
+  assert.equal(explain.kind, "plan");
+  assert.deepEqual(explain.actions, [
+    { type: "run_codelet", codeletId: "context-pack", args: ["--ticket", "REF-APP-SHELL-01"] }
+  ]);
+
+  const currentWork = planShellRequestHeuristically("tell me what we're working on right now and what should we do about it. which artifacts relates to it.", {
+    ...plannerContext,
+    toolkitCodelets: [...plannerContext.toolkitCodelets, { id: "context-pack", summary: "Build ticket context." }],
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [{ id: "REF-APP-SHELL-01", title: "Continue app-shell hardening", lane: "In Progress" }]
+    }
+  });
+  assert.equal(currentWork.kind, "plan");
+  assert.deepEqual(currentWork.actions, [
+    { type: "run_codelet", codeletId: "context-pack", args: ["--ticket", "REF-APP-SHELL-01"] }
+  ]);
+
+  const execute = planShellRequestHeuristically("ok, complete the ticket in progress. resolve it.", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [{ id: "REF-APP-SHELL-01", title: "Continue app-shell hardening", lane: "In Progress" }]
+    }
+  });
+  assert.equal(execute.kind, "plan");
+  assert.deepEqual(execute.actions, [
+    { type: "execute_ticket", ticketId: "REF-APP-SHELL-01", apply: true }
+  ]);
+});
+
+test("heuristic shell planner routes complex goal-directed ticket requests through staged planning", () => {
+  const complexContext = {
+    ...plannerContext,
+    toolkitCodelets: [...plannerContext.toolkitCodelets, { id: "context-pack", summary: "Build ticket context." }],
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [
+        { id: "REF-APP-SHELL-01", title: "Continue app-shell hardening", lane: "In Progress" },
+        { id: "BETA-STAB-01", title: "Stabilize beta-critical invite, auth, feedback, quota, and core UX flows without adding features.", lane: "Todo" },
+        { id: "ADMIN-METRICS-01", title: "Replace estimated AI spend with real usage metrics and a detailed metrics screen.", lane: "Todo" }
+      ]
+    }
+  };
+
+  const requests = [
+    "resolve the in-progress ticket, prioritize the rest of the tickets according to the goal, which is preparing the system to a non-embaracing beta-testing and resolve what is needed to achieve that goal",
+    "finish the current ticket, then tell me what else must land before beta",
+    "complete the current task and then reprioritize everything around stability, not features"
+  ];
+
+  for (const input of requests) {
+    const plan = planShellRequestHeuristically(input, complexContext);
+    assert.equal(plan.kind, "plan", input);
+    assert.deepEqual(plan.actions, [
+      { type: "run_codelet", codeletId: "context-pack", args: ["--ticket", "REF-APP-SHELL-01"] },
+      { type: "execute_ticket", ticketId: "REF-APP-SHELL-01", apply: false },
+      { type: "list_tickets" }
+    ], input);
+    assert.match(plan.strategy, /goal|beta|stability/i, input);
+    assert.deepEqual(plan.graph.nodes.map((node) => ({ kind: node.kind, type: node.type, dependsOn: node.dependsOn })), [
+      { kind: "action", type: "run_codelet", dependsOn: [] },
+      { kind: "action", type: "execute_ticket", dependsOn: ["n1"] },
+      { kind: "action", type: "list_tickets", dependsOn: ["n2"] },
+      { kind: "synthesize", type: "synthesize", dependsOn: ["n1", "n2", "n3"] }
+    ], input);
+  }
+});
+
+test("heuristic shell planner routes readiness questions to the shared readiness evaluator", () => {
+  const plan = planShellRequestHeuristically("is this project ready for beta testing?", plannerContext);
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [{
+    type: "evaluate_readiness",
+    goalType: "beta_readiness",
+    question: "is this project ready for beta testing?"
+  }]);
+});
+
+test("heuristic shell planner combines project status and readiness questions into a single guided flow", () => {
+  const plan = planShellRequestHeuristically("what's the project status? how ready is it for beta test?", plannerContext);
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [
+    { type: "project_summary" },
+    {
+      type: "evaluate_readiness",
+      goalType: "beta_readiness",
+      question: "what's the project status? how ready is it for beta test?"
+    }
+  ]);
+  assert.equal(plan.presentation, "assistant-first");
+});
+
+test("heuristic shell planner turns 'make it ready' into execution against the latest readiness blockers", () => {
+  const plan = planShellRequestHeuristically("make it ready", plannerContext, {
+    activeGraphState: {
+      graph: {
+        nodes: [{
+          id: "n1",
+          kind: "action",
+          type: "evaluate_readiness",
+          status: "ok",
+          result: {
+            structuredPayload: {
+              operation: "evaluate_readiness",
+              question: "Is this project ready for beta testing?",
+              goalType: "beta_readiness",
+              blockers: [
+                { title: "BUG-OVERLAY-01 Restore global overlay handling for non-dialog modals after the app-shell refactor.", severity: "high" },
+                { title: "HUMAN-REF-APP-SHELL-01 Manual verification after fixes.", severity: "high" }
+              ]
+            }
+          }
+        }]
+      }
+    }
+  });
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [
+    { type: "execute_ticket", ticketId: "BUG-OVERLAY-01", apply: true },
+    { type: "evaluate_readiness", goalType: "beta_readiness", question: "Is this project ready for beta testing?" }
+  ]);
+  assert.equal(plan.presentation, "assistant-first");
+});
+
+test("heuristic shell planner treats blocker-resolution followups as readiness continuation", () => {
+  const plan = planShellRequestHeuristically("can you resolve those 5 blockers?", plannerContext, {
+    activeGraphState: {
+      graph: {
+        nodes: [{
+          id: "n1",
+          kind: "action",
+          type: "evaluate_readiness",
+          status: "ok",
+          result: {
+            structuredPayload: {
+              operation: "evaluate_readiness",
+              question: "Is this project ready for beta testing?",
+              goalType: "beta_readiness",
+              blockers: [
+                { title: "BUG-OVERLAY-01 Restore global overlay handling for non-dialog modals after the app-shell refactor.", severity: "high" },
+                { title: "BUG-MODAL-BACK-01 Browser back on a stacked dialog should pop to the previous dialog, not clear the whole stack.", severity: "medium" }
+              ]
+            }
+          }
+        }]
+      }
+    }
+  });
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [
+    { type: "execute_ticket", ticketId: "BUG-OVERLAY-01", apply: true },
+    { type: "evaluate_readiness", goalType: "beta_readiness", question: "Is this project ready for beta testing?" }
+  ]);
+});
+
+test("heuristic shell planner accepts lowercase ticket ids for explicit execution", () => {
+  const plan = planShellRequestHeuristically("fix bug-overlay-01", plannerContext);
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [
+    { type: "execute_ticket", ticketId: "BUG-OVERLAY-01", apply: true }
+  ]);
+});
+
 test("shell conversation eval handles broader natural-language prompts", async () => {
   const cases = [
     {
@@ -445,6 +734,78 @@ test("runShellTurn narrates non-mutating tool results through the assistant laye
   }
 });
 
+test("runShellTurn executes branch/assert/replan nodes and exposes continuation state", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-graph-" + Math.random().toString(36).slice(2));
+  await fs.mkdir(root, { recursive: true });
+
+  registerProvider("mock-shell-graph", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async () => ({
+      response: JSON.stringify({
+        kind: "plan",
+        confidence: 0.97,
+        reason: "Need conditional investigation",
+        strategy: "Inspect providers, assert baseline health, branch, then append a follow-up check.",
+        graph: {
+          nodes: [
+            { id: "lookup", kind: "action", action: { type: "provider_status" } },
+            {
+              id: "gate",
+              kind: "assert",
+              dependsOn: ["lookup"],
+              condition: { node: "lookup", path: "ok", equals: true },
+              message: "provider lookup should succeed"
+            },
+            {
+              id: "branch",
+              kind: "branch",
+              dependsOn: ["gate"],
+              condition: { node: "lookup", path: "summary", includes: "AI providers:" },
+              ifTrue: [{ type: "version" }],
+              ifFalse: [{ type: "doctor" }]
+            },
+            {
+              id: "replan",
+              kind: "replan",
+              dependsOn: ["branch"],
+              condition: { node: "branch", path: "structuredPayload.branch", equals: "ifTrue" },
+              append: [{ type: "provider_status" }]
+            }
+          ]
+        }
+      })
+    })
+  });
+
+  try {
+    const result = await runShellTurn("inspect provider health deeply", {
+      root,
+      json: false,
+      yes: false,
+      noAi: false,
+      planOnly: false,
+      plannerContext,
+      planners: {
+        planners: [{ providerId: "mock-shell-graph", modelId: "brain-v1" }],
+        heuristic: { mode: "heuristic", reason: "fallback" }
+      },
+      history: []
+    });
+
+    assert.equal(result.plan.kind, "plan");
+    assert.deepEqual(result.executedGraph.branchPath, [{ nodeId: "branch", branch: "ifTrue" }]);
+    assert.equal(result.executedGraph.nodes.find((node) => node.id === "gate")?.result?.classification, "asserted");
+    assert.equal(result.executedGraph.nodes.find((node) => node.id === "branch")?.result?.structuredPayload?.branch, "ifTrue");
+    assert.equal(result.executedGraph.nodes.some((node) => node.id.startsWith("branch_")), true);
+    assert.equal(result.executedGraph.nodes.some((node) => node.id.startsWith("replan_")), true);
+    assert.equal(result.continuationState.graph.branchPath.length, 1);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("validateShellPlan builds an action graph for agent plans", () => {
   const valid = validateShellPlan({
     kind: "plan",
@@ -483,6 +844,65 @@ test("validateShellPlan accepts planner-supplied action graphs", () => {
   ]);
 });
 
+test("validateShellPlan accepts conditional graph nodes", () => {
+  const valid = validateShellPlan({
+    kind: "plan",
+    graph: {
+      nodes: [
+        { id: "lookup", kind: "action", action: { type: "provider_status" } },
+        {
+          id: "gate",
+          kind: "assert",
+          dependsOn: ["lookup"],
+          condition: { node: "lookup", path: "ok", equals: true },
+          message: "provider lookup must succeed"
+        },
+        {
+          id: "branch",
+          kind: "branch",
+          dependsOn: ["gate"],
+          condition: { node: "lookup", path: "summary", includes: "AI providers:" },
+          ifTrue: [{ type: "version" }],
+          ifFalse: [{ type: "doctor" }]
+        },
+        {
+          id: "replan",
+          kind: "replan",
+          dependsOn: ["branch"],
+          condition: { node: "branch", path: "structuredPayload.branch", equals: "ifTrue" },
+          append: [{ type: "provider_status" }]
+        }
+      ]
+    }
+  }, plannerContext);
+
+  assert.equal(valid.kind, "plan");
+  assert.deepEqual(valid.graph.nodes.map((node) => node.kind), [
+    "action",
+    "assert",
+    "branch",
+    "replan",
+    "synthesize"
+  ]);
+});
+
+test("heuristic continuation replies can reference prior graph state", () => {
+  const plan = planShellRequestHeuristically("continue", plannerContext, {
+    activeGraphState: {
+      graph: {
+        nodes: [
+          { id: "n1", kind: "action", status: "ok", result: { summary: "Provider lookup complete." } }
+        ],
+        branchPath: [{ nodeId: "branch", branch: "ifTrue" }]
+      }
+    }
+  });
+
+  assert.equal(plan.kind, "reply");
+  assert.match(plan.reply, /last graph has already been executed/i);
+  assert.match(plan.reply, /Branch path: branch:ifTrue/);
+});
+
 test("compileShellAction produces a safe mutating note command", () => {
   const compiled = compileShellAction({
     type: "add_note",
@@ -506,6 +926,17 @@ test("compileShellAction produces a safe mutating note command", () => {
     "--line",
     "12"
   ]);
+});
+
+test("compileShellAction renders execute_ticket as a mutating shell action", () => {
+  const compiled = compileShellAction({
+    type: "execute_ticket",
+    ticketId: "REF-APP-SHELL-01",
+    apply: true
+  });
+
+  assert.equal(compiled.mutation, true);
+  assert.equal(compiled.display, "execute ticket REF-APP-SHELL-01");
 });
 
 test("validateShellPlan accepts known codelets and rejects unknown ones", () => {

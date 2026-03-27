@@ -1,0 +1,7 @@
+interface:
+  display_name: "AI Workflow"
+  short_description: "Game beta readiness and guarded workflow execution"
+  default_prompt: "Use $ai-workflow to assess project status, beta readiness, blockers, and safe next actions for shipping this game."
+
+policy:
+  allow_implicit_invocation: true

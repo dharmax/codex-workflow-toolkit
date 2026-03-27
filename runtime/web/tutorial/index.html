@@ -154,6 +154,33 @@
       color: var(--muted);
       font-size: 0.92rem;
     }
+    textarea {
+      width: 100%;
+      min-height: 8rem;
+      border-radius: 14px;
+      border: 1px solid var(--edge);
+      background: rgba(255, 252, 245, 0.94);
+      padding: 0.95rem 1rem;
+      font: 0.96rem/1.5 var(--sans);
+      color: var(--ink);
+      resize: vertical;
+    }
+    button {
+      margin-top: 0.85rem;
+      border: 0;
+      border-radius: 999px;
+      background: var(--accent);
+      color: #f8f8f2;
+      padding: 0.8rem 1.2rem;
+      font: 700 0.86rem/1 var(--mono);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
     @media (max-width: 720px) {
       .shell { padding: 1rem 0.85rem 3rem; }
       .hero { padding: 1.1rem; }
@@ -204,6 +231,16 @@
 
     <section class="section">
       <div class="card">
+        <h2>Host Request Console</h2>
+        <p class="hint">Plugin-style path: send natural language, see the routed host action and payload.</p>
+        <textarea id="host-input">Is this project ready for beta testing?</textarea>
+        <button id="host-submit" type="button">Route Request</button>
+        <pre id="host-output">Waiting for a host request.</pre>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="card">
         <h2>What This Web Surface Covers</h2>
         <p class="hint">Right now this page is for tutorial use only.</p>
         <ul>
@@ -239,6 +276,32 @@
       `).join('');
       document.getElementById('footer').textContent =
         `Tutorial server: ${data.url} · Built for guided first use, not long-term control.`;
+      bindHostConsole();
+    }
+
+    function bindHostConsole() {
+      const input = document.getElementById('host-input');
+      const button = document.getElementById('host-submit');
+      const output = document.getElementById('host-output');
+
+      async function run() {
+        button.disabled = true;
+        output.textContent = 'Routing request...';
+        try {
+          const res = await fetch('/api/ask', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: input.value })
+          });
+          output.textContent = JSON.stringify(await res.json(), null, 2);
+        } catch (error) {
+          output.textContent = JSON.stringify({ error: error.message }, null, 2);
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      button.addEventListener('click', run);
     }
     boot().catch((error) => {
       document.getElementById('status-grid').innerHTML = `<div class="card"><div class="label">Error</div><div class="value">${error.message}</div></div>`;

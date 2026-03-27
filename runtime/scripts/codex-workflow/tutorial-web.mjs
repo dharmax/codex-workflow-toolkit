@@ -6,6 +6,8 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs, printAndExit } from "./lib/cli.mjs";
 import { resolveOperatingContext } from "../../../core/lib/operating-context.mjs";
+import { evaluateProjectReadiness } from "../../../core/services/sync.mjs";
+import { resolveHostRequest } from "../../../core/services/host-resolver.mjs";
 
 const HELP = `Usage:
   node runtime/scripts/codex-workflow/tutorial-web.mjs [--port 4310] [--host 127.0.0.1]
@@ -39,7 +41,7 @@ const context = await resolveOperatingContext({
   allowExternalTarget: true
 });
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://${host}:${actualPort}`);
   if (url.pathname === "/") {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -56,6 +58,111 @@ const server = http.createServer((req, res) => {
       evidenceRoot: context.evidenceRoot,
       url: `http://${host}:${actualPort}/`
     }, null, 2));
+    return;
+  }
+
+  if (url.pathname === "/api/readiness") {
+    const goalType = String(url.searchParams.get("goal") ?? "beta_readiness");
+    const question = String(url.searchParams.get("question") ?? `Is this project ready for ${goalType.replace(/_/g, " ")}?`);
+    const projectRoot = context.mode === "tool-dev" ? context.evidenceRoot : context.repairTargetRoot;
+
+    try {
+      const response = await evaluateProjectReadiness({
+        projectRoot,
+        request: {
+          protocol_version: "1.0",
+          operation: "evaluate_readiness",
+          goal: {
+            type: goalType,
+            target: "project",
+            question
+          },
+          constraints: {
+            allow_mutation: false,
+            context_budget: "medium",
+            time_budget_ms: 15000,
+            guideline_mode: "advisory"
+          },
+          inputs: {
+            tickets_scope: "active_and_blocked",
+            artifact_scope: "goal_relevant_only",
+            verification_scope: "tests_metrics_docs"
+          },
+          host: {
+            surface: "host",
+            capabilities: {
+              supports_json: true,
+              supports_streaming: false,
+              supports_followups: true
+            }
+          },
+          continuation_state: null
+        }
+      });
+
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({
+        ...response,
+        meta: {
+          ...(response.meta ?? {}),
+          mode: context.mode,
+          repair_target_root: context.repairTargetRoot,
+          evidence_root: context.evidenceRoot,
+          operational_root: projectRoot
+        }
+      }, null, 2));
+    } catch (error) {
+      res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({
+        error: String(error?.message ?? error),
+        mode: context.mode,
+        repairTargetRoot: context.repairTargetRoot,
+        evidenceRoot: context.evidenceRoot,
+        operationalRoot: projectRoot
+      }, null, 2));
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/ask") {
+    const projectRoot = context.mode === "tool-dev" ? context.evidenceRoot : context.repairTargetRoot;
+    try {
+      const requestPayload = await readHostRequest(req, url);
+      const response = await resolveHostRequest({
+        projectRoot,
+        text: requestPayload.text,
+        continuationState: requestPayload.continuation_state ?? null,
+        host: {
+          surface: "host",
+          capabilities: {
+            supports_json: true,
+            supports_streaming: false,
+            supports_followups: true
+          }
+        }
+      });
+
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({
+        ...response,
+        meta: {
+          ...(response.meta ?? {}),
+          mode: context.mode,
+          repair_target_root: context.repairTargetRoot,
+          evidence_root: context.evidenceRoot,
+          operational_root: projectRoot
+        }
+      }, null, 2));
+    } catch (error) {
+      res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({
+        error: String(error?.message ?? error),
+        mode: context.mode,
+        repairTargetRoot: context.repairTargetRoot,
+        evidenceRoot: context.evidenceRoot,
+        operationalRoot: projectRoot
+      }, null, 2));
+    }
     return;
   }
 
@@ -93,4 +200,30 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     server.close(() => process.exit(0));
   });
+}
+
+async function readHostRequest(req, url) {
+  if (req.method === "GET") {
+    return {
+      text: String(url.searchParams.get("text") ?? "").trim(),
+      continuation_state: null
+    };
+  }
+  if (req.method !== "POST") {
+    throw new Error("Host ask endpoint supports GET or POST only.");
+  }
+
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+  const body = Buffer.concat(chunks).toString("utf8").trim();
+  if (!body) {
+    return { text: "", continuation_state: null };
+  }
+  const parsed = JSON.parse(body);
+  return {
+    text: String(parsed.text ?? "").trim(),
+    continuation_state: parsed.continuation_state ?? null
+  };
 }
