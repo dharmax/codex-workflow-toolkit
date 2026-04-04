@@ -12,6 +12,8 @@ Scope: Ticket-local implementation detail and project-specific technical constra
 
 ## Burst Rule
 
+- For epic-scale or multi-ticket work, start on a fresh branch, make a baseline commit, and push before substantive edits.
+- Plan and execute one epic at a time; do not interleave roadmap epics unless a real blocker forces the split.
 - Move exactly one ticket or one explicit batch ticket to `In Progress` before substantive edits.
 - Keep `ToDo` as the immediate next queue, not a parking lot.
 - Batch by one owned problem family, not by convenience.

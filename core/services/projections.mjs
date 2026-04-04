@@ -6,17 +6,17 @@ import { stableId } from "../lib/hash.mjs";
 const DEFAULT_TICKET_LANES = [
   "Deep Backlog",
   "Backlog",
-  "In Progress",
-  "Todo",
+  "ToDo",
   "Bugs P1",
   "Bugs P2/P3",
-  "Human Inspection",
-  "AI Candidates",
-  "Doubtful Relevancy",
-  "Ideas",
+  "In Progress",
+  "Human Testing",
   "Suggestions",
   "Done",
+  "AI Candidates",
   "Risk Watch",
+  "Doubtful Relevancy",
+  "Ideas",
   "Archived"
 ];
 
@@ -102,7 +102,7 @@ export function renderKanbanProjection(store) {
   const laneMap = new Map(DEFAULT_TICKET_LANES.map((lane) => [lane, []]));
 
   for (const ticket of tickets) {
-    laneMap.get(ticket.lane ?? "Todo")?.push(ticket);
+    laneMap.get(normalizeDisplayLaneName(ticket.lane ?? "ToDo"))?.push(ticket);
   }
   for (const ticket of candidateTickets) {
     laneMap.get("AI Candidates")?.push(ticket);
@@ -114,7 +114,16 @@ export function renderKanbanProjection(store) {
     laneMap.get("Risk Watch")?.push(risk);
   }
 
-  const lines = ["# Kanban", "", "_Generated from the workflow DB. Edit through `ai-workflow project ...` or `ai-workflow sync`._", ""];
+  const lines = [
+    "---",
+    "kanban-plugin: board",
+    "---",
+    "",
+    "# Kanban",
+    "",
+    "_Generated from the workflow DB. Edit through `ai-workflow project ...` or `ai-workflow sync`._",
+    ""
+  ];
   for (const lane of DEFAULT_TICKET_LANES) {
     lines.push(`## ${lane}`);
     lines.push("");
@@ -131,6 +140,9 @@ export function renderKanbanProjection(store) {
       if (item.data?.summary) {
         lines.push(`  - Summary: ${item.data.summary}`);
       }
+      if (item.data?.userStory) {
+        lines.push(`  - Story: ${item.data.userStory}`);
+      }
       if (item.parentId) {
         lines.push(`  - Parent: ${item.parentId}`);
       }
@@ -138,26 +150,77 @@ export function renderKanbanProjection(store) {
     }
     lines.push("");
   }
+  lines.push("%% kanban:settings");
+  lines.push("```");
+  lines.push('{"kanban-plugin":"board"}');
+  lines.push("```");
+  lines.push("%%");
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
 export function renderEpicsProjection(store) {
-  const epics = store.listEntities({ entityType: "epic" });
+  const epics = store.listEntities({ entityType: "epic" }).sort(compareEpicPriority);
   const tickets = store.listEntities({ entityType: "ticket" });
+  const features = store.listEntities({ entityType: "feature" });
+  const modules = store.listEntities({ entityType: "module" });
+  const graph = store.getArchitecturalGraph();
   const lines = ["# Epics", "", "_Generated from the workflow DB._", ""];
 
   for (const epic of epics) {
+    const epicFeature = resolveEpicFeature(epic, features);
+    const epicModules = resolveEpicModules(epic, epicFeature, modules);
+    const userStories = normalizeEpicStories(epic);
+    const ticketBatches = normalizeEpicTicketBatches(epic);
+    const linkedTickets = tickets.filter((ticket) => ticket.parentId === epic.id || ticket.data?.epic === epic.id);
+    const epicGraphFacts = summarizeEpicGraph(graph, epic, epicFeature, epicModules);
+
     lines.push(`## ${epic.id} ${epic.title}`);
     lines.push("");
-    lines.push(`- State: ${epic.state}`);
-    const linked = tickets.filter((ticket) => ticket.parentId === epic.id);
-    if (linked.length) {
-      lines.push("- Tickets:");
-      for (const ticket of linked) {
-        lines.push(`  - ${ticket.id} ${ticket.title} [${ticket.lane ?? "Todo"}]`);
+    lines.push(`- Goal: ${normalizeEpicSummary(epic) || "Pending natural-language scope."}`);
+    lines.push("- User stories:");
+    if (userStories.length) {
+      for (const story of userStories) {
+        lines.push(`  - ${story}`);
       }
     } else {
-      lines.push("- Tickets: none linked");
+      lines.push("  - None captured yet.");
+    }
+    lines.push("- Ticket batches:");
+    if (ticketBatches.length) {
+      for (const batch of ticketBatches) {
+        lines.push(`  - ${batch}`);
+      }
+    } else {
+      lines.push("  - None captured yet.");
+    }
+    lines.push("- Kanban tickets:");
+    if (linkedTickets.length) {
+      for (const ticket of linkedTickets) {
+        const ticketStory = ticket.data?.userStory ? ` | Story: ${ticket.data.userStory}` : "";
+        lines.push(`  - ${ticket.id} ${ticket.title} [${ticket.lane ?? "Todo"}]${ticketStory}`);
+      }
+    } else {
+      lines.push("  - none linked yet");
+    }
+    lines.push("- DB graph entities and predicates:");
+    if (epicFeature || epicModules.length || epicGraphFacts.length) {
+      if (epicFeature) {
+        lines.push(`  - Feature: ${epicFeature.id} ${epicFeature.title}`);
+      }
+      if (epicModules.length) {
+        lines.push("  - Modules:");
+        for (const module of epicModules) {
+          lines.push(`    - ${module.id} ${module.title}`);
+        }
+      }
+      if (epicGraphFacts.length) {
+        lines.push("  - Predicates:");
+        for (const fact of epicGraphFacts) {
+          lines.push(`    - ${fact}`);
+        }
+      }
+    } else {
+      lines.push("  - none captured yet.");
     }
     lines.push("");
   }
@@ -166,6 +229,7 @@ export function renderEpicsProjection(store) {
     lines.push("## No epics yet");
     lines.push("");
     lines.push("- Add one with `ai-workflow project ticket create --epic EPC-001 ...` or by writing entities directly through the CLI.");
+    lines.push("- Each epic should describe the user outcome in natural language, then break into user stories, ticket batches, and graph facts.");
     lines.push("");
   }
 
@@ -312,7 +376,10 @@ export async function importLegacyProjections(store, { projectRoot }) {
       createdAt: existing?.createdAt,
       data: {
         ...(existing?.data ?? {}),
-        summary: epic.summary ?? existing?.data?.summary ?? ""
+        summary: preferNonEmpty(epic.summary, existing?.data?.summary ?? ""),
+        userStories: epic.userStories?.length ? epic.userStories : (existing?.data?.userStories ?? []),
+        ticketBatches: epic.ticketBatches?.length ? epic.ticketBatches : (existing?.data?.ticketBatches ?? []),
+        graphNotes: epic.graphNotes?.length ? epic.graphNotes : (existing?.data?.graphNotes ?? [])
       }
     });
     importedEpicIds.add(epic.id);
@@ -335,7 +402,7 @@ export async function importLegacyProjections(store, { projectRoot }) {
   };
 }
 
-export function buildTicketEntity({ id, title, lane = "Todo", state = "open", epicId = null, summary = "" }) {
+export function buildTicketEntity({ id, title, lane = "Todo", state = "open", epicId = null, summary = "", userStory = null }) {
   return {
     id,
     entityType: "ticket",
@@ -349,7 +416,8 @@ export function buildTicketEntity({ id, title, lane = "Todo", state = "open", ep
     parentId: epicId,
     data: {
       ticketId: id,
-      summary
+      summary,
+      userStory: userStory ?? null
     }
   };
 }
@@ -439,6 +507,28 @@ function normalizeLaneName(name) {
     ["bugs p1", "Bugs P1"],
     ["priority 2/3 bugs", "Bugs P2/P3"],
     ["bugs p2/p3", "Bugs P2/P3"],
+    ["human testing", "Human Testing"],
+    ["human inspection", "Human Testing"],
+    ["suggestions", "Suggestions"],
+    ["done", "Done"],
+    ["archived", "Archived"]
+  ]);
+  return aliases.get(key) ?? name;
+}
+
+function normalizeDisplayLaneName(name) {
+  const key = String(name).trim().toLowerCase();
+  const aliases = new Map([
+    ["todo", "ToDo"],
+    ["to-do", "ToDo"],
+    ["todoo", "ToDo"],
+    ["backlog", "Backlog"],
+    ["deep backlog", "Deep Backlog"],
+    ["in progress", "In Progress"],
+    ["priority 1 bugs", "Bugs P1"],
+    ["bugs p1", "Bugs P1"],
+    ["priority 2/3 bugs", "Bugs P2/P3"],
+    ["bugs p2/p3", "Bugs P2/P3"],
     ["human testing", "Human Inspection"],
     ["human inspection", "Human Inspection"],
     ["suggestions", "Suggestions"],
@@ -455,6 +545,7 @@ function normalizeTicketFieldName(label) {
 function parseEpicEntries(text) {
   const entries = [];
   let current = null;
+  let currentSection = null;
 
   for (const line of text.split(/\r?\n/)) {
     const explicit = line.match(/^##\s+([A-Z][A-Z0-9-]+)\s+(.+)$/);
@@ -464,8 +555,12 @@ function parseEpicEntries(text) {
         id: explicit[1],
         title: explicit[2].trim(),
         state: "open",
-        summary: ""
+        summary: "",
+        userStories: [],
+        ticketBatches: [],
+        graphNotes: []
       };
+      currentSection = null;
       continue;
     }
 
@@ -477,16 +572,76 @@ function parseEpicEntries(text) {
         id: `EPIC-${slugify(title).toUpperCase()}`,
         title,
         state: normalizeEpicState(numbered[2]),
-        summary: ""
+        summary: "",
+        userStories: [],
+        ticketBatches: [],
+        graphNotes: []
       };
+      currentSection = null;
       continue;
     }
 
-    if (current && !current.summary) {
-      const goal = line.match(/^Goal:\s+(.+)$/i);
-      if (goal) {
-        current.summary = goal[1].trim();
+    if (!current) {
+      continue;
+    }
+
+    const field = line.match(/^\s*-\s+(Goal|Summary|State|User stories?|Stories|Ticket batches|Kanban tickets|DB graph entities and predicates|DB graph|Graph)\s*:\s*(.*)$/i);
+    if (field) {
+      currentSection = null;
+      const label = field[1].toLowerCase();
+      const value = field[2].trim();
+      if (label === "goal" || label === "summary") {
+        current.summary = value || current.summary;
+        continue;
       }
+      if (label === "state") {
+        current.state = normalizeEpicState(value);
+        continue;
+      }
+      if (label === "user stories" || label === "stories") {
+        currentSection = "userStories";
+        if (value) current.userStories.push(value);
+        continue;
+      }
+      if (label === "ticket batches") {
+        currentSection = "ticketBatches";
+        if (value) current.ticketBatches.push(value);
+        continue;
+      }
+      if (label === "kanban tickets") {
+        currentSection = "linkedTickets";
+        continue;
+      }
+      if (label === "db graph entities and predicates" || label === "db graph" || label === "graph") {
+        currentSection = "graphNotes";
+        if (value) current.graphNotes.push(value);
+        continue;
+      }
+    }
+
+    const bullet = line.match(/^\s*-\s+(.+)$/);
+    if (bullet && currentSection) {
+      const value = bullet[1].trim();
+      if (!value) {
+        continue;
+      }
+      if (currentSection === "userStories") {
+        current.userStories.push(value);
+        continue;
+      }
+      if (currentSection === "ticketBatches") {
+        current.ticketBatches.push(value);
+        continue;
+      }
+      if (currentSection === "graphNotes") {
+        current.graphNotes.push(value);
+        continue;
+      }
+      continue;
+    }
+
+    if (current.summary === "" && line.trim() && !line.trim().startsWith("-")) {
+      current.summary = line.trim();
     }
   }
 
@@ -494,6 +649,87 @@ function parseEpicEntries(text) {
     entries.push(current);
   }
   return entries;
+}
+
+function normalizeEpicSummary(epic) {
+  return String(epic.data?.summary ?? "").trim();
+}
+
+function preferNonEmpty(value, fallback = "") {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized.toLowerCase() === "pending natural-language scope.") {
+    return fallback;
+  }
+  return normalized;
+}
+
+function normalizeEpicStories(epic) {
+  const stories = Array.isArray(epic.data?.userStories)
+    ? epic.data.userStories
+    : Array.isArray(epic.data?.stories)
+      ? epic.data.stories
+      : [];
+
+  const cleaned = stories.map((story) => String(story ?? "").trim()).filter(Boolean);
+  if (cleaned.length) {
+    return cleaned;
+  }
+
+  const summary = normalizeEpicSummary(epic);
+  const title = String(epic.title ?? epic.id).trim();
+  return [
+    `As a workflow operator, I can ${title.toLowerCase()} so that ${summary || "the roadmap stays actionable."}`,
+    `As a maintainer, I can trace ${epic.id} into tickets and graph edges without rescanning the repo.`
+  ];
+}
+
+function normalizeEpicTicketBatches(epic) {
+  const batches = Array.isArray(epic.data?.ticketBatches)
+    ? epic.data.ticketBatches
+    : Array.isArray(epic.data?.batches)
+      ? epic.data.batches
+      : [];
+  return batches.map((batch) => String(batch ?? "").trim()).filter(Boolean);
+}
+
+function resolveEpicFeature(epic, features) {
+  return features.find((feature) => feature.parentId === epic.id || feature.data?.epic === epic.id) ?? null;
+}
+
+function resolveEpicModules(epic, feature, modules) {
+  const featureId = feature?.id ?? epic.id;
+  return modules.filter((module) => module.parentId === featureId || module.data?.feature === featureId || module.data?.epic === epic.id);
+}
+
+function summarizeEpicGraph(graph, epic, feature, modules) {
+  const relevantIds = new Set([epic.id, feature?.id].filter(Boolean));
+  return graph
+    .filter((edge) => relevantIds.has(edge.subject_id) || relevantIds.has(edge.object_id))
+    .map((edge) => `${edge.subject_id} ${edge.predicate} ${edge.object_id}`);
+}
+
+function compareEpicPriority(a, b) {
+  const priorityA = a.data?.priority === "first" ? 0 : 1;
+  const priorityB = b.data?.priority === "first" ? 0 : 1;
+  if (priorityA !== priorityB) {
+    return priorityA - priorityB;
+  }
+
+  const numberA = extractEpicNumber(a.id);
+  const numberB = extractEpicNumber(b.id);
+  if (numberA !== numberB) {
+    return numberA - numberB;
+  }
+
+  return String(a.id).localeCompare(String(b.id));
+}
+
+function extractEpicNumber(id) {
+  const match = String(id).match(/(\d+)/);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
 }
 
 function normalizeEpicState(value) {

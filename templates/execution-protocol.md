@@ -6,14 +6,16 @@ Keep execution disciplined, test-backed, and easy to hand off.
 
 ## Required Order
 
-1. Read the target ticket in `kanban.md`.
-2. Read the owner docs needed for that ticket.
-3. Move one ticket or one explicit batch ticket to `In Progress` with `scripts/codex-workflow/kanban-move.mjs`.
-4. State the burst shape: target family, intended outcome, validation plan.
-5. Make the smallest coherent burst that solves the ticket honestly.
-6. Validate at the real risk level of the change.
-7. Update kanban, then guidance docs if durable contracts changed, and archive stale done cards when needed.
-8. If the thread is getting heavy, create a compact handoff artifact before continuing.
+1. If the work is large enough to span an epic or a multi-ticket batch, create a fresh branch before implementation starts.
+2. If the repo state is already in motion, capture a baseline commit and push it before opening the next implementation slice.
+3. Read the target ticket in `kanban.md`.
+4. Read the owner docs needed for that ticket.
+5. Move one ticket or one explicit batch ticket to `In Progress` with `scripts/codex-workflow/kanban-move.mjs`.
+6. State the burst shape: target family, intended outcome, validation plan.
+7. Make the smallest coherent burst that solves the ticket honestly.
+8. Validate at the real risk level of the change.
+9. Update kanban, then guidance docs if durable contracts changed, and archive stale done cards when needed.
+10. If the thread is getting heavy, create a compact handoff artifact before continuing.
 
 ## Ticket Ownership
 
@@ -39,6 +41,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 
 ## Scope Control
 
+- Default to one epic at a time when the work is roadmap-level or broader.
 - Default to one owned problem family at a time.
 - Batch only when the safer fix is systemic and the ticket says so explicitly.
 - New findings become new tickets unless they block the active ticket.

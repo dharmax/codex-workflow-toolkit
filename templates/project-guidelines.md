@@ -32,6 +32,7 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Avoid unrelated cleanup during delivery work.
 - If one local bug reveals a shared contract problem, fix the smallest complete shared contract.
 - Make the smallest coherent burst that solves the ticket honestly; do not fragment systemic fixes into fake micro-progress.
+- For roadmap work, finish one epic before starting the next unless a blocker or dependency makes the order impossible.
 
 ## Type Safety
 

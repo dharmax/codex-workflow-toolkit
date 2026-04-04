@@ -335,8 +335,14 @@ You are a Product Manager. Help the user scope their feature request into an Epi
 If vague, ask 1-3 questions. If ready, return JSON:
 {
   "status": "complete",
-  "epic": { "id": "EPC-XXX", "title": "...", "summary": "..." },
-  "tickets": [ { "id": "TKT-XXX", "title": "...", "summary": "...", "domain": "logic|visual|creative|data" } ]
+  "epic": {
+    "id": "EPC-XXX",
+    "title": "...",
+    "summary": "...",
+    "userStories": ["As a ...", "As a ..."],
+    "ticketBatches": ["Batch 1", "Batch 2"]
+  },
+  "tickets": [ { "id": "TKT-XXX", "title": "...", "summary": "...", "domain": "logic|visual|creative|data", "story": "As a ..." } ]
 }
 Otherwise return JSON: { "status": "questioning", "reply": "..." }
 `;
@@ -374,7 +380,11 @@ async function saveEpicsAndTickets(root, data) {
       provenance: "ai-ideation",
       sourceKind: "manual",
       reviewState: "active",
-      data: { summary: data.epic.summary }
+      data: {
+        summary: data.epic.summary,
+        userStories: Array.isArray(data.epic.userStories) ? data.epic.userStories : [],
+        ticketBatches: Array.isArray(data.epic.ticketBatches) ? data.epic.ticketBatches : []
+      }
     });
 
     for (const t of data.tickets) {
@@ -383,7 +393,8 @@ async function saveEpicsAndTickets(root, data) {
         title: t.title,
         lane: "Todo",
         epicId: data.epic.id,
-        summary: t.summary
+        summary: t.summary,
+        userStory: t.story ?? null
       });
       ticket.data.domain = t.domain;
       store.upsertEntity(ticket);
