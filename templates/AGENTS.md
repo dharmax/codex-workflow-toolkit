@@ -2,7 +2,7 @@
 Scope: This file points agents to the workflow docs and core operating loop; ticket-local implementation detail belongs elsewhere. -->
 # AI Agent Protocol: Autonomous Engineering OS
 
-If the ai-workflow tool is unavailable, follow the same process with `scripts/codex-workflow/*`.
+If the ai-workflow tool is unavailable, follow the same process with `scripts/ai-workflow/*`.
 
 ## Read Order
 1.  **Audit:** Run `ai-workflow sync` before major context extraction.

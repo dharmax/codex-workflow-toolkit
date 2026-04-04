@@ -4,5 +4,5 @@
   "category": "validation",
   "summary": "Run a multi-ticket real-project battery against ticket extraction, guidance, and context packing.",
   "runner": "node-script",
-  "entry": "runtime/scripts/codex-workflow/ticket-proving-run.mjs"
+  "entry": "runtime/scripts/ai-workflow/ticket-proving-run.mjs"
 }

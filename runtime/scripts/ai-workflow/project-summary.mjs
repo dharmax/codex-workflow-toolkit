@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { parseArgs } from "../codex-workflow/lib/cli.mjs";
+import { parseArgs } from "./lib/cli.mjs";
 import { getProjectSummary } from "../../../core/services/sync.mjs";
 
 const args = parseArgs(process.argv.slice(2));

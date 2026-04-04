@@ -50,7 +50,7 @@ async function cleanup(dir) {
 }
 
 async function countInstallableFiles() {
-  const runtimeDir = path.resolve(repoRoot, "runtime", "scripts", "codex-workflow");
+  const runtimeDir = path.resolve(repoRoot, "runtime", "scripts", "ai-workflow");
   const files = await walkFiles(runtimeDir);
   // + templates
   return files.length + 10; 
@@ -153,8 +153,8 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     const protocolFile = await readFile(path.join(targetRoot, "execution-protocol.md"), "utf8");
     assert.match(protocolFile, /Required Order/);
     const packageJson = JSON.parse(await readFile(path.join(targetRoot, "package.json"), "utf8"));
-    assert.equal(packageJson.scripts["workflow:audit"], "node scripts/codex-workflow/workflow-audit.mjs");
-    assert.equal(packageJson.scripts["workflow:guideline-audit"], "node scripts/codex-workflow/guideline-audit.mjs");
+    assert.equal(packageJson.scripts["workflow:audit"], "node scripts/ai-workflow/workflow-audit.mjs");
+    assert.equal(packageJson.scripts["workflow:guideline-audit"], "node scripts/ai-workflow/guideline-audit.mjs");
     await access(path.join(targetRoot, ".ai-workflow", "state", "workflow.db"));
 
     const ciWorkflow = await readFile(
@@ -163,7 +163,7 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     );
     assert.match(ciWorkflow, /workflow-audit/);
 
-    const auditScriptStat = await import("node:fs/promises").then(m => m.stat(path.join(targetRoot, "scripts", "codex-workflow", "workflow-audit.mjs")));
+    const auditScriptStat = await import("node:fs/promises").then(m => m.stat(path.join(targetRoot, "scripts", "ai-workflow", "workflow-audit.mjs")));
     assert.equal(auditScriptStat.mode & 0o111, 0o111);
 
     const secondRun = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
@@ -780,12 +780,12 @@ test("generated helper scripts work against initialized project state", async ()
     assert.match(initResult.stdout, /package\.json found/);
     assert.match(initResult.stdout, /Package scripts installed: 11/);
 
-    const workflowAuditInitial = await runNode(["scripts/codex-workflow/workflow-audit.mjs"], { cwd: targetRoot });
+    const workflowAuditInitial = await runNode(["scripts/ai-workflow/workflow-audit.mjs"], { cwd: targetRoot });
     assert.equal(workflowAuditInitial.code, 0);
     assert.match(workflowAuditInitial.stdout, /workflow-audit: OK/);
 
     const ticketResult = await runNode(
-      ["scripts/codex-workflow/kanban-ticket.mjs", "--id", "TKT-001"],
+      ["scripts/ai-workflow/kanban-ticket.mjs", "--id", "TKT-001"],
       { cwd: targetRoot }
     );
     assert.equal(ticketResult.code, 0);
@@ -802,7 +802,7 @@ test("generated helper scripts work against initialized project state", async ()
     await writeFile(path.join(targetRoot, "src", "app.ts"), "export const value = 1;\n", "utf8");
 
     const guidanceResult = await runNode(
-      ["scripts/codex-workflow/guidance-summary.mjs", "--ticket", "TKT-001", "--changed"],
+      ["scripts/ai-workflow/guidance-summary.mjs", "--ticket", "TKT-001", "--changed"],
       { cwd: targetRoot }
     );
     assert.equal(guidanceResult.code, 0);
@@ -811,14 +811,14 @@ test("generated helper scripts work against initialized project state", async ()
     assert.match(guidanceResult.stdout, /Execution Protocol/);
     assert.match(guidanceResult.stdout, /Enforcement/);
 
-    const reviewResult = await runNode(["scripts/codex-workflow/review-summary.mjs"], { cwd: targetRoot });
+    const reviewResult = await runNode(["scripts/ai-workflow/review-summary.mjs"], { cwd: targetRoot });
     assert.equal(reviewResult.code, 0);
     assert.match(reviewResult.stdout, /\[modified\] knowledge\.md/);
     assert.match(reviewResult.stdout, /\[untracked\] src\/app\.ts/);
     assert.match(reviewResult.stdout, /source changed without matching test-file changes/);
 
     const verifyResult = await runNode(
-      ["scripts/codex-workflow/verification-summary.mjs", "--cmd", "node -e \"console.log('ok')\""],
+      ["scripts/ai-workflow/verification-summary.mjs", "--cmd", "node -e \"console.log('ok')\""],
       { cwd: targetRoot }
     );
     assert.equal(verifyResult.code, 0);
@@ -836,7 +836,7 @@ test("generated helper scripts work against initialized project state", async ()
     });
     await writeFile(path.join(targetRoot, "src", "app.ts"), "export const value = 1; // TODO remove\n", "utf8");
 
-    const guidelineAuditFail = await runNode(["scripts/codex-workflow/guideline-audit.mjs"], { cwd: targetRoot });
+    const guidelineAuditFail = await runNode(["scripts/ai-workflow/guideline-audit.mjs"], { cwd: targetRoot });
     assert.equal(guidelineAuditFail.code, 1);
     assert.match(guidelineAuditFail.stderr, /TODO markers are banned in src during audit/);
   } finally {
@@ -870,7 +870,7 @@ test("installer does not overwrite conflicting workflow package scripts without 
     assert.match(resultForce.stdout, /Package scripts overwritten: 1/);
 
     const packageJsonOverwritten = JSON.parse(await readFile(path.join(targetRoot, "package.json"), "utf8"));
-    assert.equal(packageJsonOverwritten.scripts["workflow:audit"], "node scripts/codex-workflow/workflow-audit.mjs");
+    assert.equal(packageJsonOverwritten.scripts["workflow:audit"], "node scripts/ai-workflow/workflow-audit.mjs");
   } finally {
     await cleanup(targetRoot);
   }

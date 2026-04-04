@@ -4,5 +4,5 @@
   "category": "extraction",
   "summary": "Extract one active ticket instead of dragging the whole board into context.",
   "runner": "node-script",
-  "entry": "runtime/scripts/codex-workflow/kanban-ticket.mjs"
+  "entry": "runtime/scripts/ai-workflow/kanban-ticket.mjs"
 }

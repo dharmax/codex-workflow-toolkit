@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { parseArgs, printAndExit } from "../codex-workflow/lib/cli.mjs";
+import { parseArgs, printAndExit } from "./lib/cli.mjs";
 import { routeTask } from "../../../core/services/router.mjs";
 
 const [taskClass, ...rest] = process.argv.slice(2);

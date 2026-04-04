@@ -18,19 +18,19 @@ Options:
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const templatesRoot = path.resolve(repoRoot, "templates");
-const runtimeRoot = path.resolve(repoRoot, "runtime", "scripts", "codex-workflow");
+const runtimeRoot = path.resolve(repoRoot, "runtime", "scripts", "ai-workflow");
 const WORKFLOW_PACKAGE_SCRIPTS = {
-  "workflow:ticket": "node scripts/codex-workflow/kanban-ticket.mjs",
-  "workflow:new-ticket": "node scripts/codex-workflow/kanban-new.mjs",
-  "workflow:next-ticket": "node scripts/codex-workflow/kanban-next.mjs",
-  "workflow:move-ticket": "node scripts/codex-workflow/kanban-move.mjs",
-  "workflow:archive-done": "node scripts/codex-workflow/kanban-archive.mjs",
-  "workflow:migrate-kanban": "node scripts/codex-workflow/kanban-migrate-obsidian.mjs",
-  "workflow:guidance": "node scripts/codex-workflow/guidance-summary.mjs",
-  "workflow:review": "node scripts/codex-workflow/review-summary.mjs",
-  "workflow:verify": "node scripts/codex-workflow/verification-summary.mjs",
-  "workflow:guideline-audit": "node scripts/codex-workflow/guideline-audit.mjs",
-  "workflow:audit": "node scripts/codex-workflow/workflow-audit.mjs"
+  "workflow:ticket": "node scripts/ai-workflow/kanban-ticket.mjs",
+  "workflow:new-ticket": "node scripts/ai-workflow/kanban-new.mjs",
+  "workflow:next-ticket": "node scripts/ai-workflow/kanban-next.mjs",
+  "workflow:move-ticket": "node scripts/ai-workflow/kanban-move.mjs",
+  "workflow:archive-done": "node scripts/ai-workflow/kanban-archive.mjs",
+  "workflow:migrate-kanban": "node scripts/ai-workflow/kanban-migrate-obsidian.mjs",
+  "workflow:guidance": "node scripts/ai-workflow/guidance-summary.mjs",
+  "workflow:review": "node scripts/ai-workflow/review-summary.mjs",
+  "workflow:verify": "node scripts/ai-workflow/verification-summary.mjs",
+  "workflow:guideline-audit": "node scripts/ai-workflow/guideline-audit.mjs",
+  "workflow:audit": "node scripts/ai-workflow/workflow-audit.mjs"
 };
 
 const args = parseArgs(process.argv.slice(2));
@@ -85,7 +85,7 @@ const plan = [
     source: path.resolve(templatesRoot, ".github", "workflows", "codex-workflow-audit.yml"),
     target: path.resolve(targetRoot, ".github", "workflows", "codex-workflow-audit.yml")
   },
-  ...(await buildRuntimePlan(runtimeRoot, path.resolve(targetRoot, "scripts", "codex-workflow")))
+  ...(await buildRuntimePlan(runtimeRoot, path.resolve(targetRoot, "scripts", "ai-workflow")))
 ];
 
 const summary = {

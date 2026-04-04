@@ -2,7 +2,7 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "../../cli/lib/config-store.mjs";
-import { readText } from "../../runtime/scripts/codex-workflow/lib/fs-utils.mjs";
+import { readText } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BUILTIN_KNOWLEDGE_PATH = path.resolve(__dirname, "../../shared/knowledge.json");

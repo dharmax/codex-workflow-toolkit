@@ -4,5 +4,5 @@
   "category": "verification",
   "summary": "Run deterministic verification commands and summarize the evidence.",
   "runner": "node-script",
-  "entry": "runtime/scripts/codex-workflow/verification-summary.mjs"
+  "entry": "runtime/scripts/ai-workflow/verification-summary.mjs"
 }

@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { ensureDir } from "../../runtime/scripts/codex-workflow/lib/fs-utils.mjs";
+import { ensureDir } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 
 export function getProjectConfigPath(root = process.cwd()) {
   return path.resolve(root, ".ai-workflow", "config.json");

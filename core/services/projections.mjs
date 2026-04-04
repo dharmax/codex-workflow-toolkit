@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readText } from "../../runtime/scripts/codex-workflow/lib/fs-utils.mjs";
+import { readText } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 import { writeProjectFile } from "../lib/filesystem.mjs";
 import { sha1, stableId } from "../lib/hash.mjs";
 

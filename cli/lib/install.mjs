@@ -1,6 +1,6 @@
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
-import { ensureDir } from "../../runtime/scripts/codex-workflow/lib/fs-utils.mjs";
+import { ensureDir } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 import { getProjectConfigPath, readConfig } from "./config-store.mjs";
 
 export async function installAgents({ toolkitRoot, projectRoot = process.cwd() }) {

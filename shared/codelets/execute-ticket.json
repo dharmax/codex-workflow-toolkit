@@ -4,5 +4,5 @@
   "stability": "experimental",
   "category": "execution",
   "runner": "node-script",
-  "entry": "runtime/scripts/codex-workflow/execute-ticket.mjs"
+  "entry": "runtime/scripts/ai-workflow/execute-ticket.mjs"
 }

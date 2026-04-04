@@ -41,31 +41,31 @@ for (const fixture of FIXTURE_MATRIX) {
       await assertWorkflowInstallFromRepo(targetRoot);
 
       if (fixture.scenario === "pass") {
-        const auditResult = await runNode(["scripts/codex-workflow/workflow-audit.mjs"], { cwd: targetRoot });
+        const auditResult = await runNode(["scripts/ai-workflow/workflow-audit.mjs"], { cwd: targetRoot });
         assert.equal(auditResult.code, 0, auditResult.stderr || auditResult.stdout);
         return;
       }
 
       if (fixture.scenario === "legacy-kanban") {
-        const preMigrationAudit = await runNode(["scripts/codex-workflow/workflow-audit.mjs"], { cwd: targetRoot });
+        const preMigrationAudit = await runNode(["scripts/ai-workflow/workflow-audit.mjs"], { cwd: targetRoot });
         assert.equal(preMigrationAudit.code, 1, preMigrationAudit.stderr || preMigrationAudit.stdout);
 
-        const migrateResult = await runNode(["scripts/codex-workflow/kanban-migrate-obsidian.mjs"], { cwd: targetRoot });
+        const migrateResult = await runNode(["scripts/ai-workflow/kanban-migrate-obsidian.mjs"], { cwd: targetRoot });
         assert.equal(migrateResult.code, 0, migrateResult.stderr || migrateResult.stdout);
 
         const moveResult = await runNode(
-          ["scripts/codex-workflow/kanban-move.mjs", "--id", "TKT-010", "--to", "In Progress"],
+          ["scripts/ai-workflow/kanban-move.mjs", "--id", "TKT-010", "--to", "In Progress"],
           { cwd: targetRoot }
         );
         assert.equal(moveResult.code, 0, moveResult.stderr || moveResult.stdout);
 
-        const nextResult = await runNode(["scripts/codex-workflow/kanban-next.mjs"], { cwd: targetRoot });
+        const nextResult = await runNode(["scripts/ai-workflow/kanban-next.mjs"], { cwd: targetRoot });
         assert.equal(nextResult.code, 0, nextResult.stderr || nextResult.stdout);
         assert.match(nextResult.stdout, /TKT-010 \| In Progress \| TKT-010 Legacy ticket/);
 
         const newTicketResult = await runNode(
           [
-            "scripts/codex-workflow/kanban-new.mjs",
+            "scripts/ai-workflow/kanban-new.mjs",
             "--id",
             "TKT-099",
             "--title",
@@ -80,23 +80,23 @@ for (const fixture of FIXTURE_MATRIX) {
         assert.equal(newTicketResult.code, 0, newTicketResult.stderr || newTicketResult.stdout);
 
         const doneMove = await runNode(
-          ["scripts/codex-workflow/kanban-move.mjs", "--id", "TKT-010", "--to", "Done", "--done-date", "2026-03-01"],
+          ["scripts/ai-workflow/kanban-move.mjs", "--id", "TKT-010", "--to", "Done", "--done-date", "2026-03-01"],
           { cwd: targetRoot }
         );
         assert.equal(doneMove.code, 0, doneMove.stderr || doneMove.stdout);
 
-        const archiveResult = await runNode(["scripts/codex-workflow/kanban-archive.mjs"], { cwd: targetRoot });
+        const archiveResult = await runNode(["scripts/ai-workflow/kanban-archive.mjs"], { cwd: targetRoot });
         assert.equal(archiveResult.code, 0, archiveResult.stderr || archiveResult.stdout);
 
         const archiveText = await readFile(path.join(targetRoot, "kanban-archive.md"), "utf8");
         assert.match(archiveText, /TKT-010 Legacy ticket/);
 
-        const passingAudit = await runNode(["scripts/codex-workflow/workflow-audit.mjs"], { cwd: targetRoot });
+        const passingAudit = await runNode(["scripts/ai-workflow/workflow-audit.mjs"], { cwd: targetRoot });
         assert.equal(passingAudit.code, 0, passingAudit.stderr || passingAudit.stdout);
         return;
       }
 
-      const failingAudit = await runNode(["scripts/codex-workflow/workflow-audit.mjs", "--json"], { cwd: targetRoot });
+      const failingAudit = await runNode(["scripts/ai-workflow/workflow-audit.mjs", "--json"], { cwd: targetRoot });
       assert.equal(failingAudit.code, 1, failingAudit.stderr || failingAudit.stdout);
       const summary = parseJsonStdout(failingAudit);
       assert.equal(
@@ -117,7 +117,7 @@ for (const fixture of FIXTURE_MATRIX) {
         "/** Responsibility: Feature fixture Scope: Cleaned audit marker for pass. */\nexport const bad = 2;\n",
         "utf8"
       );
-      const passingAudit = await runNode(["scripts/codex-workflow/workflow-audit.mjs"], { cwd: targetRoot });
+      const passingAudit = await runNode(["scripts/ai-workflow/workflow-audit.mjs"], { cwd: targetRoot });
       assert.equal(passingAudit.code, 0, passingAudit.stderr || passingAudit.stdout);
     } finally {
       await cleanup(targetRoot);
@@ -131,17 +131,17 @@ async function assertWorkflowInstallFromRepo(cwd) {
     "const path = require('node:path');",
     "const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));",
     "const expected = {",
-    "  'workflow:ticket': 'node scripts/codex-workflow/kanban-ticket.mjs',",
-    "  'workflow:new-ticket': 'node scripts/codex-workflow/kanban-new.mjs',",
-    "  'workflow:next-ticket': 'node scripts/codex-workflow/kanban-next.mjs',",
-    "  'workflow:move-ticket': 'node scripts/codex-workflow/kanban-move.mjs',",
-    "  'workflow:archive-done': 'node scripts/codex-workflow/kanban-archive.mjs',",
-    "  'workflow:migrate-kanban': 'node scripts/codex-workflow/kanban-migrate-obsidian.mjs',",
-    "  'workflow:guidance': 'node scripts/codex-workflow/guidance-summary.mjs',",
-    "  'workflow:review': 'node scripts/codex-workflow/review-summary.mjs',",
-    "  'workflow:verify': 'node scripts/codex-workflow/verification-summary.mjs',",
-    "  'workflow:guideline-audit': 'node scripts/codex-workflow/guideline-audit.mjs',",
-    "  'workflow:audit': 'node scripts/codex-workflow/workflow-audit.mjs'",
+    "  'workflow:ticket': 'node scripts/ai-workflow/kanban-ticket.mjs',",
+    "  'workflow:new-ticket': 'node scripts/ai-workflow/kanban-new.mjs',",
+    "  'workflow:next-ticket': 'node scripts/ai-workflow/kanban-next.mjs',",
+    "  'workflow:move-ticket': 'node scripts/ai-workflow/kanban-move.mjs',",
+    "  'workflow:archive-done': 'node scripts/ai-workflow/kanban-archive.mjs',",
+    "  'workflow:migrate-kanban': 'node scripts/ai-workflow/kanban-migrate-obsidian.mjs',",
+    "  'workflow:guidance': 'node scripts/ai-workflow/guidance-summary.mjs',",
+    "  'workflow:review': 'node scripts/ai-workflow/review-summary.mjs',",
+    "  'workflow:verify': 'node scripts/ai-workflow/verification-summary.mjs',",
+    "  'workflow:guideline-audit': 'node scripts/ai-workflow/guideline-audit.mjs',",
+    "  'workflow:audit': 'node scripts/ai-workflow/workflow-audit.mjs'",
     "};",
     "if (!pkg.scripts) throw new Error('package.json scripts missing');",
     "for (const [key, value] of Object.entries(expected)) {",
@@ -152,7 +152,7 @@ async function assertWorkflowInstallFromRepo(cwd) {
     "const workflowPath = path.join('.github', 'workflows', 'codex-workflow-audit.yml');",
     "const workflow = fs.readFileSync(workflowPath, 'utf8');",
     "if (!workflow.includes('workflow-audit')) throw new Error('workflow audit job missing');",
-    "if (!workflow.includes('node scripts/codex-workflow/workflow-audit.mjs')) {",
+    "if (!workflow.includes('node scripts/ai-workflow/workflow-audit.mjs')) {",
     "  throw new Error('workflow audit command missing');",
     "}",
     "console.log('ok');"

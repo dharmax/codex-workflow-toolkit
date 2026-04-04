@@ -1,7 +1,7 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { ensureDir } from "../../runtime/scripts/codex-workflow/lib/fs-utils.mjs";
+import { ensureDir } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 import { getAllSupportedExtensions } from "./registry.mjs";
 
 const DEFAULT_IGNORES = new Set([

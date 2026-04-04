@@ -4,5 +4,5 @@
   "category": "extraction",
   "summary": "Extract compact task-specific guidance from the workflow docs.",
   "runner": "node-script",
-  "entry": "runtime/scripts/codex-workflow/guidance-summary.mjs"
+  "entry": "runtime/scripts/ai-workflow/guidance-summary.mjs"
 }

@@ -3,7 +3,7 @@ import { stdin as input, stdout as output } from "node:process";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { getGlobalConfigPath, getProjectConfigPath, readConfig, writeConfigValue } from "./config-store.mjs";
-import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/lib/cli.mjs";
+import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
 
 const HARDWARE_CLASS_TO_SIZE = {
   tiny: 4,

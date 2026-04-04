@@ -5,7 +5,7 @@ import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { promisify } from "node:util";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { parseArgs, printAndExit } from "../../runtime/scripts/codex-workflow/lib/cli.mjs";
+import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
 import { getToolkitCodelet, getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
 import { runDoctor } from "./doctor.mjs";

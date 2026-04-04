@@ -2,7 +2,7 @@
 
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { parseArgs, printAndExit } from "../codex-workflow/lib/cli.mjs";
+import { parseArgs, printAndExit } from "./lib/cli.mjs";
 import { addManualNote, getProjectSummary, withWorkflowStore } from "../../../core/services/sync.mjs";
 import { routeTask } from "../../../core/services/router.mjs";
 import { generateCompletion } from "../../../core/services/providers.mjs";

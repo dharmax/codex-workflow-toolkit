@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { ensureDir } from "../../runtime/scripts/codex-workflow/lib/fs-utils.mjs";
+import { ensureDir } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 
 export function getProjectCodeletsDir(root = process.cwd()) {
   return path.resolve(root, ".ai-workflow", "codelets");
