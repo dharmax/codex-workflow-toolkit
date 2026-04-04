@@ -91,7 +91,11 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
       local: candidate.local,
       reason: buildReason(candidate, taskClass, minimumQuality, capability)
     })),
-    providers: providerState.providers
+    providers: providerState.providers,
+    tooling: {
+      leanCtx: providerState.leanCtx,
+      contextCompression: providerState.routingPolicy.contextCompression
+    }
   };
 }
 

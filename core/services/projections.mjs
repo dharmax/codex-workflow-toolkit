@@ -148,7 +148,8 @@ export function renderKanbanProjection(store) {
 
     for (const item of items) {
       const id = item.data.ticketId ?? item.id.replace(/^ticket:/, "").replace(/^candidate:/, "");
-      lines.push(`- [ ] ${id} ${item.title}`);
+      const doneSuffix = lane === "Done" ? ` ✅ ${formatCompletionDate(item)}` : "";
+      lines.push(`- [ ] ${id} ${item.title}${doneSuffix}`);
       if (item.data?.summary) {
         lines.push(`  - Summary: ${item.data.summary}`);
       }
@@ -541,7 +542,7 @@ function parseKanbanTicketLine(line) {
     checked: /[xX]/.test(match[1]),
     completedAt: match[2] ?? null,
     ticketId: match[3],
-    title: match[4].trim()
+    title: String(match[4] ?? "").replace(/\s*✅\s*\d{4}-\d{2}-\d{2}\s*$/u, "").trim()
   };
 }
 
@@ -587,6 +588,14 @@ function normalizeDisplayLaneName(name) {
     ["archived", "Archived"]
   ]);
   return aliases.get(key) ?? name;
+}
+
+function formatCompletionDate(item) {
+  const value = String(item?.data?.completedAt ?? item?.updatedAt ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+  return new Date().toISOString().slice(0, 10);
 }
 
 function normalizeTicketFieldName(label) {

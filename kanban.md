@@ -29,10 +29,7 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 
 ## In Progress
 
-- [ ] EXE-004 Refresh live projections after every workflow mutation
-  - Summary: Move active tickets to In Progress before execution and refresh kanban/epics immediately after each DB mutation.
-  - Parent: EPC-005
-  - State: open
+- No items
 
 ## Human Inspection
 
@@ -44,7 +41,14 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 
 ## Done
 
-- No items
+- [ ] EXE-004 Refresh live projections after every workflow mutation ✅ 2026-04-04
+  - Summary: Move active tickets to In Progress before execution and refresh kanban/epics immediately after each DB mutation.
+  - Parent: EPC-005
+  - State: open
+- [ ] EXE-005 Lean-ctx detection and context compression ✅ 2026-04-04
+  - Summary: Add lean-ctx probing, install/setup guidance, and prompt-pack awareness so context-heavy work fails loudly when the dependency is missing.
+  - Parent: EPC-001
+  - State: open
 
 %% kanban:settings
 ```

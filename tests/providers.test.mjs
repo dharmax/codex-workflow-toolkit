@@ -198,6 +198,8 @@ test("refreshProviderQuotaState restores monthly free quota after reset date", a
     assert.equal(result.refreshed[0].quota.resetAt, "2026-04-01");
 
     const state = await discoverProviderState({ root });
+    assert.equal(state.leanCtx.installed, true);
+    assert.equal(state.routingPolicy.contextCompression, "lean-ctx");
     assert.equal(state.providers.openai.quota.freeUsdRemaining, 5);
   } finally {
     await rm(root, { recursive: true, force: true });

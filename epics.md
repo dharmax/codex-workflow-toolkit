@@ -32,7 +32,7 @@ Make lean-ctx the required internal layer for context packing, surgical reads, d
 - Router and shell adoption of compact worksets
 
 ### Kanban tickets
-- none linked yet
+- EXE-005 Lean-ctx detection and context compression [Done]
 
 ## EPC-002 Semantic graph, registry sync, and projection hardening
 
@@ -180,7 +180,7 @@ Make project codelets, kanban/epic projections, and durable lessons first-class 
 - Query functions for listing, fetching, and searching epics and user stories from the DB
 
 ### Kanban tickets
-- EXE-004 Refresh live projections after every workflow mutation [In Progress]
+- EXE-004 Refresh live projections after every workflow mutation [Done]
 
 ## EPC-006 Smart codelet catalog and observer loop
 

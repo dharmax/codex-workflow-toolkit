@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { openWorkflowStore } from "../db/sqlite-store.mjs";
 import { getGlobalConfigPath, getProjectConfigPath, readConfig, readConfigSafe, writeConfigValue } from "../../cli/lib/config-store.mjs";
 import { loadKnowledge } from "./knowledge.mjs";
+import { leanCtxInstallHint, probeLeanCtx } from "./lean-ctx.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +18,7 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
   const knowledge = await loadKnowledge({ root, projectConfig, globalConfig });
 
   const ollamaConfig = resolveOllamaConfig({ projectConfig, globalConfig });
+  const leanCtx = await probeLeanCtx();
   const ollama = ollamaConfig.enabled === false
     ? {
       installed: false,
@@ -34,6 +36,10 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
   store.close();
 
   const allProviderIds = new Set([...Object.keys(knowledge.models), ...Object.keys(configuredProviders)]);
+  const configWarnings = [projectConfigState.warning, globalConfigState.warning].filter(Boolean);
+  if (!leanCtx.installed) {
+    configWarnings.push(leanCtxInstallHint());
+  }
 
   for (const providerId of allProviderIds) {
     if (providerId === "ollama") {
@@ -88,12 +94,14 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
     root,
     knowledge,
     metricsSummary,
-    configWarnings: [projectConfigState.warning, globalConfigState.warning].filter(Boolean),
+    leanCtx,
+    configWarnings,
     routingPolicy: {
       capabilityMapping: knowledge.capabilityMapping,
       preferLocalFor: ["data", "summarization", "extraction", "note-normalization", "strategy"],
       minimumQuality: knowledge.minimumQuality,
       quotaStrategy: "prefer-free-remote",
+      contextCompression: leanCtx.installed ? "lean-ctx" : "fallback",
       ...(globalConfig.routing ?? {}),
       ...(projectConfig.routing ?? {})
     },

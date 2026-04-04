@@ -157,6 +157,45 @@ test("kanban projection keeps rare lanes hidden until they have cards", async ()
   }
 });
 
+test("kanban projection renders done tickets with a completion date", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-done-ticket-"));
+
+  try {
+    await withWorkflowStore(targetRoot, async (store) => {
+      store.upsertEntity(buildTicketEntity({
+        id: "TKT-444",
+        title: "Close the loop",
+        lane: "Done",
+        summary: "Completed work should render with an explicit done date."
+      }));
+      store.upsertEntity({
+        ...(store.getEntity("TKT-444") ?? {}),
+        id: "TKT-444",
+        entityType: "ticket",
+        title: "Close the loop",
+        lane: "Done",
+        state: "open",
+        confidence: 1,
+        provenance: "manual",
+        sourceKind: "manual",
+        reviewState: "active",
+        parentId: null,
+        data: {
+          ticketId: "TKT-444",
+          summary: "Completed work should render with an explicit done date.",
+          completedAt: "2026-04-04"
+        }
+      });
+
+      const projection = renderKanbanProjection(store);
+      assert.match(projection, /## Done/);
+      assert.match(projection, /TKT-444 Close the loop ✅ 2026-04-04/);
+    });
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("epic projections stay narrative-first and epic/story queries resolve through the DB", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-epic-queries-"));
 

@@ -56,6 +56,8 @@ test("ai-workflow doctor reports local diagnostics and ollama absence cleanly", 
   const payload = JSON.parse(result.stdout);
   assert.equal(typeof payload.cwd, "string");
   assert.equal(typeof payload.ollama, "object");
+  assert.equal(typeof payload.leanCtx, "object");
+  assert.equal(payload.leanCtx.installed, true);
 });
 
 test("ai-workflow can extract a ticket and build a context pack for an initialized repo", { concurrency: false }, async () => {

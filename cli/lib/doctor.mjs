@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "./config-store.mjs";
 import { discoverProviderState, probeOllama, resolveOllamaConfig } from "../../core/services/providers.mjs";
+import { leanCtxInstallHint, leanCtxSetupHint, probeLeanCtx } from "../../core/services/lean-ctx.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -22,6 +23,7 @@ export async function buildDoctorReport({ root = process.cwd() } = {}) {
     readConfigSafe(getGlobalConfigPath()),
     discoverProviderState({ root })
   ]);
+  const leanCtx = await probeLeanCtx();
   const projectConfig = projectConfigState.config;
   const globalConfig = globalConfigState.config;
   const ollamaConfig = resolveOllamaConfig({ projectConfig, globalConfig });
@@ -43,6 +45,7 @@ export async function buildDoctorReport({ root = process.cwd() } = {}) {
     node: process.version,
     cpuCount: os.cpus().length,
     totalMemoryGb: Number((os.totalmem() / (1024 ** 3)).toFixed(2)),
+    leanCtx,
     git: {
       installed: git.ok,
       details: git.output
@@ -79,8 +82,18 @@ export function renderDoctorReport(report) {
     `node: ${report.node}`,
     `cpu: ${report.cpuCount} cores`,
     `memory: ${report.totalMemoryGb} GB`,
+    `lean-ctx: ${report.leanCtx.installed ? "installed" : "missing"}`,
     `git: ${report.git.installed ? "installed" : "missing"}`
   ];
+
+  if (report.leanCtx.path) {
+    lines.push(`lean-ctx path: ${report.leanCtx.path}`);
+  }
+
+  if (!report.leanCtx.installed) {
+    lines.push(`lean-ctx install hint: ${leanCtxInstallHint()}`);
+    lines.push(`lean-ctx setup hint: ${leanCtxSetupHint()}`);
+  }
 
   for (const [id, p] of Object.entries(report.providers)) {
     if (id === "ollama") continue;

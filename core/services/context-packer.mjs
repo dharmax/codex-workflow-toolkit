@@ -1,6 +1,7 @@
 import { withWorkflowStore } from "./sync.mjs";
 import { readProjectFile } from "../lib/filesystem.mjs";
 import { SEMANTICS } from "../lib/registry.mjs";
+import { probeLeanCtx } from "./lean-ctx.mjs";
 
 /**
  * Context Packer
@@ -10,6 +11,7 @@ import { SEMANTICS } from "../lib/registry.mjs";
 
 export async function buildSurgicalContext(projectRoot, { symbolNames = [], filePaths = [], ticketId = null } = {}) {
   const budget = SEMANTICS.BUDGET;
+  const leanCtx = await probeLeanCtx();
 
   return withWorkflowStore(projectRoot, async (store) => {
     const context = {
@@ -17,7 +19,10 @@ export async function buildSurgicalContext(projectRoot, { symbolNames = [], file
       symbols: [],
       guidelines: [],
       ticket: null,
-      budgetReached: false
+      budgetReached: false,
+      tooling: {
+        leanCtx
+      }
     };
 
     // 1. Pull Ticket (Highest Priority)
@@ -77,6 +82,10 @@ function extractSymbolSnippet(content, symbol) {
 
 export function formatContextForPrompt(context) {
   const parts = [];
+
+  if (context.tooling?.leanCtx && !context.tooling.leanCtx.installed) {
+    parts.push("## Tooling\nlean-ctx is missing; offer install/setup before long context-heavy work.");
+  }
 
   if (context.ticket) {
     parts.push(`## Ticket: ${context.ticket.id}\n${context.ticket.title}\n${context.ticket.data?.summary ?? ""}`);

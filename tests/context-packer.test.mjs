@@ -23,10 +23,12 @@ test("buildSurgicalContext pulls specific files and limits lines", async () => {
 
     assert.equal(context.files.length, 1);
     assert.equal(context.files[0].path, "src/app.ts");
+    assert.equal(context.tooling.leanCtx.installed, true);
 
     const prompt = formatContextForPrompt(context);
     assert.match(prompt, /## Files/);
     assert.match(prompt, /File: src\/app\.ts/);
+    assert.doesNotMatch(prompt, /lean-ctx is missing/i);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

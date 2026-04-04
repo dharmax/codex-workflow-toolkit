@@ -1,30 +1,29 @@
-# DB-First Architecture: Autonomous Engineering OS
+# DB-First Architecture
 
-The system is designed around a **Single Source of Truth**—a local SQLite database that maintains the living state of the project. This architecture ensures that AI agents always have access to consistent, non-hallucinated data about the codebase, workplan, and architectural boundaries.
+`ai-workflow` treats the local SQLite workflow DB as the source of truth for project memory.
 
-## 1. The SQLite Storage Layer
-The database (`.ai-workflow/workflow.db`) acts as the project's memory. It indexes:
-*   **Files & AST Facts:** Every file, symbol, import, and call.
-*   **Engineering Entities:** Epics, Tickets, and Modules.
-*   **Contextual Meta:** Project-specific guidelines, knowledge nodes, and metrics.
+## Stored State
 
-## 2. Stateless Logic, Stateful Data
-AI Agents (Compute Engines) are treated as stateless. Every operation follows a strict pattern:
-1.  **Pull State:** Query the DB for surgical context.
-2.  **Process:** AI generates a patch or plan.
-3.  **Update State:** Write results (patches, metrics, tickets) back to the DB.
+- Files, symbols, claims, notes, and metrics
+- Epics, tickets, modules, and features
+- Architectural edges and durable workflow knowledge
 
-## 3. The Orchestration Stack
-The `ai-workflow` CLI coordinates the flow between these components:
-*   **Parsers:** Populate the DB from the filesystem.
-*   **Router:** Selects the best brain for the task.
-*   **Orchestrator:** Manages complex loops (Ideation, Fixer, Critic).
-*   **Supergit:** Ensures all filesystem mutations are safe and transactional.
+## Projections
 
-## 4. Integration & UI
-The system is accessible via:
-*   **CLI/Shell:** The primary interface for local development.
-*   **Companion UI (Future):** Telegram integration for remote oversight and triage.
+- `epics.md` and `kanban.md` are rendered from the DB
+- Direct file edits are allowed, but they are reconciled back into the DB
+- `sync` and projection writes must keep the DB and markdown views aligned
 
----
-© 2026 Dharmax.
+## Context Efficiency
+
+- `lean-ctx` is the compression layer for surgical context handling
+- The context packer should emit compact worksets before routing AI calls
+- Provider routing should know whether lean-ctx is available
+
+## Surfaces
+
+- CLI and shell
+- Skill / MCP / plugin surfaces
+- Future host adapters
+
+All surfaces share the same DB-backed judgment core. They should not rebuild their own project-memory model.
