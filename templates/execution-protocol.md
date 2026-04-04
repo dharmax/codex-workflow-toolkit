@@ -38,6 +38,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - Keep larger later work in `Deep Backlog` and tie each such ticket to an epic in `epics.md`.
 - Keep human-only acceptance work in `Human Inspection`.
 - Put optional refactors, feature ideas, and polish candidates in `Suggestions`.
+- Keep the core kanban lanes fixed. Only render rare lanes like `AI Candidates`, `Risk Watch`, `Doubtful Relevancy`, and `Ideas` when they contain cards; omit them when empty. Keep `Archived` history in `kanban-archive.md`, not on the live board.
 - Keep `kanban.md` in Obsidian Kanban plugin format.
 - Use `scripts/codex-workflow/kanban-new.mjs`, `scripts/codex-workflow/kanban-next.mjs`, `scripts/codex-workflow/kanban-move.mjs`, `scripts/codex-workflow/kanban-archive.mjs`, `scripts/codex-workflow/kanban-migrate-obsidian.mjs`, and `ai-workflow project ticket create` instead of hand-editing when possible.
 - After any state-changing ticket command, refresh the DB and projection files immediately so `kanban.md` and `epics.md` never lag behind the active work.

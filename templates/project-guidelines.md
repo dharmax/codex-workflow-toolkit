@@ -12,6 +12,7 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Do not let non-critical async work block the main user loop.
 - Preserve access to core state and critical controls when reshaping UI surfaces.
 - Keep hot-path guidance lean. Archive history elsewhere instead of turning active guidance files into context sinks.
+- Keep the core kanban lanes fixed and only show rare lanes when populated. `Archived` is not a live lane; it belongs in `kanban-archive.md`.
 - Smart codelets should be routed through the cheapest suitable provider, not hardcoded to one model family.
 
 ## Architecture

@@ -5,6 +5,7 @@ kanban-plugin: board
 # Kanban
 
 _Generated from the workflow DB. Edit through `ai-workflow project ...` or `ai-workflow sync`._
+_Core lanes are fixed. Rare lanes only render when they contain cards. `Archived` history lives in `kanban-archive.md`._
 
 ## Deep Backlog
 
@@ -42,26 +43,6 @@ _Generated from the workflow DB. Edit through `ai-workflow project ...` or `ai-w
 - No items
 
 ## Done
-
-- No items
-
-## AI Candidates
-
-- No items
-
-## Risk Watch
-
-- No items
-
-## Doubtful Relevancy
-
-- No items
-
-## Ideas
-
-- No items
-
-## Archived
 
 - No items
 

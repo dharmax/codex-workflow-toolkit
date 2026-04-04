@@ -1,3 +1,5 @@
+<!-- Responsibility: Preserve completed kanban history once work leaves the live board.
+Scope: Archive-only history belongs here; live ticket state stays in kanban.md. -->
 # Kanban Archive
 
 Move completed tickets here once they no longer belong on the live `Done` lane.

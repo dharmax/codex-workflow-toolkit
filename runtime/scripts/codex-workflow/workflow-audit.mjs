@@ -62,6 +62,13 @@ const KANBAN_SECTIONS = [
   "Suggestions",
   "Done"
 ];
+const OPTIONAL_KANBAN_SECTIONS = [
+  "AI Candidates",
+  "Risk Watch",
+  "Doubtful Relevancy",
+  "Ideas"
+];
+const ALLOWED_KANBAN_SECTIONS = [...KANBAN_SECTIONS, ...OPTIONAL_KANBAN_SECTIONS];
 const DONE_DATE_PATTERN = /✅\s*(\d{4}-\d{2}-\d{2})/i;
 const EPIC_PATTERN = /(?:^|\n)-\s*Epic:\s*([A-Z][A-Z0-9]+-\d+)\s*(?:\n|$)/i;
 const MAX_LIVE_DONE_DAYS = 7;
@@ -165,14 +172,39 @@ if (activeDocs.includes("kanban.md")) {
 
   const sectionOrder = parsed.sections
     .map((section) => section.name)
-    .filter((name) => KANBAN_SECTIONS.includes(name));
+    .filter((name) => ALLOWED_KANBAN_SECTIONS.includes(name));
+  const expectedSectionOrder = [
+    ...KANBAN_SECTIONS,
+    ...OPTIONAL_KANBAN_SECTIONS.filter((name) => sectionNames.has(name))
+  ];
 
-  if (sectionOrder.join("|") !== KANBAN_SECTIONS.join("|")) {
+  if (sectionOrder.join("|") !== expectedSectionOrder.join("|")) {
     findings.push(createFinding({
       category: "kanban",
       file: "kanban.md",
-      message: `expected lane order -> ${KANBAN_SECTIONS.join(" -> ")}`
+      message: `expected lane order -> ${expectedSectionOrder.join(" -> ")}`
     }));
+  }
+
+  for (const section of parsed.sections) {
+    if (!ALLOWED_KANBAN_SECTIONS.includes(section.name)) {
+      findings.push(createFinding({
+        category: "kanban",
+        file: "kanban.md",
+        line: section.headingLine + 1,
+        message: `unexpected lane -> ${section.name}`
+      }));
+      continue;
+    }
+
+    if (OPTIONAL_KANBAN_SECTIONS.includes(section.name) && !section.tickets.length) {
+      findings.push(createFinding({
+        category: "kanban",
+        file: "kanban.md",
+        line: section.headingLine + 1,
+        message: `optional lane should be omitted when empty -> ${section.name}`
+      }));
+    }
   }
 
   const inProgressTickets = parsed.tickets.filter((ticket) => ticket.section === "In Progress");

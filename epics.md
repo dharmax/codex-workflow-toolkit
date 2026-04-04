@@ -24,7 +24,7 @@ Make lean-ctx the required internal layer for context packing, surgical reads, d
 
 #### Story 3
 
-**As the AI router**, I can keep interactive worksets small and composable while the tool uses them directly.
+**As the tool and its codelets**, when I need AI help for a directory walk or codelet burst, I can route compact context through lean-ctx before asking the cheapest suitable provider.
 
 ### Ticket batches
 - Lean-ctx dependency detection, install/setup recovery, and explicit failure paths
@@ -88,7 +88,7 @@ Make provider selection explicit, cheap, and diagnosable by routing tasks throug
 
 #### Story 3
 
-**As the tool**, when I need AI help for a directory walk or codelet burst, I can transparently route to the cheapest suitable provider and keep the prompt lean before I ask.
+**As the tool and its codelets**, when I need AI help for a directory walk or codelet burst, I can route compact context through lean-ctx before asking the cheapest suitable provider.
 
 #### Story 4
 
@@ -167,12 +167,17 @@ Make project codelets, kanban/epic projections, and durable lessons first-class 
 
 **As the tool**, when a ticket starts executing, I can see it move to In Progress immediately and keep seeing kanban and epics refresh after each workflow mutation.
 
+#### Story 6
+
+**As a user**, I can query epics and user stories directly through ai-workflow instead of reading the whole board.
+
 ### Ticket batches
 - Project codelet surfaces for locationing and review
 - Kanban/epics projection reliability and reviewability
 - Knowledge capture, retros, and durable lessons from solved work
 - Two-way reconciliation between narrative projections and DB entities, including create/update/delete handling for edited epics and kanban tickets
 - Real-time projection refresh after state-changing commands, including in-progress visibility during execution bursts
+- Query functions for listing, fetching, and searching epics and user stories from the DB
 
 ### Kanban tickets
 - EXE-004 Refresh live projections after every workflow mutation [In Progress]

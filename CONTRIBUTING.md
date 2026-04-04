@@ -31,6 +31,7 @@ Scope: Ticket-local implementation detail and project-specific technical constra
 - `Human Inspection`: tickets waiting on human eyes, ears, or product judgment.
 - `Suggestions`: optional improvements to consider, not committed scope.
 - `Done`: recently finished tickets only; add `- Done: YYYY-MM-DD` and archive older entries into `kanban-archive.md`.
+- Keep the standard lanes fixed in order. Only render rare lanes such as `AI Candidates`, `Risk Watch`, `Doubtful Relevancy`, and `Ideas` when they actually have cards. `Archived` history belongs in `kanban-archive.md`, not on the live board.
 - Keep `kanban.md` in Obsidian Kanban plugin format. Do not invent an alternate board shape.
 - Use `node scripts/codex-workflow/kanban-new.mjs --id <ticket> --title <title> --to <lane>` to create normalized cards.
 - Use `node scripts/codex-workflow/kanban-next.mjs` to inspect the next ticket by lane priority.

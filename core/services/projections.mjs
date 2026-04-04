@@ -3,7 +3,7 @@ import { readText } from "../../runtime/scripts/codex-workflow/lib/fs-utils.mjs"
 import { writeProjectFile } from "../lib/filesystem.mjs";
 import { sha1, stableId } from "../lib/hash.mjs";
 
-const DEFAULT_TICKET_LANES = [
+const CORE_TICKET_LANES = [
   "Deep Backlog",
   "Backlog",
   "ToDo",
@@ -12,12 +12,14 @@ const DEFAULT_TICKET_LANES = [
   "In Progress",
   "Human Inspection",
   "Suggestions",
-  "Done",
+  "Done"
+];
+
+const OPTIONAL_TICKET_LANES = [
   "AI Candidates",
   "Risk Watch",
   "Doubtful Relevancy",
-  "Ideas",
-  "Archived"
+  "Ideas"
 ];
 
 export function buildSmartProjectStatus(store, { auditFindings = [] } = {}) {
@@ -99,19 +101,28 @@ export function renderKanbanProjection(store) {
   const candidateTickets = store.listEntities({ entityType: "candidate-ticket" });
   const ideas = store.listEntities({ entityType: "idea" });
   const risks = store.listEntities({ entityType: "risk" });
-  const laneMap = new Map(DEFAULT_TICKET_LANES.map((lane) => [lane, []]));
+  const coreLaneMap = new Map(CORE_TICKET_LANES.map((lane) => [lane, []]));
+  const optionalLaneMap = new Map(OPTIONAL_TICKET_LANES.map((lane) => [lane, []]));
 
   for (const ticket of tickets) {
-    laneMap.get(normalizeDisplayLaneName(ticket.lane ?? "ToDo"))?.push(ticket);
+    const lane = normalizeDisplayLaneName(ticket.lane ?? "ToDo");
+    if (coreLaneMap.has(lane)) {
+      coreLaneMap.get(lane)?.push(ticket);
+      continue;
+    }
+
+    if (optionalLaneMap.has(lane)) {
+      optionalLaneMap.get(lane)?.push(ticket);
+    }
   }
   for (const ticket of candidateTickets) {
-    laneMap.get("AI Candidates")?.push(ticket);
+    optionalLaneMap.get("AI Candidates")?.push(ticket);
   }
   for (const idea of ideas) {
-    laneMap.get("Ideas")?.push(idea);
+    optionalLaneMap.get("Ideas")?.push(idea);
   }
   for (const risk of risks) {
-    laneMap.get("Risk Watch")?.push(risk);
+    optionalLaneMap.get("Risk Watch")?.push(risk);
   }
 
   const lines = [
@@ -122,12 +133,13 @@ export function renderKanbanProjection(store) {
     "# Kanban",
     "",
     "_Generated from the workflow DB. Edit through `ai-workflow project ...` or `ai-workflow sync`._",
+    "_Core lanes are fixed. Rare lanes only render when they contain cards. `Archived` history lives in `kanban-archive.md`._",
     ""
   ];
-  for (const lane of DEFAULT_TICKET_LANES) {
+  for (const lane of CORE_TICKET_LANES) {
     lines.push(`## ${lane}`);
     lines.push("");
-    const items = laneMap.get(lane) ?? [];
+    const items = coreLaneMap.get(lane) ?? [];
     if (!items.length) {
       lines.push("- No items");
       lines.push("");
@@ -150,6 +162,32 @@ export function renderKanbanProjection(store) {
     }
     lines.push("");
   }
+
+  for (const lane of OPTIONAL_TICKET_LANES) {
+    const items = optionalLaneMap.get(lane) ?? [];
+    if (!items.length) {
+      continue;
+    }
+
+    lines.push(`## ${lane}`);
+    lines.push("");
+    for (const item of items) {
+      const id = item.data.ticketId ?? item.id.replace(/^ticket:/, "").replace(/^candidate:/, "");
+      lines.push(`- [ ] ${id} ${item.title}`);
+      if (item.data?.summary) {
+        lines.push(`  - Summary: ${item.data.summary}`);
+      }
+      if (item.data?.userStory) {
+        lines.push(`  - Story: ${item.data.userStory}`);
+      }
+      if (item.parentId) {
+        lines.push(`  - Parent: ${item.parentId}`);
+      }
+      lines.push(`  - State: ${item.state}`);
+    }
+    lines.push("");
+  }
+
   lines.push("%% kanban:settings");
   lines.push("```");
   lines.push('{"kanban-plugin":"board"}');

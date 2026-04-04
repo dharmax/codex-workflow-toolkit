@@ -111,6 +111,52 @@ test("ticket entities render into the projection view", async () => {
   }
 });
 
+test("kanban projection keeps rare lanes hidden until they have cards", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-rare-lanes-"));
+
+  try {
+    await withWorkflowStore(targetRoot, async (store) => {
+      store.upsertEntity(buildTicketEntity({
+        id: "TKT-333",
+        title: "Keep the core board compact",
+        lane: "In Progress",
+        summary: "Only the standard lanes should render when the rare lanes are empty."
+      }));
+
+      const compactProjection = renderKanbanProjection(store);
+      assert.match(compactProjection, /## In Progress/);
+      assert.doesNotMatch(compactProjection, /## AI Candidates/);
+      assert.doesNotMatch(compactProjection, /## Risk Watch/);
+      assert.doesNotMatch(compactProjection, /## Doubtful Relevancy/);
+      assert.doesNotMatch(compactProjection, /## Ideas/);
+      assert.doesNotMatch(compactProjection, /## Archived/);
+
+      store.upsertEntity({
+        id: "ticket:CAND-333",
+        entityType: "candidate-ticket",
+        title: "Review rare lane candidate",
+        lane: "AI Candidates",
+        state: "open",
+        confidence: 0.9,
+        provenance: "manual",
+        sourceKind: "manual",
+        reviewState: "active",
+        parentId: null,
+        data: {
+          ticketId: "CAND-333",
+          summary: "A candidate lane should surface only when it is populated."
+        }
+      });
+
+      const expandedProjection = renderKanbanProjection(store);
+      assert.match(expandedProjection, /## AI Candidates/);
+      assert.match(expandedProjection, /CAND-333 Review rare lane candidate/);
+    });
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("epic projections stay narrative-first and epic/story queries resolve through the DB", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-epic-queries-"));
 
