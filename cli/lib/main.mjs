@@ -21,6 +21,7 @@ import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, rend
 import { addManualNote, createTicket, evaluateProjectReadiness, getEpic, getProjectMetrics, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { ingestArtifact } from "../../core/services/orchestrator.mjs";
+import { updateKnowledgeRemote } from "../../core/services/knowledge.mjs";
 import { assertSafeRepairTarget, getToolkitRoot as getOperatingToolkitRoot, resolveOperatingContext } from "../../core/lib/operating-context.mjs";
 import { readLatestRunArtifact } from "../../core/lib/run-artifacts.mjs";
 import { resolveHostRequest } from "../../core/services/host-resolver.mjs";
@@ -67,6 +68,7 @@ const HELP = `Usage:
   ai-workflow provider quota refresh [provider-id|all] [--global] [--json]
   ai-workflow mode set <default|tool-dev> [--global]
   ai-workflow mode status [--json]
+  ai-workflow knowledge update-remote [--url <remote-url>] [--json]
   ai-workflow tool observe [--complaint <text>] [--json]
   ai-workflow web tutorial [--port <n>] [--host <host>] [--json]
   ai-workflow config get [key]
@@ -144,6 +146,8 @@ export async function main(argv) {
       return handleProvider(rest);
     case "mode":
       return handleMode(rest);
+    case "knowledge":
+      return handleKnowledge(rest);
     case "tool":
       return handleTool(rest);
     case "web":
@@ -786,6 +790,33 @@ async function handleMode(rest) {
   }
 
   printAndExit("Usage: ai-workflow mode set <default|tool-dev> [--global]\n       ai-workflow mode status [--json]", 1);
+}
+
+async function handleKnowledge(rest) {
+  const [action, ...tail] = rest;
+  const args = parseArgs(tail);
+
+  if (action === "update-remote") {
+    const result = await updateKnowledgeRemote({
+      root: process.cwd(),
+      sourceUrl: args.url ? String(args.url) : null
+    });
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
+    if (result.success) {
+      process.stdout.write(`Refreshed builtin knowledge from ${result.sourceUrl}\n`);
+      return 0;
+    }
+    if (result.skipped) {
+      process.stdout.write(`${result.reason}\n${result.hint ?? ""}\n`.trimEnd() + "\n");
+      return 0;
+    }
+    printAndExit(result.reason ?? "Failed to refresh builtin knowledge.", 1);
+  }
+
+  printAndExit("Usage: ai-workflow knowledge update-remote [--url <remote-url>] [--json]", 1);
 }
 
 async function handleTool(rest) {
