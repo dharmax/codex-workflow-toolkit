@@ -12,7 +12,7 @@ If a project needs a narrower exception, edit this file or add a later markdown 
   "headers": [
     {
       "id": "responsibility-headers",
-      "include": ["src", "tests", "docs"],
+      "include": ["AGENTS.md", "CONTRIBUTING.md", "execution-protocol.md", "enforcement.md", "project-guidelines.md", "kanban-archive.md"],
       "extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md", ".mdx", ".riot"],
       "exclude": ["docs/kanban.md"],
       "requiredNearTop": ["Responsibility:", "Scope:"],
