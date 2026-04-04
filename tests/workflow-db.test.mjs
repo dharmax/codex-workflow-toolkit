@@ -33,6 +33,31 @@ test("syncProject indexes a realistic fixture repo and imports legacy projection
   }
 });
 
+test("syncProject mirrors codelets into the DB registry", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-codelets-"));
+
+  try {
+    await cp(fixtureRoot, targetRoot, { recursive: true });
+    const result = await syncProject({ projectRoot: targetRoot, writeProjections: true });
+
+    assert.equal(result.codeletRegistry.codeletsIndexed > 0, true);
+    assert.equal(result.summary.codeletCount > 0, true);
+
+    await withWorkflowStore(targetRoot, async (store) => {
+      const codelets = store.listEntities({ entityType: "codelet" });
+      const doctor = codelets.find((item) => item.data?.codeletId === "doctor");
+      const executeTicket = codelets.find((item) => item.data?.codeletId === "execute-ticket");
+
+      assert.equal(Boolean(doctor), true);
+      assert.equal(doctor?.data?.backing?.status, "builtin");
+      assert.equal(Boolean(executeTicket), true);
+      assert.equal(executeTicket?.data?.backing?.exists, true);
+    });
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("manual notes, candidate review, and search operate against the DB-first store", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-note-"));
 

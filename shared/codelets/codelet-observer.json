@@ -5,6 +5,7 @@
   "summary": "Observe recurring work patterns and propose new codelets.",
   "runner": "node-script",
   "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "execution": "js",
   "focus": "codelet-observer",
   "taskClass": "task-decomposition",
   "observer": true

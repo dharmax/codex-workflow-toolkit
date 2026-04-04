@@ -5,6 +5,7 @@
   "summary": "Simplify a Riot component without losing behavior.",
   "runner": "node-script",
   "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "execution": "js",
   "focus": "riot-simplify",
   "taskClass": "refactoring"
 }

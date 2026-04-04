@@ -88,6 +88,7 @@ export function buildProjectSummary(store) {
     symbolCount: counts.symbols,
     claimCount: counts.claims,
     ticketCount: counts.tickets,
+    codeletCount: counts.codelets,
     candidateCount: counts.candidates,
     activeTickets,
     candidates,
@@ -421,14 +422,18 @@ export async function importLegacyProjections(store, { projectRoot }) {
     importedEpics += 1;
   }
 
-  pruneProjectionImportedEntities(store, {
-    entityType: "ticket",
-    keepIds: importedTicketIds
-  });
-  pruneProjectionImportedEntities(store, {
-    entityType: "epic",
-    keepIds: importedEpicIds
-  });
+  if (kanbanSource.score >= 0) {
+    pruneProjectionImportedEntities(store, {
+      entityType: "ticket",
+      keepIds: importedTicketIds
+    });
+  }
+  if (epicsSource.score >= 0) {
+    pruneProjectionImportedEntities(store, {
+      entityType: "epic",
+      keepIds: importedEpicIds
+    });
+  }
 
   return {
     importedTickets,
@@ -499,9 +504,11 @@ export function createSearchDocumentsForEntities(store) {
 
 async function selectProjectionSource(projectRoot, candidates, scorer, { lastProjectionDigest = null } = {}) {
   let best = { path: candidates[0], text: "", score: -1 };
+  let skippedGenerated = false;
   for (const relativePath of candidates) {
     const text = await readText(path.resolve(projectRoot, relativePath), "");
     if (lastProjectionDigest && shouldSkipGeneratedProjection(relativePath, text, lastProjectionDigest)) {
+      skippedGenerated = true;
       continue;
     }
 
@@ -510,7 +517,10 @@ async function selectProjectionSource(projectRoot, candidates, scorer, { lastPro
       best = { path: relativePath, text, score };
     }
   }
-  return best;
+  return {
+    ...best,
+    skippedGenerated
+  };
 }
 
 function shouldSkipGeneratedProjection(relativePath, text, lastProjectionDigest) {

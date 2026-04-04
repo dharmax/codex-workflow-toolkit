@@ -8,6 +8,7 @@ import { buildProjectSummary, buildSmartProjectStatus, compareEpicPriority, crea
 import { auditArchitecture } from "./critic.mjs";
 import { SEMANTICS } from "../lib/registry.mjs";
 import { evaluateReadiness } from "./readiness-evaluator.mjs";
+import { refreshCodeletRegistry, listCodeletsFromStore, getCodeletFromStore, searchCodeletsFromStore } from "./codelets.mjs";
 
 export async function syncProject({ projectRoot = process.cwd(), writeProjections = false } = {}) {
   const store = await openWorkflowStore({ projectRoot });
@@ -62,6 +63,7 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
     }
 
     const lifecycle = reviewCandidates(store);
+    const codeletRegistry = await refreshCodeletRegistry(store, { projectRoot });
     createSearchDocumentsForEntities(store);
 
     // RAG-003: Shadow Sync
@@ -72,7 +74,8 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
       fileCount: files.length,
       symbolCount,
       claimCount,
-      noteCount
+      noteCount,
+      codeletCount: codeletRegistry.codeletsIndexed
     });
 
     let projections = null;
@@ -88,6 +91,7 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
       indexedSymbols: symbolCount,
       indexedClaims: claimCount,
       indexedNotes: noteCount,
+      codeletRegistry,
       importSummary,
       lifecycle,
       projections,
@@ -203,6 +207,22 @@ export async function recordMetric({ projectRoot = process.cwd(), metric }) {
 
 export async function searchProject({ projectRoot = process.cwd(), query, limit = 20 } = {}) {
   return withWorkflowStore(projectRoot, async (store) => store.search(query, { limit }));
+}
+
+export async function listCodelets({ projectRoot = process.cwd(), sourceKind = null } = {}) {
+  return withWorkflowStore(projectRoot, async (store) => listCodeletsFromStore(store, { sourceKind }));
+}
+
+export async function getCodelet({ projectRoot = process.cwd(), codeletId } = {}) {
+  if (!codeletId) {
+    return null;
+  }
+
+  return withWorkflowStore(projectRoot, async (store) => getCodeletFromStore(store, codeletId));
+}
+
+export async function searchCodelets({ projectRoot = process.cwd(), query, limit = 20, sourceKind = null } = {}) {
+  return withWorkflowStore(projectRoot, async (store) => searchCodeletsFromStore(store, query, { limit, sourceKind }));
 }
 
 export async function listEpics({ projectRoot = process.cwd(), includeArchived = false } = {}) {

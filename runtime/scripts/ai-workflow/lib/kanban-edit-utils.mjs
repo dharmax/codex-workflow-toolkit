@@ -148,11 +148,12 @@ export function getNextTicket(document, options = {}) {
 
   for (const lane of priorities) {
     const section = findSection(document, lane);
-    if (!section || !section.tickets.length) {
+    const tickets = Array.isArray(section?.tickets) ? section.tickets : [];
+    if (!tickets.length) {
       continue;
     }
 
-    const ticket = section.tickets.find((entry) => !isPlaceholderTicket(entry));
+    const ticket = tickets.find((entry) => !isPlaceholderTicket(entry));
     if (!ticket) {
       continue;
     }

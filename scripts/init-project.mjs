@@ -3,13 +3,17 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chmod, copyFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import * as readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
 import { syncProject } from "../core/services/sync.mjs";
+import { onboardProjectBrief } from "../core/services/orchestrator.mjs";
 
 const HELP = `Usage:
   node scripts/init-project.mjs --target /path/to/project
 
 Options:
   --target <path>    Target project root. Defaults to current directory.
+  --brief <file>     Run project-brief onboarding after install.
   --force            Overwrite existing non-empty files.
   --dry-run          Show what would change without writing files.
   --no-sync          Skip the initial workflow DB sync.
@@ -20,12 +24,8 @@ const repoRoot = path.resolve(__dirname, "..");
 const templatesRoot = path.resolve(repoRoot, "templates");
 const runtimeRoot = path.resolve(repoRoot, "runtime", "scripts", "ai-workflow");
 const WORKFLOW_PACKAGE_SCRIPTS = {
+  "workflow:kanban": "node scripts/ai-workflow/kanban.mjs",
   "workflow:ticket": "node scripts/ai-workflow/kanban-ticket.mjs",
-  "workflow:new-ticket": "node scripts/ai-workflow/kanban-new.mjs",
-  "workflow:next-ticket": "node scripts/ai-workflow/kanban-next.mjs",
-  "workflow:move-ticket": "node scripts/ai-workflow/kanban-move.mjs",
-  "workflow:archive-done": "node scripts/ai-workflow/kanban-archive.mjs",
-  "workflow:migrate-kanban": "node scripts/ai-workflow/kanban-migrate-obsidian.mjs",
   "workflow:guidance": "node scripts/ai-workflow/guidance-summary.mjs",
   "workflow:review": "node scripts/ai-workflow/review-summary.mjs",
   "workflow:verify": "node scripts/ai-workflow/verification-summary.mjs",
@@ -43,6 +43,7 @@ const targetRoot = path.resolve(String(args.target ?? process.cwd()));
 const force = Boolean(args.force);
 const dryRun = Boolean(args["dry-run"]);
 const runInitialSync = !dryRun && !args["no-sync"];
+const briefSource = args.brief ? path.resolve(targetRoot, String(args.brief)) : null;
 
 const plan = [
   {
@@ -82,8 +83,8 @@ const plan = [
     target: path.resolve(targetRoot, "knowledge.md")
   },
   {
-    source: path.resolve(templatesRoot, ".github", "workflows", "codex-workflow-audit.yml"),
-    target: path.resolve(targetRoot, ".github", "workflows", "codex-workflow-audit.yml")
+    source: path.resolve(templatesRoot, ".github", "workflows", "ai-workflow-audit.yml"),
+    target: path.resolve(targetRoot, ".github", "workflows", "ai-workflow-audit.yml")
   },
   ...(await buildRuntimePlan(runtimeRoot, path.resolve(targetRoot, "scripts", "ai-workflow")))
 ];
@@ -141,6 +142,16 @@ if (looksLikeJsProject) {
 let syncResult = null;
 if (runInitialSync) {
   syncResult = await syncProject({ projectRoot: targetRoot });
+}
+
+let briefResult = null;
+if (!dryRun && briefSource) {
+  const briefRl = readline.createInterface({ input, output });
+  try {
+    briefResult = await onboardProjectBrief(briefSource, { root: targetRoot, rl: briefRl });
+  } finally {
+    briefRl.close();
+  }
 }
 
 const lines = [];
@@ -208,6 +219,12 @@ if (syncResult) {
   lines.push(`Symbols: ${syncResult.indexedSymbols}`);
   lines.push(`Claims: ${syncResult.indexedClaims}`);
   lines.push(`Notes: ${syncResult.indexedNotes}`);
+}
+
+if (briefResult) {
+  lines.push("");
+  lines.push(`Onboarded brief: ${briefResult.briefPath}`);
+  lines.push(`Generated epic: ${briefResult.epic.id} (${briefResult.tickets.length} tickets)`);
 }
 
 process.stdout.write(`${lines.join("\n")}\n`);

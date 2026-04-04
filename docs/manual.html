@@ -105,8 +105,11 @@
         <pre>ai-workflow shell "sweep bugs"</pre>
         <p>Triggers the autonomous fixer loop. Supergit creates a temp branch, applies patches, runs tests, and merges only on success.</p>
 
-        <pre>ai-workflow ingest path/to/prd.md</pre>
-        <p>The Artifact Digestor. Parses requirements into a structured workplan with a human-approval gate.</p>
+        <pre>ai-workflow init --brief path/to/project-brief.md</pre>
+        <p>Starts a new project, normalizes the brief into a living document, and asks clarifying questions before epics are generated.</p>
+
+        <pre>ai-workflow onboard path/to/project-brief.md</pre>
+        <p>The Project Brief Onboarding flow. It turns a messy project description into a structured brief, then scopes epics and tickets.</p>
 
         <pre>ai-workflow consult</pre>
         <p>Handles the asynchronous architectural Q&A loop. Your guidance is indexed and used to train the system's local model.</p>

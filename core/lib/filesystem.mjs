@@ -139,7 +139,7 @@ async function isNestedProjectRoot(root, absolutePath, relativePath) {
   const workflowConfigPath = path.resolve(absolutePath, ".ai-workflow", "config.json");
   const docsKanbanPath = path.resolve(absolutePath, "docs", "kanban.md");
   const rootKanbanPath = path.resolve(absolutePath, "kanban.md");
-  const nestedScriptPath = path.resolve(absolutePath, "scripts", "codex-workflow");
+  const nestedScriptPath = path.resolve(absolutePath, "scripts", "ai-workflow");
 
   if (!existsSync(packageJsonPath)) {
     return false;

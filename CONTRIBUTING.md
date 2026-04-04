@@ -33,15 +33,15 @@ Scope: Ticket-local implementation detail and project-specific technical constra
 - `Done`: recently finished tickets only; add `- Done: YYYY-MM-DD` and archive older entries into `kanban-archive.md`.
 - Keep the standard lanes fixed in order. Only render rare lanes such as `AI Candidates`, `Risk Watch`, `Doubtful Relevancy`, and `Ideas` when they actually have cards. `Archived` history belongs in `kanban-archive.md`, not on the live board.
 - Keep `kanban.md` in Obsidian Kanban plugin format. Do not invent an alternate board shape.
-- Use `node scripts/codex-workflow/kanban-new.mjs --id <ticket> --title <title> --to <lane>` to create normalized cards.
-- Use `node scripts/codex-workflow/kanban-next.mjs` to inspect the next ticket by lane priority.
-- Use `node scripts/codex-workflow/kanban-move.mjs --id <ticket> --to <lane>` for reliable lane moves.
-- Use `node scripts/codex-workflow/kanban-archive.mjs` to sweep stale `Done` work into `kanban-archive.md`.
-- Use `node scripts/codex-workflow/kanban-migrate-obsidian.mjs` once when an older repo still uses the legacy board format.
+- Use `node scripts/ai-workflow/kanban.mjs new --id <ticket> --title <title> --to <lane>` to create normalized cards.
+- Use `node scripts/ai-workflow/kanban.mjs next` to inspect the next ticket by lane priority.
+- Use `node scripts/ai-workflow/kanban.mjs move --id <ticket> --to <lane>` for reliable lane moves.
+- Use `node scripts/ai-workflow/kanban.mjs archive` to sweep stale `Done` work into `kanban-archive.md`.
+- Use `node scripts/ai-workflow/kanban.mjs migrate` once when an older repo still uses the legacy board format.
 
 ## Validation By Risk
 
-- Workflow or guidance changes: run `node scripts/codex-workflow/workflow-audit.mjs`.
+- Workflow or guidance changes: run `node scripts/ai-workflow/workflow-audit.mjs`.
 - Docs-only: run the lightest workflow/doc checks that prove the change.
 - Small ticket: quick but meaningful unit or module tests.
 - Related batch or larger ticket: E2E, including visual checks when UI is involved.
@@ -54,7 +54,7 @@ Scope: Ticket-local implementation detail and project-specific technical constra
 
 ## Audit Extensions
 
-Add machine-readable project rules in fenced `codex-workflow-audit` JSON blocks inside markdown guidance docs.
+Add machine-readable project rules in fenced `ai-workflow-audit` JSON blocks inside markdown guidance docs.
 `workflow-audit.mjs` merges those blocks automatically, so durable project rules can become executable instead of remaining advisory text.
 
 ## Truthfulness Rules

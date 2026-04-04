@@ -6,21 +6,23 @@ import { stdin as input, stdout as output } from "node:process";
 import { promisify } from "node:util";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
-import { getToolkitCodelet, getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
+import { getToolkitCodelet, getToolkitRoot } from "./codelets.mjs";
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
 import { runDoctor } from "./doctor.mjs";
 import { handleSetOllamaHw } from "./ollama-hw.mjs";
 import { handleShell } from "./shell.mjs";
 import { handleProviderConnect } from "./provider-connect.mjs";
 import { installAgents } from "./install.mjs";
-import { forgeProjectCodelet, getProjectCodelet, listProjectCodelets, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
+import { forgeProjectCodelet, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
 import { refreshProviderQuotaState } from "../../core/services/providers.mjs";
+import { refreshCodeletRegistry, listCodeletsFromStore, getCodeletFromStore, searchCodeletsFromStore } from "../../core/services/codelets.mjs";
+import { executeCodelet } from "../../core/services/codelet-executor.mjs";
 import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection, writeProjectProjections } from "../../core/services/projections.mjs";
 import { addManualNote, createTicket, evaluateProjectReadiness, getEpic, getProjectMetrics, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
-import { ingestArtifact } from "../../core/services/orchestrator.mjs";
+import { onboardProjectBrief } from "../../core/services/orchestrator.mjs";
 import { updateKnowledgeRemote } from "../../core/services/knowledge.mjs";
 import { assertSafeRepairTarget, getToolkitRoot as getOperatingToolkitRoot, resolveOperatingContext } from "../../core/lib/operating-context.mjs";
 import { readLatestRunArtifact } from "../../core/lib/run-artifacts.mjs";
@@ -35,9 +37,11 @@ const HELP = `Usage:
   ai-workflow doctor [--json]
   ai-workflow version [--json]
   ai-workflow audit architecture [--json]
+  ai-workflow kanban <new|move|next|archive|migrate> [...]
   ai-workflow set-ollama-hw [options]
   ai-workflow set-provider-key <provider-id> [--global]
   ai-workflow metrics [--json]
+  ai-workflow onboard <brief-file> [--json]
   ai-workflow ingest <file> [--json]
   ai-workflow consult
   ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]
@@ -55,6 +59,7 @@ const HELP = `Usage:
   ai-workflow project search <text> [--json]
   ai-workflow project epic <list|show|search> [...]
   ai-workflow project story <list|search> [...]
+  ai-workflow project codelet <list|show|search> [...]
   ai-workflow project ticket create --id <id> --title <title> [--lane <lane>] [--epic <epic-id>] [--summary <text>] [--json]
   ai-workflow project note add --type <NOTE|TODO|FIXME|HACK|BUG|RISK> --body <text> [--file <path>] [--line <n>] [--symbol <name>] [--json]
   ai-workflow project review-candidates [--json]
@@ -107,6 +112,8 @@ export async function main(argv) {
       return handleMetrics(rest);
     case "ingest":
       return handleIngest(rest);
+    case "onboard":
+      return handleOnboard(rest);
     case "consult":
       return handleConsult(rest);
     case "shell":
@@ -120,6 +127,8 @@ export async function main(argv) {
       return 0;
     case "list":
       return handleList(rest);
+    case "kanban":
+      return handleKanban(rest);
     case "info":
       return handleInfo(rest);
     case "run":
@@ -161,8 +170,10 @@ export async function main(argv) {
 
 async function handleList(rest) {
   const json = rest.includes("--json");
-  const toolkitCodelets = await listToolkitCodelets();
-  const projectCodelets = await listProjectCodelets(process.cwd());
+  const { toolkitCodelets, projectCodelets } = await withRefreshedCodeletRegistry(process.cwd(), async (store) => ({
+    toolkitCodelets: await listCodeletsFromStore(store, { sourceKind: "toolkit" }),
+    projectCodelets: await listCodeletsFromStore(store, { sourceKind: "project" })
+  }));
 
   if (json) {
     process.stdout.write(`${JSON.stringify({ toolkitCodelets, projectCodelets }, null, 2)}\n`);
@@ -219,6 +230,7 @@ async function handleSync(rest) {
     `Symbols: ${result.indexedSymbols}`,
     `Claims: ${result.indexedClaims}`,
     `Notes: ${result.indexedNotes}`,
+    `Codelets: ${result.codeletRegistry?.codeletsIndexed ?? 0}`,
     `Imported tickets: ${result.importSummary.importedTickets}`,
     `Reviewed candidates: ${result.lifecycle.reviewed.length}`
   ];
@@ -227,6 +239,13 @@ async function handleSync(rest) {
   }
   process.stdout.write(`${lines.join("\n")}\n`);
   return 0;
+}
+
+async function handleKanban(rest) {
+  return runNodeScript(
+    path.resolve(toolkitRoot, "runtime", "scripts", "ai-workflow", "kanban.mjs"),
+    rest
+  );
 }
 
 async function handleAsk(rest) {
@@ -284,7 +303,7 @@ async function handleInfo(rest) {
     printAndExit("Usage: ai-workflow info <codelet>", 1);
   }
 
-  const codelet = await getProjectCodelet(process.cwd(), name) ?? await getToolkitCodelet(name);
+  const codelet = await withRefreshedCodeletRegistry(process.cwd(), async (store) => getCodeletFromStore(store, name));
   if (!codelet) {
     printAndExit(`Unknown codelet: ${name}`, 1);
   }
@@ -299,28 +318,17 @@ async function handleRun(rest) {
     printAndExit("Usage: ai-workflow run <codelet> [args]", 1);
   }
 
-  const projectCodelet = await getProjectCodelet(process.cwd(), name);
-  if (projectCodelet) {
-    return runProjectCodelet(projectCodelet, args);
+  const codelet = await withRefreshedCodeletRegistry(process.cwd(), async (store) => getCodeletFromStore(store, name));
+  if (!codelet) {
+    printAndExit(`Unknown codelet: ${name}`, 1);
   }
 
-  const toolkitCodelet = await getToolkitCodelet(name);
-  if (toolkitCodelet) {
-    if (toolkitCodelet.runner === "builtin" && name === "doctor") {
-      await runDoctor({ root: process.cwd(), json: args.includes("--json") });
-      return 0;
-    }
-
-    return runNodeScript(toolkitCodelet.entry, args, {
-      env: {
-        AIWF_CODELET_ID: toolkitCodelet.id,
-        AIWF_CODELET_FOCUS: toolkitCodelet.focus ? String(toolkitCodelet.focus) : "",
-        AIWF_CODELET_SUMMARY: toolkitCodelet.summary ? String(toolkitCodelet.summary) : ""
-      }
-    });
+  if (codelet.runner === "builtin" && codelet.id === "doctor") {
+    await runDoctor({ root: process.cwd(), json: args.includes("--json") });
+    return 0;
   }
 
-  printAndExit(`Unknown codelet: ${name}`, 1);
+  return runCodelet(codelet, args);
 }
 
 async function handleAdd(rest, mode) {
@@ -330,6 +338,7 @@ async function handleAdd(rest, mode) {
   }
 
   const manifest = await upsertProjectCodelet(process.cwd(), name, filePath, mode);
+  await refreshCodeletRegistryForProject(process.cwd());
   process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
   return 0;
 }
@@ -341,6 +350,7 @@ async function handleRemove(rest) {
   }
 
   await removeProjectCodelet(process.cwd(), name);
+  await refreshCodeletRegistryForProject(process.cwd());
   process.stdout.write(`Removed project codelet manifest: ${name}\n`);
   return 0;
 }
@@ -379,7 +389,7 @@ async function handleVerify(rest) {
   }
 
   if (target === "guidelines") {
-    return runNodeScript(path.resolve(toolkitRoot, "runtime", "scripts", "codex-workflow", "guideline-audit.mjs"), args);
+    return runNodeScript(path.resolve(toolkitRoot, "runtime", "scripts", "ai-workflow", "guideline-audit.mjs"), args);
   }
 
   return runNodeScript(verifyCodelet.entry, [target, ...args]);
@@ -392,6 +402,7 @@ async function handleForge(rest) {
   }
 
   const forged = await forgeProjectCodelet(process.cwd(), name);
+  await refreshCodeletRegistryForProject(process.cwd());
   process.stdout.write(`${JSON.stringify(forged, null, 2)}\n`);
   return 0;
 }
@@ -411,6 +422,7 @@ async function handleProject(rest) {
       `Symbols indexed: ${summary.symbolCount}`,
       `Notes tracked: ${summary.noteCount}`,
       `Tickets: ${summary.activeTickets.length}`,
+      `Codelets: ${summary.codeletCount ?? 0}`,
       `Candidates: ${summary.candidates.length}`
     ].join("\n") + "\n");
     return 0;
@@ -575,6 +587,10 @@ async function handleProject(rest) {
     printAndExit("Usage: ai-workflow project story <list|search> ...", 1);
   }
 
+  if (subcommand === "codelet") {
+    return handleProjectCodelet(args);
+  }
+
   if (subcommand === "ticket" && args._[0] === "create") {
     const id = args.id;
     const title = args.title;
@@ -678,7 +694,56 @@ async function handleProject(rest) {
     return 0;
   }
 
-  printAndExit("Usage: ai-workflow project <summary|readiness|search|epic|story|ticket|note|review-candidates|render|import-projections> ...", 1);
+  printAndExit("Usage: ai-workflow project <summary|readiness|search|epic|story|codelet|ticket|note|review-candidates|render|import-projections> ...", 1);
+}
+
+async function handleProjectCodelet(args) {
+  const [action, ...extras] = args._;
+
+  if (action === "list") {
+    const sourceKind = args.source ? String(args.source) : null;
+    const codelets = await withRefreshedCodeletRegistry(process.cwd(), async (store) => listCodeletsFromStore(store, { sourceKind }));
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(codelets, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(`${codelets.map((codelet) => `- ${codelet.id} [${codelet.sourceKind}] ${codelet.summary}`).join("\n")}\n`);
+    return 0;
+  }
+
+  if (action === "show") {
+    const codeletId = extras[0] ?? args.id;
+    if (!codeletId) {
+      printAndExit("Usage: ai-workflow project codelet show <codelet-id> [--json]", 1);
+    }
+    const codelet = await withRefreshedCodeletRegistry(process.cwd(), async (store) => getCodeletFromStore(store, String(codeletId)));
+    if (!codelet) {
+      printAndExit(`Unknown codelet: ${codeletId}`, 1);
+    }
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(codelet, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(formatCodeletOutput(codelet));
+    return 0;
+  }
+
+  if (action === "search") {
+    const query = extras.join(" ") || String(args.query ?? "").trim();
+    if (!query) {
+      printAndExit("Usage: ai-workflow project codelet search <text> [--source <toolkit|project>] [--json]", 1);
+    }
+    const sourceKind = args.source ? String(args.source) : null;
+    const matches = await withRefreshedCodeletRegistry(process.cwd(), async (store) => searchCodeletsFromStore(store, query, { sourceKind }));
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(matches, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(`${matches.map((codelet) => `- ${codelet.id} [${codelet.sourceKind}] ${codelet.summary} (score ${codelet.score})`).join("\n")}\n`);
+    return 0;
+  }
+
+  printAndExit("Usage: ai-workflow project codelet <list|show|search> ...", 1);
 }
 
 async function handleRoute(rest) {
@@ -831,7 +896,7 @@ async function handleWeb(rest) {
   const [action, ...extras] = rest;
   if (action === "tutorial") {
     return runNodeScriptLive(
-      path.resolve(toolkitRoot, "runtime", "scripts", "codex-workflow", "tutorial-web.mjs"),
+      path.resolve(toolkitRoot, "runtime", "scripts", "ai-workflow", "tutorial-web.mjs"),
       extras
     );
   }
@@ -972,23 +1037,27 @@ async function handleMetrics(rest) {
 }
 
 async function handleIngest(rest) {
+  return handleOnboard(rest);
+}
+
+async function handleOnboard(rest) {
   const [filePath] = rest;
-  if (!filePath) {
-    printAndExit("Usage: ai-workflow ingest <file> [--json]", 1);
+  if (!filePath || filePath === "--help" || filePath === "-h") {
+    printAndExit("Usage: ai-workflow onboard <brief-file> [--json]", 1);
   }
   const args = parseArgs(rest);
   const rl = readline.createInterface({ input, output });
 
   try {
     const targetPath = path.resolve(process.cwd(), filePath);
-    const result = await ingestArtifact(targetPath, { root: process.cwd(), rl });
+    const result = await onboardProjectBrief(targetPath, { root: process.cwd(), rl });
     if (args.json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     } else {
-      process.stdout.write(`\nIngestion complete. Generated Epic: ${result.epic.id} with ${result.tickets.length} tickets.\n`);
+      process.stdout.write(`\nOnboarding complete. Generated Epic: ${result.epic.id} with ${result.tickets.length} tickets.\n`);
     }
   } catch (error) {
-    printAndExit(`Ingestion failed: ${error.message}`, 1);
+    printAndExit(`Onboarding failed: ${error.message}`, 1);
   } finally {
     rl.close();
   }
@@ -1078,18 +1147,53 @@ function shellQuote(value) {
   return JSON.stringify(String(value));
 }
 
-function runProjectCodelet(codelet, args) {
-  const entry = path.resolve(process.cwd(), codelet.entry);
-  if (codelet.runner !== "node-script") {
-    printAndExit(`Unsupported project codelet runner: ${codelet.runner}`, 1);
-  }
-  return runNodeScript(entry, args, {
+function runCodelet(codelet, args) {
+  return executeCodelet(codelet, args, {
+    cwd: process.cwd(),
+    mode: "stream",
     env: {
+      ...process.env,
       AIWF_CODELET_ID: codelet.id,
       AIWF_CODELET_FOCUS: codelet.focus ? String(codelet.focus) : "",
       AIWF_CODELET_SUMMARY: codelet.summary ? String(codelet.summary) : ""
     }
   });
+}
+
+async function refreshCodeletRegistryForProject(projectRoot) {
+  await withWorkflowStore(projectRoot, async (store) => refreshCodeletRegistry(store, { projectRoot }));
+}
+
+async function withRefreshedCodeletRegistry(projectRoot, callback) {
+  return withWorkflowStore(projectRoot, async (store) => {
+    await refreshCodeletRegistry(store, { projectRoot });
+    return callback(store);
+  });
+}
+
+function formatCodeletOutput(codelet) {
+  const lines = [
+    `ID: ${codelet.id}`,
+    `Source: ${codelet.sourceKind}`,
+    `Summary: ${codelet.summary}`,
+    `Category: ${codelet.category ?? "n/a"}`,
+    `Stability: ${codelet.stability ?? "n/a"}`,
+    `Runner: ${codelet.runner}`,
+    `Backing: ${codelet.backing?.status ?? "unknown"}`
+  ];
+  if (codelet.entryPath) {
+    lines.push(`Entry: ${codelet.entryPath}`);
+  }
+  if (codelet.manifestPath) {
+    lines.push(`Manifest: ${codelet.manifestPath}`);
+  }
+  if (Array.isArray(codelet.variants) && codelet.variants.length > 1) {
+    lines.push("Variants:");
+    for (const variant of codelet.variants) {
+      lines.push(`- ${variant.variantId} [${variant.sourceKind}] ${variant.summary}`);
+    }
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function runNodeScriptLive(scriptPath, args) {

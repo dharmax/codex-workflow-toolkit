@@ -10,7 +10,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 2. If the repo state is already in motion, capture a baseline commit and push it before opening the next implementation slice.
 3. Read the target ticket in `kanban.md`.
 4. Read the owner docs needed for that ticket.
-5. Move one ticket or one explicit batch ticket to `In Progress` with `scripts/codex-workflow/kanban-move.mjs`, or let the workflow executor mark it `In Progress` before the model work starts.
+5. Move one ticket or one explicit batch ticket to `In Progress` with `scripts/ai-workflow/kanban.mjs move`, or let the workflow executor mark it `In Progress` before the model work starts.
 6. State the burst shape: target family, intended outcome, validation plan.
 7. Make the smallest coherent burst that solves the ticket honestly.
 8. Validate at the real risk level of the change.
@@ -40,7 +40,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - Put optional refactors, feature ideas, and polish candidates in `Suggestions`.
 - Keep the core kanban lanes fixed. Only render rare lanes like `AI Candidates`, `Risk Watch`, `Doubtful Relevancy`, and `Ideas` when they contain cards; omit them when empty. Keep `Archived` history in `kanban-archive.md`, not on the live board.
 - Keep `kanban.md` in Obsidian Kanban plugin format.
-- Use `scripts/codex-workflow/kanban-new.mjs`, `scripts/codex-workflow/kanban-next.mjs`, `scripts/codex-workflow/kanban-move.mjs`, `scripts/codex-workflow/kanban-archive.mjs`, `scripts/codex-workflow/kanban-migrate-obsidian.mjs`, and `ai-workflow project ticket create` instead of hand-editing when possible.
+- Use `scripts/ai-workflow/kanban.mjs new`, `scripts/ai-workflow/kanban.mjs next`, `scripts/ai-workflow/kanban.mjs move`, `scripts/ai-workflow/kanban.mjs archive`, `scripts/ai-workflow/kanban.mjs migrate`, and `ai-workflow project ticket create` instead of hand-editing when possible.
 - After any state-changing ticket command, refresh the DB and projection files immediately so `kanban.md` and `epics.md` never lag behind the active work.
 - Treat `tool observe` and the smart-codelet observer loop as dev-mode defaults when the task involves recurring patterns, candidate codelets, or improvement discovery.
 
@@ -83,7 +83,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - Define a stop condition before broad reruns.
 - If a full rerun isolates one failing artifact, stop the sweep and switch to focused reproduction.
 - End long verification work in one truthful state only: green with proof, bounded checkpoint, or explicit blocker.
-- If workflow docs or project rules changed, run `node scripts/codex-workflow/workflow-audit.mjs`.
+- If workflow docs or project rules changed, run `node scripts/ai-workflow/workflow-audit.mjs`.
 
 ## Session Hygiene
 

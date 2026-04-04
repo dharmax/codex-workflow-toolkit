@@ -15,6 +15,8 @@ const IGNORED_DIRS = new Set([
   "node_modules"
 ]);
 
+const AI_WORKFLOW_AUDIT_FENCE = "ai-workflow-audit";
+
 export async function listRepoFiles(root, options = {}) {
   const { extensions = null } = options;
   const files = [];
@@ -67,7 +69,7 @@ export async function collectAuditConfig(root) {
   for (const relativePath of markdownFiles) {
     const absolutePath = path.resolve(root, relativePath);
     const markdown = await readText(absolutePath);
-    const blocks = extractFencedBlocks(markdown, "codex-workflow-audit");
+    const blocks = extractFencedBlocks(markdown, AI_WORKFLOW_AUDIT_FENCE);
 
     for (const block of blocks) {
       blockCount += 1;
@@ -76,12 +78,12 @@ export async function collectAuditConfig(root) {
       try {
         parsed = JSON.parse(block.content);
       } catch (error) {
-        failures.push(`${relativePath}:${block.line}: invalid codex-workflow-audit JSON (${error.message})`);
+        failures.push(`${relativePath}:${block.line}: invalid ${AI_WORKFLOW_AUDIT_FENCE} JSON (${error.message})`);
         continue;
       }
 
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        failures.push(`${relativePath}:${block.line}: codex-workflow-audit block must be a JSON object`);
+        failures.push(`${relativePath}:${block.line}: ${AI_WORKFLOW_AUDIT_FENCE} block must be a JSON object`);
         continue;
       }
 

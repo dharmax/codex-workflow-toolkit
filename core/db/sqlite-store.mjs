@@ -336,6 +336,11 @@ export class SqliteWorkflowStore {
     );
   }
 
+  deleteEntity(id) {
+    this.db.prepare("DELETE FROM search_index WHERE scope = 'entity' AND ref_id = ?").run(id);
+    this.db.prepare("DELETE FROM entities WHERE id = ?").run(id);
+  }
+
   upsertModule(module) {
     const now = nowIso();
     const existing = this.db.prepare("SELECT created_at FROM modules WHERE id = ?").get(module.id);
@@ -785,8 +790,9 @@ export class SqliteWorkflowStore {
     const symbols = this.db.prepare("SELECT COUNT(*) AS value FROM symbols").get().value;
     const claims = this.db.prepare("SELECT COUNT(*) AS value FROM claims").get().value;
     const tickets = this.db.prepare("SELECT COUNT(*) AS value FROM entities WHERE entity_type = 'ticket'").get().value;
+    const codelets = this.db.prepare("SELECT COUNT(*) AS value FROM entities WHERE entity_type = 'codelet'").get().value;
     const candidates = this.db.prepare("SELECT COUNT(*) AS value FROM candidates").get().value;
-    return { files, notes, symbols, claims, tickets, candidates };
+    return { files, notes, symbols, claims, tickets, codelets, candidates };
   }
 }
 

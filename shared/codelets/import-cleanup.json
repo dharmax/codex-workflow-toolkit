@@ -5,6 +5,7 @@
   "summary": "Remove unused, duplicated, or overly broad imports.",
   "runner": "node-script",
   "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "execution": "js",
   "focus": "import-cleanup",
   "taskClass": "refactoring"
 }

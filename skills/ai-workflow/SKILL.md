@@ -5,7 +5,7 @@ description: "Use when the user wants project or game status, beta or release re
 
 # AI Workflow Skill
 
-Use this skill when you want Codex to rely on the shared `ai-workflow` toolkit instead of reconstructing workflow logic in the prompt.
+Use this skill when you want the shared `ai-workflow` toolkit to guide repo work instead of reconstructing workflow logic in the prompt.
 
 Trigger this skill for:
 - game beta release preparation
@@ -26,8 +26,8 @@ This skill is designed for low-risk operation:
 Use the wrapper script:
 
 ```bash
-export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-export AIWF="$CODEX_HOME/skills/ai-workflow/scripts/ai_workflow.sh"
+export AI_WORKFLOW_HOME="${AI_WORKFLOW_HOME:-$HOME/.ai-workflow}"
+export AIWF="$AI_WORKFLOW_HOME/skills/ai-workflow/scripts/ai_workflow.sh"
 ```
 
 The wrapper will use `ai-workflow` from `PATH` when available. If it is not on `PATH`, it will fall back to the toolkit root recorded at install time.

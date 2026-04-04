@@ -8,7 +8,7 @@ Unlike passive AI wrappers, this system operates as an **Autonomous OS** that co
 
 *   **Autonomous Fixer Loop (`sweep bugs`):** Automatically identifies bugs in your Kanban board, build surgical context, generates patches, and verifies fixes via tests.
 *   **Architectural Intelligence:** First-class database support for **Modules** and **Features**. The system proactively audits for circular dependencies, leaky abstractions, and "zombie" code.
-*   **Artifact Ingestion:** Safely ingest massive PRDs or design documents and interactively decompose them into scoped Epics and Tickets.
+*   **Project Brief Onboarding:** Safely ingest a messy project description, normalize it into a living brief, ask clarifying questions, and then decompose it into scoped Epics and Tickets.
 *   **Surgical Patch Engine:** Uses a strict `SEARCH/REPLACE` protocol to eliminate file rewrites, reduce token cost by 80%, and prevent regressions.
 *   **Supergit Safety Net:** Pessimistic Git transactions (Auto-Stash -> Temp Branch -> Test -> Merge) ensure the AI never ruins your active working tree.
 *   **Living Knowledge Base:** A dynamic system that learns architectural mappings and project-specific patterns as it works.
@@ -17,7 +17,7 @@ Unlike passive AI wrappers, this system operates as an **Autonomous OS** that co
 
 ```bash
 pnpm install -g @dharmax/ai-workflow
-ai-workflow init
+ai-workflow init --brief ./project-brief.md
 ```
 
 ## 📖 Documentation & Manual

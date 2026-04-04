@@ -3,91 +3,44 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs, printAndExit } from "./lib/cli.mjs";
-import { addManualNote, getProjectSummary, withWorkflowStore } from "../../../core/services/sync.mjs";
+import { addManualNote } from "../../../core/services/sync.mjs";
 import { routeTask } from "../../../core/services/router.mjs";
 import { generateCompletion } from "../../../core/services/providers.mjs";
-
-const SMART_CODELETS = {
-  "css-refactor": {
-    taskClass: "refactoring",
-    summary: "Refactor CSS into smaller, reusable pieces.",
-    intent: "CSS refactor"
-  },
-  "riot-simplify": {
-    taskClass: "refactoring",
-    summary: "Simplify a Riot component without losing behavior.",
-    intent: "Riot component simplification"
-  },
-  "component-extract": {
-    taskClass: "task-decomposition",
-    summary: "Extract a component or module boundary from a larger surface.",
-    intent: "component extraction"
-  },
-  "api-extract": {
-    taskClass: "architectural-reasoning",
-    summary: "Extract a clean API from a larger implementation surface.",
-    intent: "API extraction"
-  },
-  "import-cleanup": {
-    taskClass: "refactoring",
-    summary: "Remove unused, duplicated, or overly broad imports.",
-    intent: "import cleanup"
-  },
-  "test-heal": {
-    taskClass: "bug-hunting",
-    summary: "Repair failing or brittle tests with the smallest honest change.",
-    intent: "test repair"
-  },
-  "docs-refresh": {
-    taskClass: "summarization",
-    summary: "Refresh docs to match the current workflow and project reality.",
-    intent: "documentation refresh"
-  },
-  "kanban-reconcile": {
-    taskClass: "task-decomposition",
-    summary: "Reconcile kanban drift and keep board state consistent with the DB.",
-    intent: "kanban reconciliation"
-  },
-  "route-diagnose": {
-    taskClass: "architectural-reasoning",
-    summary: "Diagnose provider routing and model selection problems.",
-    intent: "provider routing diagnosis"
-  },
-  "dependency-prune": {
-    taskClass: "architectural-reasoning",
-    summary: "Prune unnecessary dependency edges or redundant architecture links.",
-    intent: "dependency pruning"
-  },
-  "codelet-observer": {
-    taskClass: "task-decomposition",
-    summary: "Observe recurring work patterns and propose new codelets.",
-    intent: "observer",
-    observer: true
-  }
-};
+import { listToolkitCodelets } from "../../../core/services/codelets.mjs";
+import { buildSmartCodeletRunContext } from "../../../core/services/codelet-runtime.mjs";
 
 export async function runSmartCodelet(argv = process.argv.slice(2), env = process.env) {
   const args = parseArgs(argv);
   const root = path.resolve(String(args.root ?? process.cwd()));
   const codeletId = String(env.AIWF_CODELET_ID ?? args.codelet ?? "codelet-observer").trim();
-  const meta = SMART_CODELETS[codeletId] ?? SMART_CODELETS["codelet-observer"];
 
   if (args.help) {
-    return outputAndExit(renderHelp(), 0);
+    return outputAndExit(await renderHelp(), 0);
   }
 
-  const projectSummary = await getProjectSummary({ projectRoot: root });
-  const target = await resolveTarget(root, args);
+  const runtimeContext = await buildSmartCodeletRunContext({
+    projectRoot: root,
+    codeletId,
+    ticketId: args.ticket ? String(args.ticket).trim() : null,
+    filePath: args.file ? String(args.file).trim() : null,
+    goal: args.goal ? String(args.goal).trim() : null
+  }).catch((error) => {
+    printAndExit(String(error?.message ?? error), 1);
+  });
+
+  const meta = runtimeContext.codelet;
+  const projectSummary = runtimeContext.projectSummary;
+  const target = runtimeContext.target;
   const route = await routeTask({
     root,
-    taskClass: meta.taskClass,
+    taskClass: meta.taskClass ?? "task-decomposition",
     preferLocal: true,
     allowWeak: true
   });
   const routed = applyRouteOverride(route, args.provider, args.model);
 
   const payload = routed.recommended
-    ? await buildRoutedPayload({ codeletId, meta, root, projectSummary, target, route: routed, args })
+    ? await buildRoutedPayload({ codeletId, meta, runtimeContext, root, route: routed, args })
     : buildFallbackPayload({ codeletId, meta, root, projectSummary, target, route: routed });
 
   if (meta.observer && args["no-document"] !== true) {
@@ -116,14 +69,15 @@ export async function runSmartCodelet(argv = process.argv.slice(2), env = proces
   return emit(payload, args.json);
 }
 
-async function buildRoutedPayload({ codeletId, meta, root, projectSummary, target, route, args }) {
+async function buildRoutedPayload({ codeletId, meta, runtimeContext, root, route, args }) {
   const provider = route.providers?.[route.recommended.providerId] ?? {};
   const prompt = buildPrompt({
     codeletId,
     meta,
     root,
-    projectSummary,
-    target,
+    projectSummary: runtimeContext.projectSummary,
+    target: runtimeContext.target,
+    promptContext: runtimeContext.promptContext,
     route
   });
 
@@ -139,49 +93,19 @@ async function buildRoutedPayload({ codeletId, meta, root, projectSummary, targe
     codelet: {
       id: codeletId,
       summary: meta.summary,
-      taskClass: meta.taskClass,
+      taskClass: meta.taskClass ?? "task-decomposition",
       observer: Boolean(meta.observer)
     },
     root,
     route,
-    target,
-    projectSummary,
+    target: runtimeContext.target,
+    projectSummary: runtimeContext.projectSummary,
     result: parseStructuredResponse(completion.response),
     args
   };
 }
 
-async function resolveTarget(rootDir, parsedArgs) {
-  const target = {
-    ticketId: parsedArgs.ticket ? String(parsedArgs.ticket).trim() : null,
-    filePath: parsedArgs.file ? path.normalize(String(parsedArgs.file).trim()) : null,
-    goal: parsedArgs.goal ? String(parsedArgs.goal).trim() : null
-  };
-
-  if (!target.ticketId) {
-    return target;
-  }
-
-  return withWorkflowStore(rootDir, async (store) => {
-    const entity = store.getEntity(target.ticketId);
-    if (!entity) {
-      return target;
-    }
-
-    return {
-      ...target,
-      ticket: {
-        id: entity.id,
-        title: entity.title,
-        lane: entity.lane,
-        state: entity.state,
-        summary: String(entity.data?.summary ?? "").trim()
-      }
-    };
-  });
-}
-
-function buildPrompt({ codeletId: id, meta, root: projectRoot, projectSummary, target, route }) {
+function buildPrompt({ codeletId: id, meta, root: projectRoot, projectSummary, target, promptContext, route }) {
   const activeTickets = Array.isArray(projectSummary.activeTickets) ? projectSummary.activeTickets.slice(0, 5) : [];
   const candidateTickets = Array.isArray(projectSummary.candidates) ? projectSummary.candidates.slice(0, 5) : [];
   const taskContext = [
@@ -195,6 +119,12 @@ function buildPrompt({ codeletId: id, meta, root: projectRoot, projectSummary, t
     `Focus: ${meta.intent}`,
     `Task class: ${meta.taskClass}`,
     `Purpose: ${meta.summary}`,
+    "",
+    "Helper context:",
+    promptContext || "No additional surgical context available.",
+    target.ticket ? `Ticket summary: ${target.ticket.summary || "n/a"}` : "Ticket summary: n/a",
+    target.filePath ? `Target file: ${target.filePath}` : "Target file: none",
+    target.goal ? `Goal: ${target.goal}` : "Goal: none",
     `Project root: ${projectRoot}`,
     "",
     "Project summary:",
@@ -216,6 +146,18 @@ function buildPrompt({ codeletId: id, meta, root: projectRoot, projectSummary, t
     "Return JSON with this shape:",
     "{ summary, observations[], candidate_codelets[{id,reason}], suggested_actions[], docs_to_update[], needs_human_review }",
     "Keep it short and concrete."
+  ].join("\n");
+}
+
+async function renderHelp() {
+  const codelets = await listToolkitCodelets();
+  return [
+    "Usage: ai-workflow run <smart-codelet> [--root <path>] [--ticket <id>] [--file <path>] [--goal <text>] [--json]",
+    "",
+    "Registered smart codelets:",
+    ...codelets
+      .filter((codelet) => codelet.runner === "node-script" && codelet.entry?.includes("smart-codelet-runner.mjs"))
+      .map((codelet) => `- ${codelet.id}: ${codelet.summary}`)
   ].join("\n");
 }
 
@@ -329,15 +271,6 @@ function emit(payload, json) {
 
   process.stdout.write(`${lines.join("\n").trimEnd()}\n`);
   return payload;
-}
-
-function renderHelp() {
-  return [
-    "Usage: ai-workflow run <smart-codelet> [--root <path>] [--ticket <id>] [--file <path>] [--goal <text>] [--json]",
-    "",
-    "Smart codelets:",
-    ...Object.entries(SMART_CODELETS).map(([id, meta]) => `- ${id}: ${meta.summary}`)
-  ].join("\n");
 }
 
 function outputAndExit(text, code = 0) {

@@ -18,8 +18,8 @@ export async function handleProviderConnect(providerId, { rl: existingRl } = {})
       case "google":
       case "gemini":
         return await connectWithApiKey(rl, providerId.toLowerCase());
-      case "codex":
-        return await connectCodex(rl);
+      case "session":
+        return await connectSessionProvider(rl);
       default:
         console.error(`Unsupported provider for connection: ${providerId}`);
         return 1;
@@ -84,12 +84,12 @@ async function connectWithApiKey(rl, providerId) {
   return 0;
 }
 
-async function connectCodex(rl) {
+async function connectSessionProvider(rl) {
   const configPath = getGlobalConfigPath();
-  console.log("Connecting to Codex (Browser Login Simulation)...");
+  console.log("Connecting to the browser-login session provider...");
   // In a real scenario, this might involve OAuth or a special login URL
   console.log("Opening browser for login...");
-  await openUrl("https://codex.example.com/login?cli=true");
+  await openUrl("https://ai-workflow.example.com/login?cli=true");
   
   const token = await rl.question("Enter the session token from your browser: ");
   if (!token.trim()) {
@@ -97,8 +97,8 @@ async function connectCodex(rl) {
     return 1;
   }
 
-  await writeConfigValue(configPath, "providers.codex.token", token.trim());
-  console.log("Successfully connected to Codex!");
+  await writeConfigValue(configPath, "providers.session.token", token.trim());
+  console.log("Successfully connected.");
   return 0;
 }
 

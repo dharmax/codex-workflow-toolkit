@@ -119,7 +119,7 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 
 ## Audit Extensions
 
-Add machine-readable rule blocks in fenced `codex-workflow-audit` JSON blocks when a project-specific rule becomes important enough to enforce automatically.
+Add machine-readable rule blocks in fenced `ai-workflow-audit` JSON blocks when a project-specific rule becomes important enough to enforce automatically.
 Keep the rules narrow, file-scoped, and explainable.
 
 Schema example:

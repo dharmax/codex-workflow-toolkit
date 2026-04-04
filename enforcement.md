@@ -1,13 +1,13 @@
 <!-- Responsibility: Define the machine-enforced baseline workflow and code policy for initialized projects.
-Scope: Project-specific exceptions and stricter local rules belong in additional `codex-workflow-audit` blocks, not in this baseline explanation text. -->
+Scope: Project-specific exceptions and stricter local rules belong in additional `ai-workflow-audit` blocks, not in this baseline explanation text. -->
 # Enforcement
 
 This file defines the strict default audit baseline for initialized projects.
 
-Rules in the fenced `codex-workflow-audit` block are active immediately.
+Rules in the fenced `ai-workflow-audit` block are active immediately.
 If a project needs a narrower exception, edit this file or add a later markdown block in another guidance doc with a more specific rule.
 
-```codex-workflow-audit
+```ai-workflow-audit
 {
   "headers": [
     {
@@ -59,6 +59,6 @@ If a project needs a narrower exception, edit this file or add a later markdown 
 
 ## How To Extend
 
-- Add tighter rules in later `codex-workflow-audit` blocks inside project guidance docs.
+- Add tighter rules in later `ai-workflow-audit` blocks inside project guidance docs.
 - Keep exceptions narrow and path-scoped.
 - Prefer explicit rule messages that tell contributors what to do instead.

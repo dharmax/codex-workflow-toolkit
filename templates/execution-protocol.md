@@ -10,13 +10,14 @@ Keep execution disciplined, test-backed, and easy to hand off.
 2. If the repo state is already in motion, capture a baseline commit and push it before opening the next implementation slice.
 3. Read the target ticket in `kanban.md`.
 4. Read the owner docs needed for that ticket.
-5. Move one ticket or one explicit batch ticket to `In Progress` with `scripts/ai-workflow/kanban-move.mjs`, or let the workflow executor mark it `In Progress` before the model work starts.
+5. Move one ticket or one explicit batch ticket to `In Progress` with `scripts/ai-workflow/kanban.mjs move`, or let the workflow executor mark it `In Progress` before the model work starts.
 6. State the burst shape: target family, intended outcome, validation plan.
 7. Make the smallest coherent burst that solves the ticket honestly.
 8. Validate at the real risk level of the change.
 9. Update kanban and DB together in the same command burst, then guidance docs if durable contracts changed, and archive stale done cards when needed.
 10. If the thread is getting heavy, create a compact handoff artifact before continuing.
 11. If the work adds or changes smart codelets or dev-mode observer behavior, document the candidate codelets and new recurring patterns in the workflow DB as part of the same burst.
+12. If the work begins from a messy project description, run the brief-onboarding flow first (`ai-workflow init --brief <file>` or `ai-workflow onboard <file>`), then generate epics from the stabilized brief.
 
 ## Ticket Ownership
 
@@ -40,7 +41,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - Put optional refactors, feature ideas, and polish candidates in `Suggestions`.
 - Keep the core kanban lanes fixed. Only render rare lanes like `AI Candidates`, `Risk Watch`, `Doubtful Relevancy`, and `Ideas` when they contain cards; omit them when empty. Keep `Archived` history in `kanban-archive.md`, not on the live board.
 - Keep `kanban.md` in Obsidian Kanban plugin format.
-- Use `scripts/ai-workflow/kanban-new.mjs`, `scripts/ai-workflow/kanban-next.mjs`, `scripts/ai-workflow/kanban-move.mjs`, `scripts/ai-workflow/kanban-archive.mjs`, `scripts/ai-workflow/kanban-migrate-obsidian.mjs`, and `ai-workflow project ticket create` instead of hand-editing when possible.
+- Use `scripts/ai-workflow/kanban.mjs new`, `scripts/ai-workflow/kanban.mjs next`, `scripts/ai-workflow/kanban.mjs move`, `scripts/ai-workflow/kanban.mjs archive`, `scripts/ai-workflow/kanban.mjs migrate`, and `ai-workflow project ticket create` instead of hand-editing when possible.
 - After any state-changing ticket command, refresh the DB and projection files immediately so `kanban.md` and `epics.md` never lag behind the active work.
 - Treat `tool observe` and the smart-codelet observer loop as dev-mode defaults when the task involves recurring patterns, candidate codelets, or improvement discovery.
 

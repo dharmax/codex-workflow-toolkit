@@ -1,9 +1,7 @@
 import path from "node:path";
 import process from "node:process";
-import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
@@ -13,6 +11,7 @@ import { discoverProviderState, generateCompletion, generateWithOllama } from ".
 import { decomposeTicket, executeTicket, ideateFeature, sweepBugs } from "../../core/services/orchestrator.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
 import { addManualNote, createTicket, evaluateProjectReadiness, getProjectMetrics, getProjectSummary, getSmartProjectStatus, recordMetric, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { executeCodelet } from "../../core/services/codelet-executor.mjs";
 import { buildTicketEntity } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
@@ -20,7 +19,6 @@ import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, 
 import { buildDoctorReport, renderDoctorReport } from "./doctor.mjs";
 import { configureOllamaHardware } from "./ollama-hw.mjs";
 
-const execFileAsync = promisify(execFile);
 const STREAMED_STDIO = "__STREAMED_STDIO__";
 const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
 const CONTINUATION_REQUEST_RE = /^(?:continue|go deeper|branch on that|why did that fail\??|what failed\??|keep going)$/i;
@@ -2329,42 +2327,32 @@ async function runShellActionDirect(action, options) {
 
 async function runCodeletById(codeletId, args, options) {
   let entry = null;
+  let codelet = null;
   if (codeletId === "dynamic" && options._dynamicEntry) {
     entry = options._dynamicEntry;
+    codelet = { id: codeletId, runner: "node-script", entryPath: entry };
   } else {
-    const codelet = [...options.plannerContext.projectCodelets, ...options.plannerContext.toolkitCodelets]
+    codelet = [...options.plannerContext.projectCodelets, ...options.plannerContext.toolkitCodelets]
       .find((item) => item.id === codeletId);
     entry = codelet?.entry;
   }
 
-  if (!entry) {
+  if (!codelet || !entry) {
     throw new Error(`Codelet entry not found for ${codeletId}`);
   }
 
-  const fullEntry = path.resolve(options.root, entry);
-  if (!options.json) {
-    await new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [fullEntry, ...args], {
-        cwd: options.root,
-        stdio: "inherit"
-      });
-      child.on("error", reject);
-      child.on("close", (code) => {
-        if ((code ?? 1) === 0) {
-          resolve();
-        } else {
-          reject(new Error(`Codelet ${codeletId} exited with code ${code ?? 1}`));
-        }
-      });
-    });
-    return STREAMED_STDIO;
-  }
-
-  const { stdout, stderr } = await execFileAsync(process.execPath, [fullEntry, ...args], {
+  const result = await executeCodelet(codelet, args, {
     cwd: options.root,
-    maxBuffer: 16 * 1024 * 1024
+    mode: options.json ? "capture" : "stream",
+    env: {
+      ...process.env,
+      AIWF_CODELET_ID: codelet.id,
+      AIWF_CODELET_FOCUS: codelet.focus ? String(codelet.focus) : "",
+      AIWF_CODELET_SUMMARY: codelet.summary ? String(codelet.summary) : ""
+    }
   });
-  return `${stdout}${stderr}`.trimEnd() + "\n";
+
+  return options.json ? result : STREAMED_STDIO;
 }
 
 function emitShellResult(result, options) {
@@ -3100,7 +3088,7 @@ function buildActionCatalog(plannerContext) {
     "- execute_ticket: plan or execute a specific ticket with verification gating",
     "- ideate_feature: scope a new feature into an Epic and Tickets",
     "- sweep_bugs: automated bug-fixing loop for Todo lane",
-    "- ingest_artifact: parse a file (e.g. PRD) into Epics/Tickets",
+    "- ingest_artifact: normalize a project brief / PRD into Epics/Tickets",
     "- extract_guidelines: extract task guidance",
     "- route: show provider/model routing for a task class",
     "- run_dynamic_codelet: execute an on-the-fly JavaScript code snippet to solve a custom problem",

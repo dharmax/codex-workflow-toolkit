@@ -11,8 +11,9 @@ The canonical state lives in the workflow DB. Markdown files such as `epics.md` 
 1. Create or switch to a fresh branch before a substantive epic or batch.
 2. Work one epic at a time.
 3. Keep kanban, epics, and the DB in sync after each mutation.
-4. Use `lean-ctx` for compact context handling.
-5. If `lean-ctx` is missing, surface install/setup guidance instead of silently degrading.
+4. When starting an empty project, use `ai-workflow init --brief <file>` or `ai-workflow onboard <file>` to normalize the brief before generating epics.
+5. Use `lean-ctx` for compact context handling.
+6. If `lean-ctx` is missing, surface install/setup guidance instead of silently degrading.
 
 ## Common Commands
 
@@ -22,6 +23,8 @@ The canonical state lives in the workflow DB. Markdown files such as `epics.md` 
 - `ai-workflow project epic list`
 - `ai-workflow project epic show <epic-id>`
 - `ai-workflow project story search <text>`
+- `ai-workflow init --brief <file>`
+- `ai-workflow onboard <brief-file>`
 - `ai-workflow project ticket create --id <id> --title <title> --lane <lane> --epic <epic-id>`
 - `ai-workflow route <task-class>`
 - `ai-workflow run <codelet>`

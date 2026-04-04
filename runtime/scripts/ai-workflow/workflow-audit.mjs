@@ -39,7 +39,7 @@ const DOC_SNIPPETS = {
     "## Closure Gate",
     "## Adversarial Self-Check"
   ],
-  "enforcement.md": ["# Enforcement", "```codex-workflow-audit", "## How To Extend"],
+  "enforcement.md": ["# Enforcement", "```ai-workflow-audit", "## How To Extend"],
   "epics.md": ["# Epics"],
   "kanban-archive.md": ["# Kanban Archive"],
   "project-guidelines.md": [

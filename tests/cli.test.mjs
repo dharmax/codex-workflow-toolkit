@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function runNode(args, options = {}) {
-  const captureDir = await mkdtemp(path.join(os.tmpdir(), "codex-workflow-capture-"));
+  const captureDir = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-capture-"));
   const stdoutPath = path.join(captureDir, "stdout.log");
   const stderrPath = path.join(captureDir, "stderr.log");
   try {
@@ -42,7 +42,7 @@ function shellQuote(value) {
 }
 
 async function makeTempDir() {
-  return mkdtemp(path.join(os.tmpdir(), "codex-workflow-test-"));
+  return mkdtemp(path.join(os.tmpdir(), "ai-workflow-test-"));
 }
 
 async function cleanup(dir) {
@@ -78,7 +78,7 @@ async function runGit(cwd, args) {
 async function appendAuditBlock(knowledgePath, config) {
   const block = [
     "",
-    "```codex-workflow-audit",
+    "```ai-workflow-audit",
     JSON.stringify(config, null, 2),
     "```",
     ""
@@ -145,7 +145,7 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     assert.equal(firstRun.code, 0);
     assert.match(firstRun.stdout, /Initial sync: completed/);
     assert.match(firstRun.stdout, new RegExp(`Installed: ${await countInstallableFiles()}`));
-    assert.match(firstRun.stdout, /Package scripts installed: 11/);
+    assert.match(firstRun.stdout, /Package scripts installed: 7/);
 
     const agents = await readFile(path.join(targetRoot, "AGENTS.md"), "utf8");
     assert.match(agents, /AI Agent Protocol: Autonomous Engineering OS/);
@@ -158,7 +158,7 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     await access(path.join(targetRoot, ".ai-workflow", "state", "workflow.db"));
 
     const ciWorkflow = await readFile(
-      path.join(targetRoot, ".github", "workflows", "codex-workflow-audit.yml"),
+      path.join(targetRoot, ".github", "workflows", "ai-workflow-audit.yml"),
       "utf8"
     );
     assert.match(ciWorkflow, /workflow-audit/);
@@ -169,7 +169,7 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     const secondRun = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
     assert.equal(secondRun.code, 0);
     assert.match(secondRun.stdout, new RegExp(`Identical: ${await countInstallableFiles()}`));
-    assert.match(secondRun.stdout, /Package scripts identical: 11/);
+    assert.match(secondRun.stdout, /Package scripts identical: 7/);
   } finally {
     await cleanup(targetRoot);
   }
@@ -778,7 +778,7 @@ test("generated helper scripts work against initialized project state", async ()
     const initResult = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
     assert.equal(initResult.code, 0);
     assert.match(initResult.stdout, /package\.json found/);
-    assert.match(initResult.stdout, /Package scripts installed: 11/);
+    assert.match(initResult.stdout, /Package scripts installed: 7/);
 
     const workflowAuditInitial = await runNode(["scripts/ai-workflow/workflow-audit.mjs"], { cwd: targetRoot });
     assert.equal(workflowAuditInitial.code, 0);
@@ -793,7 +793,7 @@ test("generated helper scripts work against initialized project state", async ()
 
     await runGit(targetRoot, ["init", "-q"]);
     await runGit(targetRoot, ["add", "."]);
-    await runGit(targetRoot, ["-c", "user.name=Codex", "-c", "user.email=codex@example.com", "commit", "-qm", "init"]);
+    await runGit(targetRoot, ["-c", "user.name=Workflow", "-c", "user.email=workflow@example.com", "commit", "-qm", "init"]);
 
     const knowledgePath = path.join(targetRoot, "knowledge.md");
     const knowledgeTemplate = await readFile(knowledgePath, "utf8");

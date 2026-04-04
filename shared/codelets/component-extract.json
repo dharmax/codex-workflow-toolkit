@@ -5,6 +5,7 @@
   "summary": "Extract a component or module boundary from a larger surface.",
   "runner": "node-script",
   "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "execution": "js",
   "focus": "component-extract",
   "taskClass": "task-decomposition"
 }

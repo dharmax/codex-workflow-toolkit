@@ -3,7 +3,7 @@
 
 This project customizes the baseline workflow audit with a narrow allowlist.
 
-```codex-workflow-audit
+```ai-workflow-audit
 {
   "allowlists": [
     {

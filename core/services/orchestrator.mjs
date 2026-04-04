@@ -1,3 +1,4 @@
+import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { parsePatch, applyPatch } from "../lib/patch.mjs";
 import { buildSurgicalContext, formatContextForPrompt } from "./context-packer.mjs";
@@ -460,32 +461,58 @@ async function attemptDecomposition(context, { root, quality }) {
   return JSON.parse(completion.response);
 }
 
-export async function ingestArtifact(filePath, options) {
+export async function onboardProjectBrief(filePath, options) {
   const root = options.root;
   const rl = options.rl;
-
-  const content = await readFile(filePath, "utf8");
+  const workingBriefPath = path.resolve(root, options.briefPath ?? "project-brief.md");
+  const workingBriefLabel = path.relative(root, workingBriefPath) || path.basename(workingBriefPath);
+  const sourceContent = await readFile(filePath, "utf8");
+  const sourceExcerpt = sourceContent.slice(0, 12000);
+  const existingBrief = await readFile(workingBriefPath, "utf8").catch(() => "");
   const model = (await routeTask({ root, taskClass: "architectural-design" })).recommended;
+
   if (!model) throw new Error("No model available for artifact ingestion.");
 
-  let chatContext = `Artifact Content from ${filePath}:\n\n${content.substring(0, 10000)}...\n\n`;
-  let outlineResult = null;
+  let briefDraft = normalizeBriefDraft(existingBrief || "# Project Brief\n");
+  let chatContext = [
+    `Raw project description from ${filePath}:`,
+    "",
+    sourceExcerpt,
+    "",
+    existingBrief.trim() ? `Existing working brief from ${workingBriefLabel}:` : null,
+    existingBrief.trim() || null
+  ].filter(Boolean).join("\n");
 
-  console.log(`[orchestrator] Assessing artifact ${filePath}...`);
+  console.log(`[orchestrator] Onboarding project brief ${filePath}...`);
 
-  while (!outlineResult) {
+  while (true) {
     const system = `
-You are an Architect for ai-workflow. Read the provided artifact (e.g., PRD).
-Create a high-level outline of the Epic and Tickets needed to build it.
-Do NOT generate final DB entities yet. Focus on human approval first.
+You are an onboarding architect for ai-workflow.
+Turn the messy project description into a living project brief that the user can edit.
+The brief should be clear enough to decide whether the project has an MVP-ready scope.
 
-If the artifact is clear enough to outline, return JSON:
+Return JSON in one of these forms:
+{
+  "status": "questioning",
+  "briefMarkdown": "# Project Brief\\n...",
+  "questions": ["...", "..."],
+  "mvpReady": false,
+  "reason": "What is still unclear."
+}
+or
 {
   "status": "complete",
-  "outline": "A markdown string showing your proposed Epic -> Tickets breakdown."
+  "briefMarkdown": "# Project Brief\\n...",
+  "mvpReady": true,
+  "reason": "Why the brief is ready for epic generation."
 }
-If vague, ask clarifying questions. Return JSON:
-{ "status": "questioning", "reply": "your questions here" }
+
+Rules:
+- Preserve the user's intent and uncertainty.
+- Always keep the output in markdown with headings.
+- Include sections for Overview, Problem, Users, Goals, Non-Goals, Constraints, MVP Gate, and Open Questions.
+- Ask 1-3 concise questions when gaps remain.
+- The brief is the editable working artifact; do not generate epics yet.
 `;
 
     const start = Date.now();
@@ -499,9 +526,9 @@ If vague, ask clarifying questions. Return JSON:
         prompt: chatContext,
         config: { host: model.host, apiKey: model.apiKey, format: "json" }
       });
-    } catch (e) {
+    } catch (error) {
       success = false;
-      throw e;
+      throw error;
     } finally {
       await withWorkflowStore(root, async (store) => {
         store.appendMetric({
@@ -517,47 +544,76 @@ If vague, ask clarifying questions. Return JSON:
     }
 
     const parsed = JSON.parse(completion.response);
-    if (parsed.status === "complete") {
-      outlineResult = parsed.outline;
-    } else {
-      if (!rl) throw new Error("Interaction required but no readline available.");
-      const answer = await rl.question(`Architect> ${parsed.reply}\nUser: `);
-      chatContext += `\nArchitect: ${parsed.reply}\nUser: ${answer}`;
+    if (parsed.briefMarkdown) {
+      briefDraft = normalizeBriefDraft(parsed.briefMarkdown);
+      await writeProjectFile(root, workingBriefLabel, briefDraft);
     }
+
+    if (parsed.status === "questioning") {
+      if (!rl) throw new Error("Interaction required but no readline available.");
+      const questions = normalizeBriefQuestions(parsed.questions, parsed.reason);
+      const answers = [];
+      for (const question of questions) {
+        const answer = await rl.question(`Brief> ${question}\nUser: `);
+        answers.push({ question, answer });
+      }
+      chatContext += `\n\nQuestions and answers:\n${answers.map((item) => `Q: ${item.question}\nA: ${item.answer}`).join("\n\n")}`;
+      continue;
+    }
+
+    if (!rl) throw new Error("Human approval required for brief onboarding, but no TTY.");
+    console.log(`\nNormalized Project Brief written to ${workingBriefLabel}\n`);
+    const approval = (await rl.question("Approve this brief and generate epics? [y/N/edit] ")).trim().toLowerCase();
+
+    if (approval === "edit") {
+      console.log(`Edit ${workingBriefLabel}, then press Enter to continue.`);
+      await rl.question("Press Enter after edits: ");
+      briefDraft = normalizeBriefDraft(await readFile(workingBriefPath, "utf8").catch(() => briefDraft));
+      chatContext += `\n\nUser-edited project brief:\n${briefDraft}`;
+      continue;
+    }
+
+    if (approval !== "y" && approval !== "yes") {
+      throw new Error("Brief onboarding cancelled by user.");
+    }
+    break;
   }
 
-  if (!rl) throw new Error("Human approval required for outline, but no TTY.");
-  console.log(`\nProposed Outline:\n${outlineResult}\n`);
-  const approval = (await rl.question("Approve outline and generate tickets? [y/N/edit] ")).trim().toLowerCase();
-  
-  let finalContext = `Outline:\n${outlineResult}\n`;
-  
-  if (approval === "edit") {
-    const feedback = await rl.question("Provide feedback/edits: ");
-    finalContext += `User Feedback: ${feedback}\n`;
-  } else if (approval !== "y" && approval !== "yes") {
-    throw new Error("Ingestion cancelled by user.");
-  }
+  const generationContext = [
+    "Approved project brief:",
+    "",
+    briefDraft,
+    "",
+    `Source description file: ${filePath}`
+  ].join("\n");
 
   console.log(`[orchestrator] Generating Kanban entities...`);
   const genSystem = `
-You are a PM. Convert the approved outline into strict JSON Epic and Tickets.
+You are a PM. Convert the approved project brief into strict JSON Epic and Tickets.
 {
-  "epic": { "id": "EPC-XXX", "title": "...", "summary": "..." },
-  "tickets": [ { "id": "TKT-XXX", "title": "...", "summary": "...", "domain": "logic|visual|creative|data" } ]
+  "epic": { "id": "EPC-XXX", "title": "...", "summary": "...", "userStories": ["As a ..."], "ticketBatches": ["Batch 1"] },
+  "tickets": [ { "id": "TKT-XXX", "title": "...", "summary": "...", "domain": "logic|visual|creative|data", "story": "As a ..." } ]
 }
 `;
   const genCompletion = await generateCompletion({
     providerId: model.providerId,
     modelId: model.modelId,
     system: genSystem,
-    prompt: finalContext,
+    prompt: generationContext,
     config: { host: model.host, apiKey: model.apiKey, format: "json" }
   });
 
   const finalData = JSON.parse(genCompletion.response);
   await saveEpicsAndTickets(root, finalData);
-  return finalData;
+  return {
+    ...finalData,
+    briefPath: workingBriefPath,
+    briefDraft
+  };
+}
+
+export async function ingestArtifact(filePath, options) {
+  return onboardProjectBrief(filePath, options);
 }
 
 async function processRefinements(root, text) {
@@ -593,4 +649,21 @@ async function processRefinements(root, text) {
       console.warn("[orchestrator] Failed to parse refinement JSON:", e.message);
     }
   }
+}
+
+function normalizeBriefDraft(text) {
+  return `${String(text ?? "").trimEnd()}\n`;
+}
+
+function normalizeBriefQuestions(questions, fallbackReason) {
+  const normalizedQuestions = Array.isArray(questions)
+    ? questions.map((question) => String(question ?? "").trim()).filter(Boolean)
+    : [];
+
+  if (normalizedQuestions.length) {
+    return normalizedQuestions.slice(0, 3);
+  }
+
+  const fallback = String(fallbackReason ?? "").trim();
+  return fallback ? [fallback] : ["What is still unclear about the project brief?"];
 }

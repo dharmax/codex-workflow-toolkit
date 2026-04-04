@@ -50,22 +50,23 @@ for (const fixture of FIXTURE_MATRIX) {
         const preMigrationAudit = await runNode(["scripts/ai-workflow/workflow-audit.mjs"], { cwd: targetRoot });
         assert.equal(preMigrationAudit.code, 1, preMigrationAudit.stderr || preMigrationAudit.stdout);
 
-        const migrateResult = await runNode(["scripts/ai-workflow/kanban-migrate-obsidian.mjs"], { cwd: targetRoot });
+        const migrateResult = await runNode(["scripts/ai-workflow/kanban.mjs", "migrate"], { cwd: targetRoot });
         assert.equal(migrateResult.code, 0, migrateResult.stderr || migrateResult.stdout);
 
         const moveResult = await runNode(
-          ["scripts/ai-workflow/kanban-move.mjs", "--id", "TKT-010", "--to", "In Progress"],
+          ["scripts/ai-workflow/kanban.mjs", "move", "--id", "TKT-010", "--to", "In Progress"],
           { cwd: targetRoot }
         );
         assert.equal(moveResult.code, 0, moveResult.stderr || moveResult.stdout);
 
-        const nextResult = await runNode(["scripts/ai-workflow/kanban-next.mjs"], { cwd: targetRoot });
+        const nextResult = await runNode(["scripts/ai-workflow/kanban.mjs", "next"], { cwd: targetRoot });
         assert.equal(nextResult.code, 0, nextResult.stderr || nextResult.stdout);
         assert.match(nextResult.stdout, /TKT-010 \| In Progress \| TKT-010 Legacy ticket/);
 
         const newTicketResult = await runNode(
           [
-            "scripts/ai-workflow/kanban-new.mjs",
+            "scripts/ai-workflow/kanban.mjs",
+            "new",
             "--id",
             "TKT-099",
             "--title",
@@ -80,12 +81,12 @@ for (const fixture of FIXTURE_MATRIX) {
         assert.equal(newTicketResult.code, 0, newTicketResult.stderr || newTicketResult.stdout);
 
         const doneMove = await runNode(
-          ["scripts/ai-workflow/kanban-move.mjs", "--id", "TKT-010", "--to", "Done", "--done-date", "2026-03-01"],
+          ["scripts/ai-workflow/kanban.mjs", "move", "--id", "TKT-010", "--to", "Done", "--done-date", "2026-03-01"],
           { cwd: targetRoot }
         );
         assert.equal(doneMove.code, 0, doneMove.stderr || doneMove.stdout);
 
-        const archiveResult = await runNode(["scripts/ai-workflow/kanban-archive.mjs"], { cwd: targetRoot });
+        const archiveResult = await runNode(["scripts/ai-workflow/kanban.mjs", "archive"], { cwd: targetRoot });
         assert.equal(archiveResult.code, 0, archiveResult.stderr || archiveResult.stdout);
 
         const archiveText = await readFile(path.join(targetRoot, "kanban-archive.md"), "utf8");
@@ -131,12 +132,8 @@ async function assertWorkflowInstallFromRepo(cwd) {
     "const path = require('node:path');",
     "const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));",
     "const expected = {",
+    "  'workflow:kanban': 'node scripts/ai-workflow/kanban.mjs',",
     "  'workflow:ticket': 'node scripts/ai-workflow/kanban-ticket.mjs',",
-    "  'workflow:new-ticket': 'node scripts/ai-workflow/kanban-new.mjs',",
-    "  'workflow:next-ticket': 'node scripts/ai-workflow/kanban-next.mjs',",
-    "  'workflow:move-ticket': 'node scripts/ai-workflow/kanban-move.mjs',",
-    "  'workflow:archive-done': 'node scripts/ai-workflow/kanban-archive.mjs',",
-    "  'workflow:migrate-kanban': 'node scripts/ai-workflow/kanban-migrate-obsidian.mjs',",
     "  'workflow:guidance': 'node scripts/ai-workflow/guidance-summary.mjs',",
     "  'workflow:review': 'node scripts/ai-workflow/review-summary.mjs',",
     "  'workflow:verify': 'node scripts/ai-workflow/verification-summary.mjs',",
@@ -149,7 +146,7 @@ async function assertWorkflowInstallFromRepo(cwd) {
     "    throw new Error(`workflow script mismatch: ${key}`);",
     "  }",
     "}",
-    "const workflowPath = path.join('.github', 'workflows', 'codex-workflow-audit.yml');",
+    "const workflowPath = path.join('.github', 'workflows', 'ai-workflow-audit.yml');",
     "const workflow = fs.readFileSync(workflowPath, 'utf8');",
     "if (!workflow.includes('workflow-audit')) throw new Error('workflow audit job missing');",
     "if (!workflow.includes('node scripts/ai-workflow/workflow-audit.mjs')) {",

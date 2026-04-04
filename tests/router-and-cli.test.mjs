@@ -50,7 +50,7 @@ test("installAgents creates the DB-first project workspace directories and confi
     const results = await installAgents({
       toolkitRoot: repoRoot,
       projectRoot: targetRoot,
-      target: "codex"
+      target: "session"
     });
 
     assert.equal(results.length, 1);
