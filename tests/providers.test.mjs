@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { generateWithAnthropic, generateWithOllama, probeOllama, refreshProviderQuotaState, resolveOllamaConfig } from "../core/services/providers.mjs";
 import { discoverProviderState } from "../core/services/providers.mjs";
+import { runProviderSetupWizard } from "../cli/lib/provider-setup.mjs";
 
 test("probeOllama reads models from a configured HTTP host", async () => {
   const originalFetch = globalThis.fetch;
@@ -135,6 +136,170 @@ test("discoverProviderState surfaces configured remote-provider quota metadata",
     assert.equal(state.providers.google.paidAllowed, false);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("discoverProviderState merges models from multiple Ollama endpoints", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "providers-ollama-multi-"));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (url === "http://127.0.0.1:11434/api/tags") {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "tinyllama:1.1b" }
+            ]
+          };
+        }
+      };
+    }
+    if (url === "http://192.168.1.50:11434/api/tags") {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "qwen2.5:14b" }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+    await writeFile(path.join(root, ".ai-workflow", "config.json"), JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://127.0.0.1:11434",
+          endpoints: ["http://192.168.1.50:11434"]
+        }
+      }
+    }, null, 2), "utf8");
+
+    const state = await discoverProviderState({ root });
+    assert.equal(state.providers.ollama.available, true);
+    assert.deepEqual(state.providers.ollama.endpoints, ["http://192.168.1.50:11434"]);
+    assert.deepEqual(
+      state.providers.ollama.models.map((model) => [model.id, model.host]).sort(),
+      [
+        ["qwen2.5:14b", "http://192.168.1.50:11434"],
+        ["tinyllama:1.1b", "http://127.0.0.1:11434"]
+      ]
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runProviderSetupWizard registers Ollama endpoints and remote provider connections", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "providers-setup-wizard-"));
+  const tempHome = await mkdtemp(path.join(os.tmpdir(), "providers-setup-home-"));
+  const originalFetch = globalThis.fetch;
+  const originalHome = process.env.HOME;
+  const originalOllamaHost = process.env.OLLAMA_HOST;
+  const originalOpenAIKey = process.env.OPENAI_API_KEY;
+  const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+  const originalGoogleKey = process.env.GOOGLE_API_KEY;
+  const prompts = [];
+  const connections = [];
+  process.env.HOME = tempHome;
+  process.env.OLLAMA_HOST = "http://127.0.0.1:11434";
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.GOOGLE_API_KEY;
+  globalThis.fetch = async (url) => {
+    if (url === "http://127.0.0.1:11434/api/tags") {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "llama3.2:3b" }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  const rl = {
+    async question(prompt) {
+      prompts.push(prompt);
+      if (prompt.startsWith("Other Ollama URLs")) {
+        return "http://192.168.1.50:11434";
+      }
+      if (prompt.startsWith("Other AI services to connect now")) {
+        return "openai";
+      }
+      return "";
+    }
+  };
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+
+    const result = await runProviderSetupWizard({
+      root,
+      scope: "project",
+      interactive: true,
+      rl,
+      connectProviderImpl: async (providerId) => {
+        connections.push(providerId);
+        return 0;
+      }
+    });
+
+    assert.deepEqual(prompts, [
+      "Other Ollama URLs (comma-separated, blank to skip): ",
+      "Other AI services to connect now (openai, anthropic, google; comma-separated, blank to skip): "
+    ]);
+    assert.deepEqual(connections, ["openai"]);
+    assert.deepEqual(result.connectedProviders, ["openai"]);
+    assert.deepEqual(result.registeredEndpoints, ["http://192.168.1.50:11434"]);
+    assert.match(result.messages.join("\n"), /Found Ollama at http:\/\/127\.0\.0\.1:11434\./);
+    assert.match(result.messages.join("\n"), /Ollama models: llama3\.2:3b/);
+
+    const config = JSON.parse(await readFile(path.join(root, ".ai-workflow", "config.json"), "utf8"));
+    assert.equal(config.providers.ollama.host, "http://127.0.0.1:11434");
+    assert.deepEqual(config.providers.ollama.endpoints, ["http://192.168.1.50:11434"]);
+    assert.equal(Array.isArray(config.providers.ollama.models), true);
+    assert.equal(config.providers.ollama.models[0].id, "llama3.2:3b");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalOllamaHost === undefined) {
+      delete process.env.OLLAMA_HOST;
+    } else {
+      process.env.OLLAMA_HOST = originalOllamaHost;
+    }
+    if (originalOpenAIKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalOpenAIKey;
+    }
+    if (originalAnthropicKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+    }
+    if (originalGoogleKey === undefined) {
+      delete process.env.GOOGLE_API_KEY;
+    } else {
+      process.env.GOOGLE_API_KEY = originalGoogleKey;
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(tempHome, { recursive: true, force: true });
   }
 });
 

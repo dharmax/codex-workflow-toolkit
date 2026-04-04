@@ -19,14 +19,21 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
 
   const ollamaConfig = resolveOllamaConfig({ projectConfig, globalConfig });
   const leanCtx = await probeLeanCtx();
+  const ollamaHosts = resolveOllamaHosts(ollamaConfig);
+  const configuredOllamaModels = normalizeConfiguredModels("ollama", ollamaConfig, []);
   const ollama = ollamaConfig.enabled === false
     ? {
       installed: false,
       models: [],
       details: "disabled by config",
-      host: ollamaConfig.host
+      host: ollamaConfig.host,
+      hosts: ollamaHosts
     }
-    : await probeOllama({ host: ollamaConfig.host });
+    : await probeOllamaHosts({
+      hosts: ollamaHosts,
+      reference: knowledge.modelReference,
+      cachedModels: configuredOllamaModels
+    });
 
   const configuredProviders = mergeProviderConfig(globalConfig.providers, projectConfig.providers);
   const providers = {};
@@ -64,22 +71,23 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
 
   providers.ollama = {
     available: ollamaConfig.enabled !== false && ollama.installed && ollama.models.length > 0,
+    installed: ollama.installed,
     local: true,
-    configured: true,
+    configured: Boolean(ollamaConfig.host || ollamaConfig.endpoints?.length),
     host: ollama.host,
+    endpoints: ollama.hosts?.filter((host) => host && host !== ollama.host) ?? [],
     hardwareClass: ollamaConfig.hardwareClass,
     plannerModel: ollamaConfig.plannerModel,
     plannerMaxQuality: ollamaConfig.plannerMaxQuality,
     maxModelSizeB: ollamaConfig.maxModelSizeB,
     models: ollama.models.map((model) => {
       const id = typeof model === "string" ? model : model.id;
-      const sizeB = (typeof model === "object" && model.sizeB) ? model.sizeB : estimateOllamaModelSizeB(id);
-      
-      // Dynamic Profiling: Match against reference or infer
+      const sizeB = typeof model === "object" && model.sizeB ? model.sizeB : estimateOllamaModelSizeB(id);
       const profile = profileOllamaModel(id, sizeB, knowledge.modelReference);
-      
+
       return {
         id,
+        host: typeof model === "object" && model.host ? normalizeOllamaHost(model.host) : ollama.host,
         quality: profile.quality,
         costTier: 1,
         sizeB,
@@ -211,9 +219,14 @@ export function resolveOllamaConfig({ projectConfig = {}, globalConfig = {} } = 
     ...globalOllama,
     ...projectOllama
   };
+  const host = normalizeOllamaHost(projectOllama.host ?? globalOllama.host ?? process.env.OLLAMA_HOST ?? null);
   return {
     ...merged,
-    host: normalizeOllamaHost(projectOllama.host ?? globalOllama.host ?? process.env.OLLAMA_HOST ?? null),
+    host,
+    endpoints: normalizeOllamaEndpointList([
+      ...(Array.isArray(globalOllama.endpoints) ? globalOllama.endpoints : []),
+      ...(Array.isArray(projectOllama.endpoints) ? projectOllama.endpoints : [])
+    ]).filter((endpoint) => endpoint && endpoint !== host),
     hardwareClass: normalizeHardwareClass(merged.hardwareClass),
     plannerModel: merged.plannerModel ? String(merged.plannerModel).trim() : null,
     plannerMaxQuality: normalizeQuality(merged.plannerMaxQuality) ?? null,
@@ -448,6 +461,168 @@ function normalizeConfiguredModels(providerId, config, builtinModels = []) {
     }
     : model
   );
+}
+
+export async function refreshProviderRegistry({ root = process.cwd(), scope = "global" } = {}) {
+  const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(root);
+  const projectConfig = await readConfigSafe(getProjectConfigPath(root));
+  const globalConfig = await readConfigSafe(getGlobalConfigPath());
+  const providerState = await discoverProviderState({ root });
+  const refreshed = [];
+
+  const providers = providerState.providers ?? {};
+  for (const [providerId, provider] of Object.entries(providers)) {
+    if (!provider || !Array.isArray(provider.models) || !provider.models.length) {
+      continue;
+    }
+    if (provider.available === false && !provider.configured) {
+      continue;
+    }
+
+    await writeConfigValue(configPath, `providers.${providerId}.models`, JSON.stringify(provider.models));
+    refreshed.push({
+      providerId,
+      modelCount: provider.models.length
+    });
+  }
+
+  const ollama = providers.ollama;
+  if (ollama?.host) {
+    const nextOllama = {
+      ...(globalConfig.config.providers?.ollama ?? {}),
+      ...(projectConfig.config.providers?.ollama ?? {})
+    };
+    if (!nextOllama.host) {
+      await writeConfigValue(configPath, "providers.ollama.host", ollama.host);
+    }
+    if (Array.isArray(ollama.endpoints) && ollama.endpoints.length) {
+      await writeConfigValue(configPath, "providers.ollama.endpoints", JSON.stringify(ollama.endpoints));
+    }
+  }
+
+  return {
+    configPath,
+    refreshed,
+    providerState
+  };
+}
+
+function resolveOllamaHosts(config) {
+  return normalizeOllamaHosts([config?.host, ...(config?.endpoints ?? [])]);
+}
+
+function normalizeOllamaHosts(hosts) {
+  const seen = new Set();
+  const result = [];
+
+  for (const host of Array.isArray(hosts) ? hosts : []) {
+    const normalized = normalizeOllamaHost(host);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+
+  if (!result.length) {
+    result.push(normalizeOllamaHost(process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434"));
+  }
+
+  return result.filter(Boolean);
+}
+
+function normalizeOllamaEndpointList(hosts) {
+  const seen = new Set();
+  const result = [];
+
+  for (const host of Array.isArray(hosts) ? hosts : []) {
+    const normalized = normalizeOllamaHost(host);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+async function probeOllamaHosts({ hosts = [], reference = [], cachedModels = [] } = {}) {
+  const normalizedHosts = normalizeOllamaHosts(hosts);
+  const probes = await Promise.all(normalizedHosts.map((host) => probeOllama({ host })));
+  const liveModels = mergeOllamaModels(probes, reference);
+  const configuredModels = mergeConfiguredOllamaModels(cachedModels, normalizedHosts, reference);
+  const models = liveModels.length ? liveModels : configuredModels;
+  const primaryProbe = probes.find((probe) => probe.installed && Array.isArray(probe.models) && probe.models.length) ?? probes[0] ?? null;
+
+  return {
+    installed: probes.some((probe) => probe.installed && Array.isArray(probe.models) && probe.models.length > 0),
+    models,
+    details: JSON.stringify({
+      hostCount: normalizedHosts.length,
+      installedHostCount: probes.filter((probe) => probe.installed).length,
+      modelCount: models.length
+    }),
+    host: primaryProbe?.host ?? normalizedHosts[0] ?? null,
+    hosts: normalizedHosts,
+    probes
+  };
+}
+
+function mergeOllamaModels(probes, reference = []) {
+  const merged = new Map();
+
+  for (const probe of probes) {
+    if (!probe?.installed || !Array.isArray(probe.models)) {
+      continue;
+    }
+
+    for (const model of probe.models) {
+      const id = String(model?.id ?? "").trim();
+      if (!id || merged.has(id)) {
+        continue;
+      }
+      const sizeB = typeof model?.sizeB === "number" ? model.sizeB : estimateOllamaModelSizeB(id);
+      const profile = profileOllamaModel(id, sizeB, reference);
+      merged.set(id, {
+        id,
+        host: probe.host ?? null,
+        quality: profile.quality,
+        costTier: 1,
+        sizeB,
+        capabilities: profile.capabilities,
+        strengths: profile.strengths
+      });
+    }
+  }
+
+  return [...merged.values()];
+}
+
+function mergeConfiguredOllamaModels(cachedModels, hosts, reference = []) {
+  const merged = new Map();
+  const fallbackHost = hosts[0] ?? null;
+
+  for (const model of Array.isArray(cachedModels) ? cachedModels : []) {
+    const id = String(model?.id ?? "").trim();
+    if (!id || merged.has(id)) {
+      continue;
+    }
+
+    const sizeB = typeof model?.sizeB === "number" ? model.sizeB : estimateOllamaModelSizeB(id);
+    const profile = profileOllamaModel(id, sizeB, reference);
+    merged.set(id, {
+      id,
+      host: normalizeOllamaHost(model?.host ?? fallbackHost) ?? fallbackHost,
+      quality: model?.quality ?? profile.quality,
+      costTier: model?.costTier ?? 1,
+      sizeB,
+      capabilities: model?.capabilities ?? profile.capabilities,
+      strengths: Array.isArray(model?.strengths) ? model.strengths : profile.strengths
+    });
+  }
+
+  return [...merged.values()];
 }
 
 export function profileOllamaModel(id, sizeB, reference = []) {

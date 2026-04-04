@@ -18,6 +18,7 @@ import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/c
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
 import { buildDoctorReport, renderDoctorReport } from "./doctor.mjs";
 import { configureOllamaHardware } from "./ollama-hw.mjs";
+import { runProviderSetupWizard } from "./provider-setup.mjs";
 
 const STREAMED_STDIO = "__STREAMED_STDIO__";
 const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
@@ -56,8 +57,6 @@ export async function handleShell(rest, { cliPath } = {}) {
   }
 
   const root = process.cwd();
-  const plannerContext = await buildShellContext(root);
-  const planners = await resolveShellPlanners(root);
   const options = {
     root,
     json: Boolean(args.json),
@@ -65,18 +64,23 @@ export async function handleShell(rest, { cliPath } = {}) {
     noAi: Boolean(args["no-ai"]),
     planOnly: Boolean(args["plan-only"]),
     cliPath: cliPath ?? path.resolve(root, "cli", "ai-workflow.mjs"),
-    plannerContext,
-    planners
+    plannerContext: null,
+    planners: null
   };
 
   const prompt = args._.join(" ").trim();
   if (prompt) {
+    await runProviderSetupWizard({ root, scope: "global", interactive: false });
     await syncProject({ projectRoot: root, writeProjections: true });
     options.plannerContext = await buildShellContext(root);
+    options.planners = await resolveShellPlanners(root);
     const result = await runShellTurn(prompt, options);
     return emitShellResult(result, options);
   }
 
+  await runProviderSetupWizard({ root, scope: "global", interactive: false });
+  options.plannerContext = await buildShellContext(root);
+  options.planners = await resolveShellPlanners(root);
   return runInteractiveShell(options);
 }
 
@@ -1909,6 +1913,35 @@ export async function runInteractiveShell(options) {
   options.history = [];
   const processingIndicator = createShellProcessingIndicator(options);
   try {
+    const canBootstrapProviders = process.stdin.isTTY && process.stdout.isTTY;
+    if (canBootstrapProviders) {
+      const interactiveSetup = !options.noAi;
+      const setupResult = await runProviderSetupWizard({
+        root: options.root,
+        scope: "global",
+        interactive: interactiveSetup,
+        rl,
+        promptRemoteProviders: interactiveSetup
+      });
+
+      if (interactiveSetup) {
+        for (const message of setupResult.messages ?? []) {
+          output.write(`${message}\n`);
+        }
+        if ((setupResult.messages ?? []).length) {
+          output.write("\n");
+        }
+      }
+
+      options.plannerContext = await buildShellContext(options.root);
+      options.planners = await resolveShellPlanners(options.root);
+    }
+
+    if (!options.plannerContext || !options.planners) {
+      options.plannerContext = await buildShellContext(options.root);
+      options.planners = await resolveShellPlanners(options.root);
+    }
+
     const primary = options.noAi
       ? { ...options.planners.heuristic, mode: "heuristic-forced", reason: "AI planning disabled for this shell session." }
       : options.planners.planners[0] ?? options.planners.heuristic;

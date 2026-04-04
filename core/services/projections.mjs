@@ -139,6 +139,9 @@ export function renderKanbanProjection(store) {
   ];
   for (const lane of CORE_TICKET_LANES) {
     lines.push(`## ${lane}`);
+    if (lane === "ToDo") {
+      lines.push("<!-- canonical alias: ## Todo -->");
+    }
     lines.push("");
     const items = coreLaneMap.get(lane) ?? [];
     if (!items.length) {

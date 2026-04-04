@@ -188,6 +188,21 @@ test("installer supports opting out of the default initial sync", async () => {
   }
 });
 
+test("setup is a top-level alias for install", async () => {
+  const targetRoot = await makeTempDir();
+
+  try {
+    const result = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "setup", "--project", targetRoot], { cwd: repoRoot });
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Installation complete/);
+    await access(path.join(targetRoot, ".ai-workflow"));
+    await access(path.join(targetRoot, ".ai-workflow", "config.json"));
+    await access(path.join(targetRoot, ".ai-workflow", "state"));
+  } finally {
+    await cleanup(targetRoot);
+  }
+});
+
 test("version reports the installed package version and toolkit root", async () => {
   const result = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "version", "--json"], { cwd: repoRoot });
   assert.equal(result.code, 0);

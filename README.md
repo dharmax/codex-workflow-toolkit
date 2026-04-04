@@ -16,9 +16,12 @@ Unlike passive AI wrappers, this system operates as an **Autonomous OS** that co
 ## 🛠️ Installation
 
 ```bash
+npx @dharmax/ai-workflow setup --project .
+# or, for a global install:
 pnpm install -g @dharmax/ai-workflow
-ai-workflow init --brief ./project-brief.md
 ```
+
+For a brand-new project brief, follow setup with `ai-workflow init --brief ./project-brief.md`.
 
 ## 📖 Documentation & Manual
 

@@ -16,6 +16,7 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 - No items
 
 ## ToDo
+<!-- canonical alias: ## Todo -->
 
 - No items
 

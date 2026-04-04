@@ -12,6 +12,7 @@ import { runDoctor } from "./doctor.mjs";
 import { handleSetOllamaHw } from "./ollama-hw.mjs";
 import { handleShell } from "./shell.mjs";
 import { handleProviderConnect } from "./provider-connect.mjs";
+import { runProviderSetupWizard } from "./provider-setup.mjs";
 import { installAgents } from "./install.mjs";
 import { forgeProjectCodelet, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
@@ -32,6 +33,7 @@ const toolkitRoot = getToolkitRoot();
 const execFileAsync = promisify(execFile);
 
 const HELP = `Usage:
+  ai-workflow setup [--project <path>]
   ai-workflow init [options]
   ai-workflow install [--project <path>]
   ai-workflow doctor [--json]
@@ -70,6 +72,7 @@ const HELP = `Usage:
   ai-workflow route <task-class> [--json]
   ai-workflow telegram preview [--json]
   ai-workflow provider connect <provider-id>
+  ai-workflow provider setup [--global]
   ai-workflow provider quota refresh [provider-id|all] [--global] [--json]
   ai-workflow mode set <default|tool-dev> [--global]
   ai-workflow mode status [--json]
@@ -93,6 +96,8 @@ export async function main(argv) {
   const [command, ...rest] = argv;
 
   switch (command) {
+    case "setup":
+      return handleInstall(rest);
     case "init":
       return runNodeScript(path.resolve(toolkitRoot, "scripts", "init-project.mjs"), rest);
     case "install":
@@ -788,6 +793,31 @@ async function handleTelegram(rest) {
 
 async function handleProvider(rest) {
   const [subcommand, providerId, ...extras] = rest;
+  if (subcommand === "setup") {
+    const args = parseArgs(rest.slice(1));
+    const scope = args.project ? "project" : "global";
+    const result = await runProviderSetupWizard({
+      root: process.cwd(),
+      scope,
+      interactive: process.stdin.isTTY && process.stdout.isTTY
+    });
+
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    }
+
+    for (const message of result.messages ?? []) {
+      process.stdout.write(`${message}\n`);
+    }
+    if (result.connectedProviders?.length) {
+      process.stdout.write(`Connected providers: ${result.connectedProviders.join(", ")}\n`);
+    }
+    if (result.registeredEndpoints?.length) {
+      process.stdout.write(`Registered Ollama endpoints: ${result.registeredEndpoints.join(", ")}\n`);
+    }
+    return 0;
+  }
   if (subcommand === "connect") {
     return await handleProviderConnect(providerId);
   }
@@ -810,7 +840,7 @@ async function handleProvider(rest) {
       return 0;
     }
   }
-  printAndExit("Usage: ai-workflow provider connect <provider-id>\n       ai-workflow provider quota refresh [provider-id|all] [--global] [--json]", 1);
+  printAndExit("Usage: ai-workflow provider connect <provider-id>\n       ai-workflow provider setup [--global]\n       ai-workflow provider quota refresh [provider-id|all] [--global] [--json]", 1);
 }
 
 async function handleMode(rest) {

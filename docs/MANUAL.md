@@ -41,6 +41,7 @@ The canonical state lives in the workflow DB. Markdown files such as `epics.md` 
 - Lean-ctx integration and context-efficiency bridges
 - Semantic graph and projection hardening
 - Provider routing and Ollama policy
+- Shell RAG prompt orchestration and adaptive model selection
 - Safe execution and git transactions
 - Workflow surfaces, codelets, and learning loop
 - Smart codelet catalog and observer loop

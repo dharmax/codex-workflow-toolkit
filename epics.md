@@ -41,3 +41,40 @@ Make smart codelet execution registry-driven, cache codelet metadata in-process,
 - EXE-012 Shared smart-codelet runtime helper and lean-ctx context packing [Done]
 - EXE-013 JS-to-JS execution path and runner cleanup [Done]
 - EXE-014 Tests and projection updates for smart-codelet runtime split [Done]
+
+## EPC-008 Adaptive shell RAG prompt routing
+
+### Goal
+
+Wrap shell input in a retrieval-aware prompt pipeline that gathers project context, selects the best available model automatically, and proposes the strongest fallback when confidence is low.
+
+### Status
+
+- [ ] Active
+<!-- status: open -->
+
+### User stories
+#### Story 1
+
+**As a user**, my shell input is enriched with project context so the assistant can answer from evidence instead of guessing.
+
+#### Story 2
+
+**As the shell**, I can automatically pick the best available model for the request or propose the top candidate with a short rationale.
+
+#### Story 3
+
+**As a maintainer**, I can plug in local or remote AI services and have the shell adapt to whatever models are currently available.
+
+#### Story 4
+
+**As an operator**, I can see a stable fallback path when a preferred model is unavailable or underpowered.
+
+### Ticket batches
+- Retrieval/context wrapper for shell input and project evidence
+- Provider-aware model scoring, proposal, and fallback selection
+- Interactive shell UX for automatic selection and clear model recommendations
+- Tests and docs for the shell RAG path
+
+### Kanban tickets
+- none linked yet
