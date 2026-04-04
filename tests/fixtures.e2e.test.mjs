@@ -181,7 +181,10 @@ async function runCommand(command, args, options = {}) {
   try {
     await execFileAsync("/usr/bin/bash", ["-lc", `${shellQuote(command)} ${args.map(shellQuote).join(" ")} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)}`], {
       cwd: options.cwd,
-      env: process.env
+      env: {
+        ...process.env,
+        AI_WORKFLOW_TOOLKIT_ROOT: repoRoot
+      }
     });
 
     return {
@@ -209,7 +212,7 @@ function parseJsonStdout(result) {
 }
 
 async function makeTempDir() {
-  return await mkdtemp(path.join(os.tmpdir(), "codex-workflow-toolkit-fixture-"));
+  return await mkdtemp(path.join(os.tmpdir(), "ai-workflow-fixture-"));
 }
 
 async function cleanup(targetRoot) {

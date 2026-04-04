@@ -5,7 +5,7 @@ import { readProjectFile, writeProjectFile } from "../lib/filesystem.mjs";
 import { routeTask } from "./router.mjs";
 import { generateCompletion } from "./providers.mjs";
 import { withWorkflowStore } from "./sync.mjs";
-import { buildTicketEntity } from "./projections.mjs";
+import { buildTicketEntity, writeProjectProjections } from "./projections.mjs";
 import { withSupergitTransaction } from "./supergit.mjs";
 import { buildTicketExecutionPlan, runVerificationPlan } from "./execution-planner.mjs";
 
@@ -77,6 +77,15 @@ export async function executeTicket(options) {
       error: `Unsafe to execute: ${executionPlan.concerns.join("; ")}`,
       executionPlan
     };
+  }
+
+  if (apply) {
+    await updateTicketState(root, ticket, "In Progress", {
+      executionPlan,
+      executionResult: {
+        status: "running"
+      }
+    });
   }
 
   const baselineVerification = await getBaselineVerification(root, executionPlan, baselineVerificationCache, verificationTimeoutMs);
@@ -222,21 +231,13 @@ If you gain insights about the architectural mapping, you may ALSO output a JSON
       };
     }
 
-    await withWorkflowStore(root, async (store) => {
-      const updated = {
-        ...ticket,
-        lane: "Done",
-        data: {
-          ...(ticket.data ?? {}),
-          executionPlan,
-          executionResult: {
-            status: "verified",
-            verification,
-            changedFiles: patchResult?.changedFiles ?? []
-          }
-        }
-      };
-      store.upsertEntity(updated);
+    await updateTicketState(root, ticket, "Done", {
+      executionPlan,
+      executionResult: {
+        status: "verified",
+        verification,
+        changedFiles: patchResult?.changedFiles ?? []
+      }
     });
     return {
       success: true,
@@ -259,6 +260,7 @@ async function updateTicketState(root, bug, lane, payload = {}) {
       }
     };
     store.upsertEntity(updated);
+    await writeProjectProjections(store, { projectRoot: root });
   });
 }
 
@@ -399,6 +401,8 @@ async function saveEpicsAndTickets(root, data) {
       ticket.data.domain = t.domain;
       store.upsertEntity(ticket);
     }
+
+    await writeProjectProjections(store, { projectRoot: root });
   });
 }
 

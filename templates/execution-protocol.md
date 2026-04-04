@@ -10,12 +10,13 @@ Keep execution disciplined, test-backed, and easy to hand off.
 2. If the repo state is already in motion, capture a baseline commit and push it before opening the next implementation slice.
 3. Read the target ticket in `kanban.md`.
 4. Read the owner docs needed for that ticket.
-5. Move one ticket or one explicit batch ticket to `In Progress` with `scripts/codex-workflow/kanban-move.mjs`.
+5. Move one ticket or one explicit batch ticket to `In Progress` with `scripts/codex-workflow/kanban-move.mjs`, or let the workflow executor mark it `In Progress` before the model work starts.
 6. State the burst shape: target family, intended outcome, validation plan.
 7. Make the smallest coherent burst that solves the ticket honestly.
 8. Validate at the real risk level of the change.
-9. Update kanban, then guidance docs if durable contracts changed, and archive stale done cards when needed.
+9. Update kanban and DB together in the same command burst, then guidance docs if durable contracts changed, and archive stale done cards when needed.
 10. If the thread is getting heavy, create a compact handoff artifact before continuing.
+11. If the work adds or changes smart codelets or dev-mode observer behavior, document the candidate codelets and new recurring patterns in the workflow DB as part of the same burst.
 
 ## Ticket Ownership
 
@@ -31,13 +32,16 @@ Keep execution disciplined, test-backed, and easy to hand off.
 
 - Update `kanban.md` in real time as work moves.
 - When you start a ticket, move it to `In Progress` immediately.
+- Use the tool, AI router, and smart codelets as valid operational actors in epic narratives and workflow notes.
 - Keep the center working queue in `ToDo`.
 - Keep high-priority bug work explicit in `Bugs P1` and lower-priority bug work in `Bugs P2/P3`.
 - Keep larger later work in `Deep Backlog` and tie each such ticket to an epic in `epics.md`.
 - Keep human-only acceptance work in `Human Inspection`.
 - Put optional refactors, feature ideas, and polish candidates in `Suggestions`.
 - Keep `kanban.md` in Obsidian Kanban plugin format.
-- Use `scripts/codex-workflow/kanban-new.mjs`, `scripts/codex-workflow/kanban-next.mjs`, `scripts/codex-workflow/kanban-move.mjs`, `scripts/codex-workflow/kanban-archive.mjs`, and `scripts/codex-workflow/kanban-migrate-obsidian.mjs` instead of hand-editing when possible.
+- Use `scripts/codex-workflow/kanban-new.mjs`, `scripts/codex-workflow/kanban-next.mjs`, `scripts/codex-workflow/kanban-move.mjs`, `scripts/codex-workflow/kanban-archive.mjs`, `scripts/codex-workflow/kanban-migrate-obsidian.mjs`, and `ai-workflow project ticket create` instead of hand-editing when possible.
+- After any state-changing ticket command, refresh the DB and projection files immediately so `kanban.md` and `epics.md` never lag behind the active work.
+- Treat `tool observe` and the smart-codelet observer loop as dev-mode defaults when the task involves recurring patterns, candidate codelets, or improvement discovery.
 
 ## Scope Control
 
@@ -109,6 +113,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - `PARTIAL` means meaningful progress exists but required work or proof is still missing.
 - `BLOCKED` means completion is not currently possible because of a real dependency, missing information, or concrete failure.
 - Never describe `PARTIAL` work in `DONE` language.
+- When a ticket is being worked, its live lane should become `In Progress` before model work starts and remain current throughout the burst.
 
 ## Proof Standard
 

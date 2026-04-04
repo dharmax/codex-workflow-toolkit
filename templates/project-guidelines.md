@@ -8,9 +8,11 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 
 - Keep deterministic state mutation deterministic.
 - Treat AI output as untrusted input: validate, bound, and default safely.
+- Treat the AI router and the tool as first-class actors in workflow narratives: `user`, `maintainer`, `tool`, and `AI` are all valid story owners when they are the right owner.
 - Do not let non-critical async work block the main user loop.
 - Preserve access to core state and critical controls when reshaping UI surfaces.
 - Keep hot-path guidance lean. Archive history elsewhere instead of turning active guidance files into context sinks.
+- Smart codelets should be routed through the cheapest suitable provider, not hardcoded to one model family.
 
 ## Architecture
 

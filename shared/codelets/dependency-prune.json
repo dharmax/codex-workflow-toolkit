@@ -1,0 +1,10 @@
+{
+  "id": "dependency-prune",
+  "stability": "stable",
+  "category": "architecture",
+  "summary": "Prune unnecessary dependency edges or redundant architecture links.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "focus": "dependency-prune",
+  "taskClass": "architectural-reasoning"
+}

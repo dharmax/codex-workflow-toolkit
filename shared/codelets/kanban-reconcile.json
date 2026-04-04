@@ -1,0 +1,10 @@
+{
+  "id": "kanban-reconcile",
+  "stability": "stable",
+  "category": "workflow",
+  "summary": "Reconcile kanban drift and keep board state consistent with the DB.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "focus": "kanban-reconcile",
+  "taskClass": "task-decomposition"
+}

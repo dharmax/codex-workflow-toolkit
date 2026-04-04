@@ -1,0 +1,10 @@
+{
+  "id": "api-extract",
+  "stability": "stable",
+  "category": "architecture",
+  "summary": "Extract a clean API from a larger implementation surface.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "focus": "api-extract",
+  "taskClass": "architectural-reasoning"
+}

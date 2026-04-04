@@ -152,7 +152,11 @@ export function getNextTicket(document, options = {}) {
       continue;
     }
 
-    const ticket = section.tickets[0];
+    const ticket = section.tickets.find((entry) => !isPlaceholderTicket(entry));
+    if (!ticket) {
+      continue;
+    }
+
     return {
       section: section.name,
       ticket: {
@@ -279,7 +283,9 @@ function finalizeSection(section, lines) {
     if (current) {
       current.end = index - 1;
       current.lines = trimBlankLines(bodyLines.slice(current.start, current.end + 1));
-      tickets.push(current);
+      if (!isPlaceholderTicket(current)) {
+        tickets.push(current);
+      }
     } else {
       introEnd = index;
     }
@@ -296,7 +302,9 @@ function finalizeSection(section, lines) {
 
   if (current) {
     current.lines = trimBlankLines(bodyLines.slice(current.start, current.end + 1));
-    tickets.push(current);
+    if (!isPlaceholderTicket(current)) {
+      tickets.push(current);
+    }
   }
 
   section.introLines = trimBlankLines(bodyLines.slice(0, introEnd));
@@ -423,6 +431,10 @@ function trimTicketBody(lines) {
     .map((line) => line.replace(/^ {2}/, ""))
     .join("\n")
     .trimEnd();
+}
+
+function isPlaceholderTicket(ticket) {
+  return !ticket?.id && /^no items$/i.test(String(ticket?.heading ?? "").trim());
 }
 
 function formatDate(value) {

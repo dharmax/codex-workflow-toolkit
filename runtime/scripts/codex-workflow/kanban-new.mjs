@@ -2,9 +2,13 @@
 
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { parseArgs, printAndExit, requireArg } from "./lib/cli.mjs";
 import { readText } from "./lib/fs-utils.mjs";
+import { getToolkitRoot } from "./lib/toolkit-root.mjs";
 import { createTicket, parseKanbanDocument, renderKanbanDocument } from "./lib/kanban-edit-utils.mjs";
+
+const { syncProject } = await import(pathToFileURL(path.resolve(getToolkitRoot(), "core", "services", "sync.mjs")).href);
 
 const HELP = `Usage:
   node scripts/codex-workflow/kanban-new.mjs --id TKT-123 --title "Fix login bug" --to "Bugs P1"
@@ -55,6 +59,7 @@ const nextMarkdown = renderKanbanDocument(document);
 
 if (!args["dry-run"]) {
   await writeFile(kanbanPath, nextMarkdown, "utf8");
+  await syncProject({ projectRoot: root, writeProjections: true });
 }
 
 if (args.json) {

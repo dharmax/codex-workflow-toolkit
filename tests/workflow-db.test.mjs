@@ -170,7 +170,10 @@ test("epic projections stay narrative-first and epic/story queries resolve throu
 
     const projection = await withWorkflowStore(targetRoot, async (store) => renderEpicsProjection(store));
     assert.match(projection, /### Goal/);
+    assert.match(projection, /### Status/);
+    assert.match(projection, /<!-- status: open -->/);
     assert.match(projection, /#### Story 1/);
+    assert.match(projection, /\*\*As a user\*\*, I can edit epics\.md or kanban\.md directly/);
     assert.match(projection, /### Ticket batches/);
     assert.match(projection, /### Kanban tickets/);
     assert.doesNotMatch(projection, /Predicates|DB graph entities and predicates|Feature:/);

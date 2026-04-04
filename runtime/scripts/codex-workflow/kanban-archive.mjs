@@ -2,9 +2,13 @@
 
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { parseArgs, printAndExit } from "./lib/cli.mjs";
 import { readText } from "./lib/fs-utils.mjs";
+import { getToolkitRoot } from "./lib/toolkit-root.mjs";
 import { archiveOldDoneTickets, parseKanbanDocument } from "./lib/kanban-edit-utils.mjs";
+
+const { syncProject } = await import(pathToFileURL(path.resolve(getToolkitRoot(), "core", "services", "sync.mjs")).href);
 
 const HELP = `Usage:
   node scripts/codex-workflow/kanban-archive.mjs
@@ -42,6 +46,7 @@ const result = archiveOldDoneTickets(document, archiveMarkdown, {
 if (!args["dry-run"]) {
   await writeFile(kanbanPath, result.kanbanMarkdown, "utf8");
   await writeFile(archivePath, result.archiveMarkdown, "utf8");
+  await syncProject({ projectRoot: root, writeProjections: true });
 }
 
 if (args.json) {

@@ -10,7 +10,7 @@ const DEFAULT_TICKET_LANES = [
   "Bugs P1",
   "Bugs P2/P3",
   "In Progress",
-  "Human Testing",
+  "Human Inspection",
   "Suggestions",
   "Done",
   "AI Candidates",
@@ -129,7 +129,7 @@ export function renderKanbanProjection(store) {
     lines.push("");
     const items = laneMap.get(lane) ?? [];
     if (!items.length) {
-      lines.push("- [ ] No items");
+      lines.push("- No items");
       lines.push("");
       continue;
     }
@@ -174,12 +174,17 @@ export function renderEpicsProjection(store) {
     lines.push("");
     lines.push(normalizeEpicSummary(epic) || "Pending natural-language scope.");
     lines.push("");
+    lines.push("### Status");
+    lines.push("");
+    lines.push(epic.state === "archived" ? "- [x] Archived" : "- [ ] Active");
+    lines.push(`<!-- status: ${epic.state === "archived" ? "archived" : "open"} -->`);
+    lines.push("");
     lines.push("### User stories");
     if (userStories.length) {
       userStories.forEach((story, index) => {
         lines.push(`#### Story ${index + 1}`);
         lines.push("");
-        lines.push(story);
+        lines.push(formatEpicStoryText(story));
         lines.push("");
       });
     } else {
@@ -515,8 +520,8 @@ function normalizeLaneName(name) {
     ["bugs p1", "Bugs P1"],
     ["priority 2/3 bugs", "Bugs P2/P3"],
     ["bugs p2/p3", "Bugs P2/P3"],
-    ["human testing", "Human Testing"],
-    ["human inspection", "Human Testing"],
+    ["human testing", "Human Inspection"],
+    ["human inspection", "Human Inspection"],
     ["suggestions", "Suggestions"],
     ["done", "Done"],
     ["archived", "Archived"]
@@ -537,8 +542,8 @@ function normalizeDisplayLaneName(name) {
     ["bugs p1", "Bugs P1"],
     ["priority 2/3 bugs", "Bugs P2/P3"],
     ["bugs p2/p3", "Bugs P2/P3"],
-    ["human testing", "Human Inspection"],
     ["human inspection", "Human Inspection"],
+    ["human testing", "Human Inspection"],
     ["suggestions", "Suggestions"],
     ["done", "Done"],
     ["archived", "Archived"]
@@ -600,6 +605,12 @@ function parseEpicEntries(text) {
       continue;
     }
 
+    const statusComment = line.match(/^\s*<!--\s*status:\s*([a-z]+)\s*-->\s*$/i);
+    if (statusComment) {
+      current.state = normalizeEpicState(statusComment[1]);
+      continue;
+    }
+
     const field = line.match(/^\s*-\s+(Goal|Summary|State|User stories?|Stories|Ticket batches|Kanban tickets)\s*:\s*(.*)$/i);
     if (field) {
       currentSection = null;
@@ -653,6 +664,12 @@ function parseEpicEntries(text) {
         current.currentStory = null;
         continue;
       }
+      if (/^status$/i.test(label)) {
+        flushCurrentStory();
+        currentSection = "status";
+        current.currentStory = null;
+        continue;
+      }
       if (/^kanban tickets$/i.test(label)) {
         flushCurrentStory();
         currentSection = "linkedTickets";
@@ -675,6 +692,10 @@ function parseEpicEntries(text) {
     if (bullet && currentSection) {
       const value = bullet[1].trim();
       if (!value) {
+        continue;
+      }
+      if (currentSection === "status") {
+        current.state = /^\[x\]/i.test(value) || /^(done|archived)$/i.test(value) ? "archived" : "open";
         continue;
       }
       if (currentSection === "userStories") {
@@ -817,9 +838,28 @@ function slugify(value) {
 }
 
 function mergeEpicStory(story) {
-  const heading = String(story?.heading ?? "").trim();
   const body = story?.bodyLines?.join("\n").trim() ?? "";
-  return [heading, body].filter(Boolean).join("\n").trim();
+  return normalizeEpicStoryText(body);
+}
+
+function formatEpicStoryText(story) {
+  const normalized = normalizeEpicStoryText(story);
+  const match = normalized.match(/^(As\s+(?:a|an)\s+[^,]+)(,?)(\s+.*)?$/i);
+  if (!match) {
+    return normalized;
+  }
+
+  const actor = match[1].trim();
+  const separator = match[2] ?? "";
+  const remainder = match[3] ?? "";
+  return `**${actor}**${separator}${remainder}`;
+}
+
+function normalizeEpicStoryText(text) {
+  let normalized = String(text ?? "").trim();
+  normalized = normalized.replace(/^\*\*(As\s+(?:a|an)\s+[^*]+?)\*\*(?=,|\s|$)/i, "$1");
+  normalized = normalized.replace(/^(\*\*)?(As\s+(?:a|an)\s+[^,*]+?)(\*\*)/i, "$2");
+  return normalized.trim();
 }
 
 function pruneProjectionImportedEntities(store, { entityType, keepIds }) {

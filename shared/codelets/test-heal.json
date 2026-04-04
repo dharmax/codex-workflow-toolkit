@@ -1,0 +1,10 @@
+{
+  "id": "test-heal",
+  "stability": "stable",
+  "category": "verification",
+  "summary": "Repair failing or brittle tests with the smallest honest change.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "focus": "test-heal",
+  "taskClass": "bug-hunting"
+}

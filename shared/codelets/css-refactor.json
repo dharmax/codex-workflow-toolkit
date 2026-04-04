@@ -1,0 +1,10 @@
+{
+  "id": "css-refactor",
+  "stability": "stable",
+  "category": "refactoring",
+  "summary": "Refactor CSS into smaller, reusable pieces.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "focus": "css-refactor",
+  "taskClass": "refactoring"
+}

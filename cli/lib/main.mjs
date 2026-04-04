@@ -17,7 +17,7 @@ import { forgeProjectCodelet, getProjectCodelet, listProjectCodelets, removeProj
 import { routeTask } from "../../core/services/router.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
 import { refreshProviderQuotaState } from "../../core/services/providers.mjs";
-import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection } from "../../core/services/projections.mjs";
+import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection, writeProjectProjections } from "../../core/services/projections.mjs";
 import { addManualNote, createTicket, evaluateProjectReadiness, getEpic, getProjectMetrics, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { ingestArtifact } from "../../core/services/orchestrator.mjs";
@@ -307,7 +307,13 @@ async function handleRun(rest) {
       return 0;
     }
 
-    return runNodeScript(toolkitCodelet.entry, args);
+    return runNodeScript(toolkitCodelet.entry, args, {
+      env: {
+        AIWF_CODELET_ID: toolkitCodelet.id,
+        AIWF_CODELET_FOCUS: toolkitCodelet.focus ? String(toolkitCodelet.focus) : "",
+        AIWF_CODELET_SUMMARY: toolkitCodelet.summary ? String(toolkitCodelet.summary) : ""
+      }
+    });
   }
 
   printAndExit(`Unknown codelet: ${name}`, 1);
@@ -604,6 +610,7 @@ async function handleProject(rest) {
           tags = excluded.tags,
           updated_at = excluded.updated_at
       `).run(`entity:${ticket.id}`, ticket.id, ticket.title, JSON.stringify(ticket.data), `ticket,${ticket.lane}`, new Date().toISOString());
+      await writeProjectProjections(store, { projectRoot: process.cwd() });
     });
     if (args.json) {
       process.stdout.write(`${JSON.stringify(ticket, null, 2)}\n`);
@@ -993,7 +1000,7 @@ async function handleConsult(rest) {
   return 0;
 }
 
-function runNodeScript(scriptPath, args) {
+function runNodeScript(scriptPath, args, options = {}) {
   return mkdtemp(path.join(os.tmpdir(), "ai-workflow-cli-")).then(async (captureDir) => {
     const stdoutPath = path.join(captureDir, "stdout.log");
     const stderrPath = path.join(captureDir, "stderr.log");
@@ -1002,7 +1009,8 @@ function runNodeScript(scriptPath, args) {
     try {
       await execFileAsync("/usr/bin/bash", ["-lc", command], {
         cwd: process.cwd(),
-        maxBuffer: 16 * 1024 * 1024
+        maxBuffer: 16 * 1024 * 1024,
+        env: options.env ? { ...process.env, ...options.env } : process.env
       });
       const stdout = await readFile(stdoutPath, "utf8").catch(() => "");
       const stderr = await readFile(stderrPath, "utf8").catch(() => "");
@@ -1040,7 +1048,13 @@ function runProjectCodelet(codelet, args) {
   if (codelet.runner !== "node-script") {
     printAndExit(`Unsupported project codelet runner: ${codelet.runner}`, 1);
   }
-  return runNodeScript(entry, args);
+  return runNodeScript(entry, args, {
+    env: {
+      AIWF_CODELET_ID: codelet.id,
+      AIWF_CODELET_FOCUS: codelet.focus ? String(codelet.focus) : "",
+      AIWF_CODELET_SUMMARY: codelet.summary ? String(codelet.summary) : ""
+    }
+  });
 }
 
 function runNodeScriptLive(scriptPath, args) {

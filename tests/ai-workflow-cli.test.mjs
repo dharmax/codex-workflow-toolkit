@@ -6,6 +6,9 @@ import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
+import { withWorkflowStore } from "../core/services/sync.mjs";
+import { registerProvider } from "../core/services/providers.mjs";
+import { runSmartCodelet } from "../runtime/scripts/ai-workflow/smart-codelet-runner.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -43,6 +46,8 @@ test("ai-workflow list reports built-in codelets", { concurrency: false }, async
   const payload = JSON.parse(result.stdout);
   assert.equal(Array.isArray(payload.toolkitCodelets), true);
   assert.equal(payload.toolkitCodelets.some((item) => item.id === "sync"), true);
+  assert.equal(payload.toolkitCodelets.some((item) => item.id === "css-refactor"), true);
+  assert.equal(payload.toolkitCodelets.some((item) => item.id === "codelet-observer"), true);
 });
 
 test("ai-workflow doctor reports local diagnostics and ollama absence cleanly", { concurrency: false }, async () => {
@@ -201,6 +206,111 @@ test("ai-workflow project epic and story commands query the DB with heading-base
     assert.equal(storySearch.code, 0, storySearch.stderr || storySearch.stdout);
     const stories = JSON.parse(storySearch.stdout);
     assert.equal(stories[0]?.epic.id, "EPC-200");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("smart codelet observer routes through the provider and documents candidate patterns", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-smart-codelet-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+    await writeFile(path.join(targetRoot, ".ai-workflow", "config.json"), JSON.stringify({
+      providers: {
+        "mock-smart": {
+          apiKey: "test-key",
+          models: ["smart-v1"]
+        }
+      }
+    }, null, 2), "utf8");
+
+    registerProvider("mock-smart", {
+      generate: async ({ modelId, prompt }) => {
+        assert.equal(modelId, "smart-v1");
+        assert.match(prompt, /Codelet id: codelet-observer/);
+        return {
+          providerId: "mock-smart",
+          modelId,
+          response: JSON.stringify({
+            summary: "Recurring refactor and docs work should become explicit codelets.",
+            observations: ["The project keeps surfacing the same refactor families."],
+            candidate_codelets: [
+              { id: "css-refactor", reason: "Frequent CSS cleanup patterns" },
+              { id: "docs-refresh", reason: "Workflow docs keep needing refreshes" }
+            ],
+            suggested_actions: ["Promote css-refactor and docs-refresh as standard built-ins."],
+            docs_to_update: ["epics.md", "knowledge.md"],
+            needs_human_review: true
+          })
+        };
+      }
+    });
+
+    const payload = await runSmartCodelet(
+      ["--root", targetRoot, "--provider", "mock-smart", "--model", "smart-v1", "--json"],
+      { AIWF_CODELET_ID: "codelet-observer" }
+    );
+    assert.equal(payload.codelet.id, "codelet-observer");
+    assert.equal(payload.route.recommended.providerId, "mock-smart");
+    assert.equal(payload.result.summary, "Recurring refactor and docs work should become explicit codelets.");
+
+    const notes = await withWorkflowStore(targetRoot, async (store) => store.listNotes({ noteTypes: ["NOTE"] }));
+    assert.equal(notes.some((note) => note.provenance === "tool-dev-codelet-observer"), true);
+    assert.equal(notes.some((note) => /css-refactor/.test(note.body)), true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("workflow mutations refresh kanban and DB projections immediately", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-live-refresh-"));
+
+  try {
+    const createResult = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "ticket",
+      "create",
+      "--id",
+      "EXE-900",
+      "--title",
+      "Refresh live projections after every workflow mutation",
+      "--lane",
+      "In Progress",
+      "--epic",
+      "EPC-900",
+      "--summary",
+      "Keep the live board and DB in sync after every state-changing command.",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(createResult.code, 0, createResult.stderr || createResult.stdout);
+
+    const kanbanAfterCreate = await readFile(path.join(targetRoot, "kanban.md"), "utf8");
+    assert.match(kanbanAfterCreate, /## In Progress/);
+    assert.match(kanbanAfterCreate, /EXE-900 Refresh live projections after every workflow mutation/);
+
+    const epicsAfterCreate = await readFile(path.join(targetRoot, "epics.md"), "utf8");
+    assert.match(epicsAfterCreate, /EPC-900/);
+
+    const moveResult = await runNode([
+      path.join(repoRoot, "runtime", "scripts", "codex-workflow", "kanban-move.mjs"),
+      "--id",
+      "EXE-900",
+      "--to",
+      "Done"
+    ], { cwd: targetRoot });
+    assert.equal(moveResult.code, 0, moveResult.stderr || moveResult.stdout);
+
+    const kanbanAfterMove = await readFile(path.join(targetRoot, "kanban.md"), "utf8");
+    assert.match(kanbanAfterMove, /## Done/);
+    assert.match(kanbanAfterMove, /EXE-900 Refresh live projections after every workflow mutation/);
+
+    await withWorkflowStore(targetRoot, async (store) => {
+      const ticket = store.getEntity("EXE-900");
+      assert.equal(ticket?.lane, "Done");
+      assert.equal(ticket?.state, "archived");
+    });
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

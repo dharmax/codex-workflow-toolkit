@@ -1,0 +1,10 @@
+{
+  "id": "route-diagnose",
+  "stability": "stable",
+  "category": "diagnostics",
+  "summary": "Diagnose provider routing and model selection problems.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "focus": "route-diagnose",
+  "taskClass": "architectural-reasoning"
+}

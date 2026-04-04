@@ -88,12 +88,7 @@ ai-workflow>
 ## Suggestions
 
 ## Done
-
-- [x] TKT-000 Example completed ticket ✅ 2026-03-23
-  - Outcome: Show the required done-card format.
-  - Scope: Example only.
-  - Verification: None.
-  - Notes: Move entries older than roughly seven days into `kanban-archive.md`.
+- No items
 
 %% kanban:settings
 ```json

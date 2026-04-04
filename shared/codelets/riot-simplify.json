@@ -1,0 +1,10 @@
+{
+  "id": "riot-simplify",
+  "stability": "stable",
+  "category": "refactoring",
+  "summary": "Simplify a Riot component without losing behavior.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/smart-codelet-runner.mjs",
+  "focus": "riot-simplify",
+  "taskClass": "refactoring"
+}
