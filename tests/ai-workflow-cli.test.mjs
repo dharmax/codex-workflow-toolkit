@@ -213,6 +213,126 @@ test("ai-workflow project epic and story commands query the DB with heading-base
   }
 });
 
+test("ai-workflow sync auto-archives epics whose linked tickets are already done", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-epic-archive-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "epics.md"), [
+      "# Epics",
+      "",
+      "## EPC-201 Complete the graph backlog",
+      "",
+      "### Goal",
+      "",
+      "Close out a finished epic once its linked work is done.",
+      "",
+      "### User stories",
+      "",
+      "#### Story 1",
+      "",
+      "**As a maintainer**, I can see a completed epic auto-archive when its only linked ticket is already done.",
+      "",
+      "### Ticket batches",
+      "",
+      "- Archive completed epic state after linked ticket completion.",
+      "",
+      "### Kanban tickets",
+      "",
+      "- none linked yet"
+    ].join("\n"), "utf8");
+    await writeFile(path.join(targetRoot, "kanban.md"), [
+      "# Kanban",
+      "",
+      "## Done",
+      "",
+      "- [ ] EXE-201 Close the graph backlog",
+      "  - Epic: EPC-201",
+      "  - Summary: Complete the semantic graph backlog and mark the epic archived."
+    ].join("\n"), "utf8");
+
+    const syncResult = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--write-projections", "--json"], { cwd: targetRoot });
+    assert.equal(syncResult.code, 0, syncResult.stderr || syncResult.stdout);
+
+    const epicShow = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "project", "epic", "show", "EPC-201", "--json"], { cwd: targetRoot });
+    assert.equal(epicShow.code, 0, epicShow.stderr || epicShow.stdout);
+    const epic = JSON.parse(epicShow.stdout);
+    assert.equal(epic.state, "archived");
+
+    const epicsMarkdown = await readFile(path.join(targetRoot, "epics.md"), "utf8");
+    assert.match(epicsMarkdown, /<!-- status: archived -->/);
+    assert.match(epicsMarkdown, /\[x\] Archived/);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("ai-workflow project ticket create preserves an existing epic narrative", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-ticket-epic-preserve-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "epics.md"), [
+      "# Epics",
+      "",
+      "## EPC-202 Preserve the epic narrative",
+      "",
+      "### Goal",
+      "",
+      "Keep the original epic title and summary when later tickets are added.",
+      "",
+      "### User stories",
+      "",
+      "#### Story 1",
+      "",
+      "**As a maintainer**, I can add a ticket to an existing epic without ai-workflow overwriting the epic title or summary.",
+      "",
+      "### Ticket batches",
+      "",
+      "- Preserve the existing epic record when creating a ticket.",
+      "",
+      "### Kanban tickets",
+      "",
+      "- none linked yet"
+    ].join("\n"), "utf8");
+    await writeFile(path.join(targetRoot, "kanban.md"), [
+      "# Kanban",
+      "",
+      "## ToDo",
+      "",
+      "- No items"
+    ].join("\n"), "utf8");
+
+    const syncResult = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--write-projections", "--json"], { cwd: targetRoot });
+    assert.equal(syncResult.code, 0, syncResult.stderr || syncResult.stdout);
+
+    const createResult = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "ticket",
+      "create",
+      "--id",
+      "EXE-202",
+      "--title",
+      "Preserve the epic narrative",
+      "--lane",
+      "Done",
+      "--epic",
+      "EPC-202",
+      "--summary",
+      "Add a ticket without mutating the existing epic."
+    ], { cwd: targetRoot });
+    assert.equal(createResult.code, 0, createResult.stderr || createResult.stdout);
+
+    const epicShow = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "project", "epic", "show", "EPC-202", "--json"], { cwd: targetRoot });
+    assert.equal(epicShow.code, 0, epicShow.stderr || epicShow.stdout);
+    const epic = JSON.parse(epicShow.stdout);
+    assert.equal(epic.title, "Preserve the epic narrative");
+    assert.match(epic.summary, /keep the original epic title and summary/i);
+    assert.equal(epic.userStories.length, 1);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("smart codelet observer routes through the provider and documents candidate patterns", { concurrency: false }, async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-smart-codelet-"));
 

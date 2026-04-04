@@ -587,18 +587,22 @@ async function handleProject(rest) {
     });
     await withWorkflowStore(process.cwd(), async (store) => {
       if (args.epic) {
-        store.upsertEntity({
-          id: String(args.epic),
-          entityType: "epic",
-          title: String(args.epic),
-          lane: null,
-          state: "open",
-          confidence: 1,
-          provenance: "manual",
-          sourceKind: "manual",
-          reviewState: "active",
-          data: {}
-        });
+        const epicId = String(args.epic);
+        const existingEpic = store.getEntity(epicId);
+        if (!existingEpic) {
+          store.upsertEntity({
+            id: epicId,
+            entityType: "epic",
+            title: epicId,
+            lane: null,
+            state: "open",
+            confidence: 1,
+            provenance: "manual",
+            sourceKind: "manual",
+            reviewState: "active",
+            data: {}
+          });
+        }
       }
       store.upsertEntity(ticket);
       store.db.prepare(`

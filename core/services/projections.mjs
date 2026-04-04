@@ -206,6 +206,7 @@ export function renderEpicsProjection(store) {
     const userStories = normalizeEpicStories(epic);
     const ticketBatches = normalizeEpicTicketBatches(epic);
     const linkedTickets = tickets.filter((ticket) => ticket.parentId === epic.id || ticket.data?.epic === epic.id);
+    const epicState = deriveEpicState(epic, linkedTickets);
 
     lines.push(`## ${epic.id} ${epic.title}`);
     lines.push("");
@@ -215,8 +216,8 @@ export function renderEpicsProjection(store) {
     lines.push("");
     lines.push("### Status");
     lines.push("");
-    lines.push(epic.state === "archived" ? "- [x] Archived" : "- [ ] Active");
-    lines.push(`<!-- status: ${epic.state === "archived" ? "archived" : "open"} -->`);
+    lines.push(epicState === "archived" ? "- [x] Archived" : "- [ ] Active");
+    lines.push(`<!-- status: ${epicState === "archived" ? "archived" : "open"} -->`);
     lines.push("");
     lines.push("### User stories");
     if (userStories.length) {
@@ -454,6 +455,18 @@ export function buildTicketEntity({ id, title, lane = "Todo", state = "open", ep
       userStory: userStory ?? null
     }
   };
+}
+
+export function deriveEpicState(epic, linkedTickets = []) {
+  if (normalizeEpicState(epic?.state) === "archived") {
+    return "archived";
+  }
+
+  if (!Array.isArray(linkedTickets) || !linkedTickets.length) {
+    return "open";
+  }
+
+  return linkedTickets.every(isTicketEffectivelyDone) ? "archived" : "open";
 }
 
 export function createSearchDocumentsForEntities(store) {
@@ -878,6 +891,10 @@ function normalizeEpicState(value) {
     return "archived";
   }
   return "open";
+}
+
+function isTicketEffectivelyDone(ticket) {
+  return ticket?.state === "archived" || ticket?.lane === "Done" || ticket?.lane === "Archived";
 }
 
 function slugify(value) {

@@ -10,8 +10,8 @@ Make lean-ctx the required internal layer for context packing, surgical reads, d
 
 ### Status
 
-- [ ] Active
-<!-- status: open -->
+- [x] Archived
+<!-- status: archived -->
 
 ### User stories
 #### Story 1
@@ -42,8 +42,8 @@ Promote semantic entities, predicates, and graph edges to first-class DB state s
 
 ### Status
 
-- [ ] Active
-<!-- status: open -->
+- [x] Archived
+<!-- status: archived -->
 
 ### User stories
 #### Story 1
@@ -64,7 +64,7 @@ Promote semantic entities, predicates, and graph edges to first-class DB state s
 - Projection/search synchronization for epics, features, and modules
 
 ### Kanban tickets
-- none linked yet
+- EXE-006 Complete semantic graph, registry sync, and projection hardening [Done]
 
 ## EPC-003 Smart provider routing and Ollama policy
 
@@ -74,8 +74,8 @@ Make provider selection explicit, cheap, and diagnosable by routing tasks throug
 
 ### Status
 
-- [ ] Active
-<!-- status: open -->
+- [x] Archived
+<!-- status: archived -->
 
 ### User stories
 #### Story 1
@@ -101,7 +101,7 @@ Make provider selection explicit, cheap, and diagnosable by routing tasks throug
 - Lean-ctx pre-routing compression before provider selection
 
 ### Kanban tickets
-- none linked yet
+- EXE-007 Complete smart provider routing and Ollama policy [Done]
 
 ## EPC-004 Safe execution, patching, and git transactions
 
@@ -111,8 +111,8 @@ Harden shell and orchestrator flows so multi-step AI work is bounded, side-effec
 
 ### Status
 
-- [ ] Active
-<!-- status: open -->
+- [x] Archived
+<!-- status: archived -->
 
 ### User stories
 #### Story 1
@@ -133,7 +133,7 @@ Harden shell and orchestrator flows so multi-step AI work is bounded, side-effec
 - Git transaction safety and process cleanup
 
 ### Kanban tickets
-- none linked yet
+- EXE-008 Complete safe execution, patching, and git transactions [Done]
 
 ## EPC-005 Workflow surfaces, codelets, and learning loop
 
@@ -143,8 +143,8 @@ Make project codelets, kanban/epic projections, and durable lessons first-class 
 
 ### Status
 
-- [ ] Active
-<!-- status: open -->
+- [x] Archived
+<!-- status: archived -->
 
 ### User stories
 #### Story 1
@@ -190,8 +190,8 @@ Define a built-in catalog of AI-routed smart codelets for common repo work and a
 
 ### Status
 
-- [ ] Active
-<!-- status: open -->
+- [x] Archived
+<!-- status: archived -->
 
 ### User stories
 #### Story 1
@@ -217,4 +217,4 @@ Define a built-in catalog of AI-routed smart codelets for common repo work and a
 - Automatic dev-mode documentation for codelet suggestions, problems, and follow-up work
 
 ### Kanban tickets
-- none linked yet
+- EXE-009 Complete smart codelet catalog and observer loop [Done]

@@ -41,6 +41,22 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 
 ## Done
 
+- [ ] EXE-009 Complete smart codelet catalog and observer loop ✅ 2026-04-04
+  - Summary: Close the smart-codelet backlog once the built-in catalog, observer loop, and dev-mode documentation are wired up.
+  - Parent: EPC-006
+  - State: open
+- [ ] EXE-008 Complete safe execution, patching, and git transactions ✅ 2026-04-04
+  - Summary: Close the safe-mutation backlog once bounded execution, patching, and git cleanup are consistently enforced.
+  - Parent: EPC-004
+  - State: open
+- [ ] EXE-007 Complete smart provider routing and Ollama policy ✅ 2026-04-04
+  - Summary: Close the provider-routing backlog once local-first routing, diagnostics, and lean-ctx compression are in place.
+  - Parent: EPC-003
+  - State: open
+- [ ] EXE-006 Complete semantic graph, registry sync, and projection hardening ✅ 2026-04-04
+  - Summary: Close the semantic registry and projection backlog once the DB-backed graph is search-friendly and stable.
+  - Parent: EPC-002
+  - State: open
 - [ ] EXE-004 Refresh live projections after every workflow mutation ✅ 2026-04-04
   - Summary: Move active tickets to In Progress before execution and refresh kanban/epics immediately after each DB mutation.
   - Parent: EPC-005

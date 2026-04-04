@@ -4,7 +4,7 @@ import { collectProjectFiles, readProjectFile } from "../lib/filesystem.mjs";
 import { sha1, stableId } from "../lib/hash.mjs";
 import { parseIndexedFile } from "../parsers/index.mjs";
 import { deriveCandidateFromNote, reviewCandidates } from "./lifecycle.mjs";
-import { buildProjectSummary, buildSmartProjectStatus, compareEpicPriority, createSearchDocumentsForEntities, importLegacyProjections, writeProjectProjections } from "./projections.mjs";
+import { buildProjectSummary, buildSmartProjectStatus, compareEpicPriority, createSearchDocumentsForEntities, deriveEpicState, importLegacyProjections, writeProjectProjections } from "./projections.mjs";
 import { auditArchitecture } from "./critic.mjs";
 import { SEMANTICS } from "../lib/registry.mjs";
 import { evaluateReadiness } from "./readiness-evaluator.mjs";
@@ -50,6 +50,7 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
     
     // Architectural Mapping (Heuristic Phase 1)
     await syncArchitecture(projectRoot, store);
+    await reconcileEpicStates(store);
 
     store.cleanupDerivedState();
     for (const note of store.listNotes()) {
@@ -95,6 +96,32 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
   } finally {
     store.close();
   }
+}
+
+async function reconcileEpicStates(store) {
+  const tickets = store.listEntities({ entityType: "ticket" });
+  let updated = 0;
+
+  for (const epic of store.listEntities({ entityType: "epic" })) {
+    const linkedTickets = tickets.filter((ticket) => ticket.parentId === epic.id || ticket.data?.epic === epic.id)
+      .map((ticket) => ({
+        state: ticket.state,
+        lane: ticket.lane
+      }));
+    const nextState = deriveEpicState(epic, linkedTickets);
+
+    if (nextState === epic.state) {
+      continue;
+    }
+
+    store.upsertEntity({
+      ...epic,
+      state: nextState
+    });
+    updated += 1;
+  }
+
+  return updated;
 }
 
 function filterIndexedNotes(relativePath, notes = []) {
