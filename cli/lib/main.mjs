@@ -18,7 +18,7 @@ import { routeTask } from "../../core/services/router.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
 import { refreshProviderQuotaState } from "../../core/services/providers.mjs";
 import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection } from "../../core/services/projections.mjs";
-import { addManualNote, createTicket, evaluateProjectReadiness, getProjectMetrics, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { addManualNote, createTicket, evaluateProjectReadiness, getEpic, getProjectMetrics, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { ingestArtifact } from "../../core/services/orchestrator.mjs";
 import { assertSafeRepairTarget, getToolkitRoot as getOperatingToolkitRoot, resolveOperatingContext } from "../../core/lib/operating-context.mjs";
@@ -52,6 +52,8 @@ const HELP = `Usage:
   ai-workflow project summary [--json]
   ai-workflow project readiness --goal <goal-type> --question <text> [--mode <default|tool-dev>] [--root <path>] [--evidence-root <path>] [--json]
   ai-workflow project search <text> [--json]
+  ai-workflow project epic <list|show|search> [...]
+  ai-workflow project story <list|search> [...]
   ai-workflow project ticket create --id <id> --title <title> [--lane <lane>] [--epic <epic-id>] [--summary <text>] [--json]
   ai-workflow project note add --type <NOTE|TODO|FIXME|HACK|BUG|RISK> --body <text> [--file <path>] [--line <n>] [--symbol <name>] [--json]
   ai-workflow project review-candidates [--json]
@@ -479,6 +481,90 @@ async function handleProject(rest) {
     return 0;
   }
 
+  if (subcommand === "epic") {
+    const [action, ...epicExtras] = args._;
+    const epicArgs = parseArgs(epicExtras);
+
+    if (action === "list") {
+      const epics = await listEpics({ projectRoot: process.cwd(), includeArchived: Boolean(epicArgs.archived) });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(epics, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(`${epics.map((epic) => `- ${epic.id} ${epic.title} [${epic.state}] (${epic.userStoryCount} stories)`).join("\n")}\n`);
+      return 0;
+    }
+
+    if (action === "show") {
+      const epicId = epicExtras[0] ?? epicArgs.id;
+      if (!epicId) {
+        printAndExit("Usage: ai-workflow project epic show <epic-id> [--json]", 1);
+      }
+      const epic = await getEpic({ projectRoot: process.cwd(), epicId: String(epicId) });
+      if (!epic) {
+        printAndExit(`Unknown epic: ${epicId}`, 1);
+      }
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(epic, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(formatEpicOutput(epic));
+      return 0;
+    }
+
+    if (action === "search") {
+      const query = epicExtras.join(" ") || String(epicArgs.query ?? "").trim();
+      if (!query) {
+        printAndExit("Usage: ai-workflow project epic search <text> [--json]", 1);
+      }
+      const matches = await searchEpics({ projectRoot: process.cwd(), query });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(matches, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(`${matches.map((epic) => `- ${epic.id} ${epic.title} [score ${epic.score}]`).join("\n")}\n`);
+      return 0;
+    }
+
+    printAndExit("Usage: ai-workflow project epic <list|show|search> ...", 1);
+  }
+
+  if (subcommand === "story") {
+    const [action, ...storyExtras] = args._;
+    const storyArgs = parseArgs(storyExtras);
+
+    if (action === "list") {
+      const epicId = storyArgs.epic ? String(storyArgs.epic) : null;
+      const stories = await listEpicUserStories({ projectRoot: process.cwd(), epicId });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(stories, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(`${stories.map((story) => `- ${story.epic.id} ${story.heading}\n  ${story.body}`).join("\n")}\n`);
+      return 0;
+    }
+
+    if (action === "search") {
+      const query = storyExtras.join(" ") || String(storyArgs.query ?? "").trim();
+      if (!query) {
+        printAndExit("Usage: ai-workflow project story search <text> [--epic <epic-id>] [--json]", 1);
+      }
+      const matches = await searchEpicUserStories({
+        projectRoot: process.cwd(),
+        query,
+        epicId: storyArgs.epic ? String(storyArgs.epic) : null
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(matches, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(`${matches.map((story) => `- ${story.epic.id} ${story.heading}\n  ${story.body}`).join("\n")}\n`);
+      return 0;
+    }
+
+    printAndExit("Usage: ai-workflow project story <list|search> ...", 1);
+  }
+
   if (subcommand === "ticket" && args._[0] === "create") {
     const id = args.id;
     const title = args.title;
@@ -577,7 +663,7 @@ async function handleProject(rest) {
     return 0;
   }
 
-  printAndExit("Usage: ai-workflow project <summary|readiness|search|ticket|note|review-candidates|render|import-projections> ...", 1);
+  printAndExit("Usage: ai-workflow project <summary|readiness|search|epic|story|ticket|note|review-candidates|render|import-projections> ...", 1);
 }
 
 async function handleRoute(rest) {
@@ -1269,6 +1355,52 @@ function formatReadinessResponse(response) {
     }
   }
   return `${lines.join("\n")}\n`;
+}
+
+function formatEpicOutput(epic) {
+  const lines = [
+    `# ${epic.id} ${epic.title}`,
+    "",
+    "### Goal",
+    "",
+    epic.summary || "Pending natural-language scope.",
+    "",
+    "### User stories"
+  ];
+
+  if (epic.userStories.length) {
+    for (const [index, story] of epic.userStories.entries()) {
+      lines.push(`#### Story ${index + 1}`);
+      lines.push("");
+      lines.push(story);
+      lines.push("");
+    }
+  } else {
+    lines.push("None captured yet.");
+    lines.push("");
+  }
+
+  lines.push("### Ticket batches");
+  if (epic.ticketBatches.length) {
+    for (const batch of epic.ticketBatches) {
+      lines.push(`- ${batch}`);
+    }
+  } else {
+    lines.push("- None captured yet.");
+  }
+
+  lines.push("");
+  lines.push("### Kanban tickets");
+  if (epic.linkedTickets.length) {
+    for (const ticket of epic.linkedTickets) {
+      const story = ticket.userStory ? ` | Story: ${ticket.userStory}` : "";
+      lines.push(`- ${ticket.id} ${ticket.title} [${ticket.lane ?? "Todo"}]${story}`);
+    }
+  } else {
+    lines.push("- none linked yet");
+  }
+
+  return `${lines.join("\n").trimEnd()}\n`;
 }
 
 function formatAskResponse(response) {

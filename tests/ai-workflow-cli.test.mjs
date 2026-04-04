@@ -141,6 +141,71 @@ test("ai-workflow ticket helpers prefer the discovered real kanban source over s
   }
 });
 
+test("ai-workflow project epic and story commands query the DB with heading-based epics", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-epic-query-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "epics.md"), [
+      "# Epics",
+      "",
+      "## EPC-200 Direct edit reconciliation",
+      "",
+      "### Goal",
+      "",
+      "Keep file projections honest without flattening the narrative.",
+      "",
+      "### User stories",
+      "",
+      "#### Story 1",
+      "",
+      "As a user, I can edit epics.md or kanban.md directly and have ai-workflow detect drift before it overwrites my change.",
+      "",
+      "#### Story 2",
+      "",
+      "As a maintainer, I can reconcile missing or deleted DB entities from a file edit without losing the author’s intent.",
+      "",
+      "### Ticket batches",
+      "",
+      "- Detect file/DB drift and preview the delta.",
+      "- Create, update, or delete DB entities from explicit user edits.",
+      "",
+      "### Kanban tickets",
+      "",
+      "- none linked yet"
+    ].join("\n"), "utf8");
+    await writeFile(path.join(targetRoot, "kanban.md"), [
+      "# Kanban",
+      "",
+      "## Todo",
+      "",
+      "- [ ] TKT-200 Wire direct-edit reconciliation",
+      "  - Epic: EPC-200",
+      "  - Story: As a user, I can edit epics.md or kanban.md directly and have ai-workflow detect drift before it overwrites my change."
+    ].join("\n"), "utf8");
+
+    const syncResult = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--write-projections", "--json"], { cwd: targetRoot });
+    assert.equal(syncResult.code, 0, syncResult.stderr || syncResult.stdout);
+
+    const epicList = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "project", "epic", "list", "--json"], { cwd: targetRoot });
+    assert.equal(epicList.code, 0, epicList.stderr || epicList.stdout);
+    const epics = JSON.parse(epicList.stdout);
+    assert.equal(epics.some((item) => item.id === "EPC-200"), true);
+
+    const epicShow = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "project", "epic", "show", "EPC-200", "--json"], { cwd: targetRoot });
+    assert.equal(epicShow.code, 0, epicShow.stderr || epicShow.stdout);
+    const epic = JSON.parse(epicShow.stdout);
+    assert.equal(epic.userStories.length, 2);
+    assert.match(epic.userStories[0], /edit epics\.md or kanban\.md directly/i);
+
+    const storySearch = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "project", "story", "search", "drift", "--epic", "EPC-200", "--json"], { cwd: targetRoot });
+    assert.equal(storySearch.code, 0, storySearch.stderr || storySearch.stdout);
+    const stories = JSON.parse(storySearch.stdout);
+    assert.equal(stories[0]?.epic.id, "EPC-200");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("ai-workflow ticket proving run evaluates multiple tickets against the real runtime helpers", { concurrency: false }, async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-ticket-proving-"));
 

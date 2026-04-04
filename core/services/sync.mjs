@@ -4,7 +4,7 @@ import { collectProjectFiles, readProjectFile } from "../lib/filesystem.mjs";
 import { sha1, stableId } from "../lib/hash.mjs";
 import { parseIndexedFile } from "../parsers/index.mjs";
 import { deriveCandidateFromNote, reviewCandidates } from "./lifecycle.mjs";
-import { buildProjectSummary, buildSmartProjectStatus, createSearchDocumentsForEntities, importLegacyProjections, writeProjectProjections } from "./projections.mjs";
+import { buildProjectSummary, buildSmartProjectStatus, compareEpicPriority, createSearchDocumentsForEntities, importLegacyProjections, writeProjectProjections } from "./projections.mjs";
 import { auditArchitecture } from "./critic.mjs";
 import { SEMANTICS } from "../lib/registry.mjs";
 import { evaluateReadiness } from "./readiness-evaluator.mjs";
@@ -178,6 +178,88 @@ export async function searchProject({ projectRoot = process.cwd(), query, limit 
   return withWorkflowStore(projectRoot, async (store) => store.search(query, { limit }));
 }
 
+export async function listEpics({ projectRoot = process.cwd(), includeArchived = false } = {}) {
+  return withWorkflowStore(projectRoot, async (store) => {
+    const epics = store.listEntities({ entityType: "epic" })
+      .filter((epic) => includeArchived || epic.state !== "archived")
+      .sort(compareEpicPriority)
+      .map((epic) => buildEpicSummary(store, epic));
+    return epics;
+  });
+}
+
+export async function getEpic({ projectRoot = process.cwd(), epicId } = {}) {
+  if (!epicId) {
+    return null;
+  }
+
+  return withWorkflowStore(projectRoot, async (store) => {
+    const epic = store.getEntity(epicId);
+    return epic?.entityType === "epic" ? buildEpicDetail(store, epic) : null;
+  });
+}
+
+export async function searchEpics({ projectRoot = process.cwd(), query, limit = 20 } = {}) {
+  const normalizedQuery = normalizeSearchQuery(query);
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  return withWorkflowStore(projectRoot, async (store) => {
+    const epics = store.listEntities({ entityType: "epic" })
+      .filter((epic) => epic.state !== "archived")
+      .map((epic) => buildEpicDetail(store, epic))
+      .map((epic) => ({
+        ...epic,
+        score: scoreEpicMatch(epic, normalizedQuery)
+      }))
+      .filter((epic) => epic.score > 0)
+      .sort((left, right) => right.score - left.score || compareEpicPriority(left, right) || String(left.id).localeCompare(String(right.id)))
+      .slice(0, limit);
+
+    return epics;
+  });
+}
+
+export async function listEpicUserStories({ projectRoot = process.cwd(), epicId, includeArchived = false } = {}) {
+  return withWorkflowStore(projectRoot, async (store) => {
+    const epic = epicId ? store.getEntity(epicId) : null;
+    if (epicId && (!epic || epic.entityType !== "epic")) {
+      return [];
+    }
+
+    const epics = epic
+      ? [epic]
+      : store.listEntities({ entityType: "epic" }).filter((entry) => includeArchived || entry.state !== "archived").sort(compareEpicPriority);
+
+    return epics.flatMap((entry) => buildEpicStories(store, entry));
+  });
+}
+
+export async function searchEpicUserStories({ projectRoot = process.cwd(), query, epicId = null, limit = 20 } = {}) {
+  const normalizedQuery = normalizeSearchQuery(query);
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  return withWorkflowStore(projectRoot, async (store) => {
+    const epics = epicId
+      ? [store.getEntity(epicId)].filter(Boolean)
+      : store.listEntities({ entityType: "epic" }).filter((entry) => entry.state !== "archived");
+
+    return epics
+      .sort(compareEpicPriority)
+      .flatMap((entry) => buildEpicStories(store, entry))
+      .map((story) => ({
+        ...story,
+        score: scoreStoryMatch(story, normalizedQuery)
+      }))
+      .filter((story) => story.score > 0)
+      .sort((left, right) => right.score - left.score || String(left.epic.id).localeCompare(String(right.epic.id)) || left.index - right.index)
+      .slice(0, limit);
+  });
+}
+
 export async function createTicket({ projectRoot = process.cwd(), entity }) {
   return withWorkflowStore(projectRoot, async (store) => {
     store.upsertEntity(entity);
@@ -243,6 +325,119 @@ async function syncArchitecture(projectRoot, store) {
       objectId: moduleId
     });
   }
+}
+
+function buildEpicSummary(store, epic) {
+  const detail = buildEpicDetail(store, epic);
+  return {
+    id: detail.id,
+    title: detail.title,
+    state: detail.state,
+    summary: detail.summary,
+    userStoryCount: detail.userStories.length,
+    ticketBatchCount: detail.ticketBatches.length,
+    linkedTicketCount: detail.linkedTickets.length
+  };
+}
+
+function buildEpicDetail(store, epic) {
+  const linkedTickets = store.listEntities({ entityType: "ticket" })
+    .filter((ticket) => ticket.parentId === epic.id || ticket.data?.epic === epic.id)
+    .map((ticket) => ({
+      id: ticket.id,
+      title: ticket.title,
+      lane: ticket.lane,
+      state: ticket.state,
+      userStory: ticket.data?.userStory ?? null
+    }));
+
+  const userStories = normalizeStoryList(epic.data?.userStories ?? epic.data?.stories ?? []);
+  const ticketBatches = normalizeStoryList(epic.data?.ticketBatches ?? epic.data?.batches ?? []);
+
+  return {
+    id: epic.id,
+    title: epic.title,
+    state: epic.state,
+    summary: String(epic.data?.summary ?? "").trim(),
+    userStories,
+    ticketBatches,
+    linkedTickets,
+    data: epic.data ?? {}
+  };
+}
+
+function buildEpicStories(store, epic) {
+  const detail = buildEpicDetail(store, epic);
+  return detail.userStories.map((story, index) => ({
+    epic: {
+      id: detail.id,
+      title: detail.title,
+      state: detail.state,
+      summary: detail.summary,
+      data: epic.data ?? {}
+    },
+    index: index + 1,
+    heading: `Story ${index + 1}`,
+    body: story,
+    ticketBatch: detail.ticketBatches[index] ?? null
+  }));
+}
+
+function normalizeStoryList(values = []) {
+  return values.map((story) => String(story ?? "").trim()).filter(Boolean);
+}
+
+function normalizeSearchQuery(query) {
+  return String(query ?? "").trim().toLowerCase();
+}
+
+function scoreEpicMatch(epic, query) {
+  const haystacks = [
+    epic.id,
+    epic.title,
+    epic.summary,
+    epic.userStories.join("\n"),
+    epic.ticketBatches.join("\n")
+  ].join("\n").toLowerCase();
+
+  if (!haystacks.includes(query)) {
+    const tokens = query.split(/\s+/).filter(Boolean);
+    if (!tokens.every((token) => haystacks.includes(token))) {
+      return 0;
+    }
+  }
+
+  let score = 10;
+  if (epic.id.toLowerCase().includes(query)) score += 40;
+  if (epic.title.toLowerCase().includes(query)) score += 30;
+  if (epic.summary.toLowerCase().includes(query)) score += 15;
+  if (epic.userStories.some((story) => story.toLowerCase().includes(query))) score += 10;
+  if (epic.ticketBatches.some((batch) => batch.toLowerCase().includes(query))) score += 5;
+  return score;
+}
+
+function scoreStoryMatch(story, query) {
+  const haystack = [
+    story.epic.id,
+    story.epic.title,
+    story.heading,
+    story.body,
+    story.ticketBatch ?? ""
+  ].join("\n").toLowerCase();
+
+  if (!haystack.includes(query)) {
+    const tokens = query.split(/\s+/).filter(Boolean);
+    if (!tokens.every((token) => haystack.includes(token))) {
+      return 0;
+    }
+  }
+
+  let score = 10;
+  if (story.body.toLowerCase().includes(query)) score += 35;
+  if (story.epic.title.toLowerCase().includes(query)) score += 10;
+  if (story.heading.toLowerCase().includes(query)) score += 5;
+  if (story.ticketBatch?.toLowerCase().includes(query)) score += 5;
+  return score;
 }
 
 function inferModuleName(filePath) {

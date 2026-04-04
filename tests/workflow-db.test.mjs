@@ -4,8 +4,8 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { addManualNote, evaluateProjectReadiness, getProjectSummary, reviewProjectCandidates, searchProject, syncProject, withWorkflowStore } from "../core/services/sync.mjs";
-import { buildTicketEntity, renderKanbanProjection } from "../core/services/projections.mjs";
+import { addManualNote, evaluateProjectReadiness, getEpic, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, withWorkflowStore } from "../core/services/sync.mjs";
+import { buildTicketEntity, renderEpicsProjection, renderKanbanProjection } from "../core/services/projections.mjs";
 import { openWorkflowStore } from "../core/db/sqlite-store.mjs";
 import { PROTOCOL_VERSION, validateEvaluateReadinessResponse } from "../core/contracts/dual-surface-protocol.mjs";
 
@@ -106,6 +106,74 @@ test("ticket entities render into the projection view", async () => {
 
     const summary = await getProjectSummary({ projectRoot: targetRoot });
     assert.equal(summary.activeTickets.some((ticket) => ticket.id === "TKT-222"), true);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("epic projections stay narrative-first and epic/story queries resolve through the DB", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-epic-queries-"));
+
+  try {
+    await cp(fixtureRoot, targetRoot, { recursive: true });
+    await syncProject({ projectRoot: targetRoot });
+
+    await withWorkflowStore(targetRoot, async (store) => {
+      store.upsertEntity({
+        id: "EPC-200",
+        entityType: "epic",
+        title: "Direct edit reconciliation",
+        lane: null,
+        state: "open",
+        confidence: 1,
+        provenance: "manual",
+        sourceKind: "manual",
+        reviewState: "active",
+        data: {
+          summary: "Keep file projections honest without flattening the narrative.",
+          userStories: [
+            "As a user, I can edit epics.md or kanban.md directly and have ai-workflow detect drift before it overwrites my change.",
+            "As a maintainer, I can reconcile missing or deleted DB entities from a file edit without losing the author’s intent."
+          ],
+          ticketBatches: [
+            "Detect file/DB drift and preview the delta.",
+            "Create, update, or delete DB entities from explicit user edits."
+          ]
+        }
+      });
+      store.upsertEntity(buildTicketEntity({
+        id: "TKT-200",
+        title: "Wire direct-edit reconciliation",
+        lane: "Todo",
+        epicId: "EPC-200",
+        summary: "Keep the drift flow tied to the epic.",
+        userStory: "As a user, I can edit epics.md or kanban.md directly and have ai-workflow detect drift before it overwrites my change."
+      }));
+    });
+
+    const epic = await getEpic({ projectRoot: targetRoot, epicId: "EPC-200" });
+    assert.equal(epic.title, "Direct edit reconciliation");
+    assert.equal(epic.userStories.length, 2);
+
+    const epicList = await listEpics({ projectRoot: targetRoot });
+    assert.equal(epicList.some((item) => item.id === "EPC-200"), true);
+
+    const storyList = await listEpicUserStories({ projectRoot: targetRoot, epicId: "EPC-200" });
+    assert.equal(storyList.length, 2);
+    assert.match(storyList[0].body, /edit epics\.md or kanban\.md directly/i);
+
+    const epicSearch = await searchEpics({ projectRoot: targetRoot, query: "reconciliation" });
+    assert.equal(epicSearch[0]?.id, "EPC-200");
+
+    const storySearch = await searchEpicUserStories({ projectRoot: targetRoot, query: "drift", epicId: "EPC-200" });
+    assert.equal(storySearch[0]?.epic.id, "EPC-200");
+
+    const projection = await withWorkflowStore(targetRoot, async (store) => renderEpicsProjection(store));
+    assert.match(projection, /### Goal/);
+    assert.match(projection, /#### Story 1/);
+    assert.match(projection, /### Ticket batches/);
+    assert.match(projection, /### Kanban tickets/);
+    assert.doesNotMatch(projection, /Predicates|DB graph entities and predicates|Feature:/);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }
