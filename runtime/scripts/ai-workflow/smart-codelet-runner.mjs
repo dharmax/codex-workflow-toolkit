@@ -279,7 +279,7 @@ function outputAndExit(text, code = 0) {
 }
 
 const entryUrl = pathToFileURL(process.argv[1] ?? "").href;
-if (import.meta.url === entryUrl) {
+if (process.env.AIWF_WRAPPED_RUNTIME === "1" || import.meta.url === entryUrl) {
   const exitCode = await runSmartCodelet();
   process.exitCode = exitCode && typeof exitCode === "number" ? exitCode : 0;
 }

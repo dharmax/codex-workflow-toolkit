@@ -6,6 +6,7 @@ This file defines the strict default audit baseline for initialized projects.
 
 Rules in the fenced `ai-workflow-audit` block are active immediately.
 If a project needs a narrower exception, edit this file or add a later markdown block in another guidance doc with a more specific rule.
+If a rule's failure text should be identical to the pattern text, omit `message`; the audit engine will use the pattern as the default finding text.
 
 ```ai-workflow-audit
 {
@@ -44,7 +45,32 @@ If a project needs a narrower exception, edit this file or add a later markdown 
       "message": "Use explicit tooltip contracts instead of native title attributes on UI surfaces."
     }
   ],
-  "requiredPatterns": [],
+  "requiredPatterns": [
+    {
+      "id": "stop-on-aiwf-failure",
+      "include": ["AGENTS.md", "execution-protocol.md", "project-guidelines.md", "templates/AGENTS.md", "templates/execution-protocol.md", "templates/project-guidelines.md"],
+      "extensions": [".md"],
+      "pattern": "If `ai-workflow` fails, stop, identify root cause, and either fix it or report the blocker before continuing."
+    },
+    {
+      "id": "stop-on-incidental-bug",
+      "include": ["AGENTS.md", "execution-protocol.md", "project-guidelines.md", "templates/AGENTS.md", "templates/execution-protocol.md", "templates/project-guidelines.md"],
+      "extensions": [".md"],
+      "pattern": "If you discover a bug while working on something else, stop and tell the operator unless they explicitly asked for full-batch triage."
+    },
+    {
+      "id": "prefer-cheapest-capable-model-route",
+      "include": ["AGENTS.md", "execution-protocol.md", "project-guidelines.md", "README.md", "docs/MANUAL.md", "knowledge.md", "templates/AGENTS.md", "templates/execution-protocol.md", "templates/project-guidelines.md", "templates/knowledge.md"],
+      "extensions": [".md"],
+      "pattern": "Prefer the cheapest capable model route when the tool can use it; if it is unavailable, say so instead of silently widening the fallback."
+    },
+    {
+      "id": "prefer-ai-workflow-first",
+      "include": ["AGENTS.md", "execution-protocol.md", "project-guidelines.md", "README.md", "docs/MANUAL.md", "knowledge.md", "templates/AGENTS.md", "templates/execution-protocol.md", "templates/project-guidelines.md", "templates/knowledge.md"],
+      "extensions": [".md"],
+      "pattern": "Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer."
+    }
+  ],
   "forbiddenImports": [
     {
       "id": "no-engine-to-ui-imports",

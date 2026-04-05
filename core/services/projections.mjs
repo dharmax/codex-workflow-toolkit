@@ -160,6 +160,9 @@ export function renderKanbanProjection(store) {
       if (item.data?.userStory) {
         lines.push(`  - Story: ${item.data.userStory}`);
       }
+      if (item.parentId || item.data?.epic) {
+        lines.push(`  - Epic: ${item.data?.epic ?? item.parentId}`);
+      }
       if (item.parentId) {
         lines.push(`  - Parent: ${item.parentId}`);
       }
@@ -184,6 +187,9 @@ export function renderKanbanProjection(store) {
       }
       if (item.data?.userStory) {
         lines.push(`  - Story: ${item.data.userStory}`);
+      }
+      if (item.parentId || item.data?.epic) {
+        lines.push(`  - Epic: ${item.data?.epic ?? item.parentId}`);
       }
       if (item.parentId) {
         lines.push(`  - Parent: ${item.parentId}`);

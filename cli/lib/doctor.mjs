@@ -3,12 +3,14 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "./config-store.mjs";
 import { discoverProviderState, probeOllama, resolveOllamaConfig } from "../../core/services/providers.mjs";
+import { applyModelFitMatrix, buildModelFitMatrix } from "../../core/services/model-fit.mjs";
 import { leanCtxInstallHint, leanCtxSetupHint, probeLeanCtx } from "../../core/services/lean-ctx.mjs";
+import { buildPackageUpdateAdvisory } from "../../core/services/package-updates.mjs";
 
 const execFileAsync = promisify(execFile);
 
-export async function runDoctor({ root = process.cwd(), json = false } = {}) {
-  const report = await buildDoctorReport({ root });
+export async function runDoctor({ root = process.cwd(), json = false, forceRefresh = false } = {}) {
+  const report = await buildDoctorReport({ root, forceRefresh });
   const rendered = json
     ? `${JSON.stringify(report, null, 2)}\n`
     : `${renderDoctorReport(report)}\n`;
@@ -17,20 +19,28 @@ export async function runDoctor({ root = process.cwd(), json = false } = {}) {
   return report;
 }
 
-export async function buildDoctorReport({ root = process.cwd() } = {}) {
+export async function buildDoctorReport({ root = process.cwd(), forceRefresh = false } = {}) {
   const [projectConfigState, globalConfigState, providerState] = await Promise.all([
     readConfigSafe(getProjectConfigPath(root)),
     readConfigSafe(getGlobalConfigPath()),
-    discoverProviderState({ root })
+    discoverProviderState({ root, forceRefresh })
   ]);
+  const modelFitMatrix = await buildModelFitMatrix({
+    root,
+    providerState,
+    taskClass: "shell-planning",
+    allowRemoteEnrichment: false
+  });
+  const enrichedState = applyModelFitMatrix(providerState, modelFitMatrix);
   const leanCtx = await probeLeanCtx();
+  const packageUpdates = await buildPackageUpdateAdvisory({ root, forceRefresh });
   const projectConfig = projectConfigState.config;
   const globalConfig = globalConfigState.config;
   const ollamaConfig = resolveOllamaConfig({ projectConfig, globalConfig });
   const git = await probeBinary("git", ["--version"]);
 
   const providers = {};
-  for (const [id, p] of Object.entries(providerState.providers)) {
+  for (const [id, p] of Object.entries(enrichedState.providers)) {
     providers[id] = {
       available: p.available,
       modelCount: p.models.length,
@@ -52,18 +62,22 @@ export async function buildDoctorReport({ root = process.cwd() } = {}) {
     },
     providers,
     ollama: {
-      installed: providerState.providers.ollama.available,
-      host: providerState.providers.ollama.host,
+      installed: enrichedState.providers.ollama.available,
+      host: enrichedState.providers.ollama.host,
       hardwareClass: ollamaConfig.hardwareClass ?? null,
       plannerModel: ollamaConfig.plannerModel ?? null,
       plannerMaxQuality: ollamaConfig.plannerMaxQuality ?? null,
       maxModelSizeB: ollamaConfig.maxModelSizeB ?? null,
-      models: providerState.providers.ollama.models.map(m => ({
+      models: enrichedState.providers.ollama.models.map(m => ({
         id: m.id,
         quality: m.quality,
-        capabilities: m.capabilities
+        capabilities: m.capabilities,
+        fitScore: m.fitScore ?? null,
+        fitReasons: m.fitReasons ?? []
       })),
-      details: providerState.providers.ollama.details
+      details: enrichedState.providers.ollama.details,
+      bestModel: enrichedState.providers.ollama.models?.[0]?.id ?? null,
+      bestReason: enrichedState.providers.ollama.models?.[0]?.fitReasons?.join("; ") ?? null
     },
     config: {
       projectPath: getProjectConfigPath(root),
@@ -71,6 +85,11 @@ export async function buildDoctorReport({ root = process.cwd() } = {}) {
       warnings: [projectConfigState.warning, globalConfigState.warning].filter(Boolean),
       projectKeys: Object.keys(projectConfig),
       globalKeys: Object.keys(globalConfig)
+    },
+    packageUpdates: {
+      generatedAt: packageUpdates.generatedAt,
+      comment: packageUpdates.comment,
+      packages: packageUpdates.packages
     }
   };
 }
@@ -113,7 +132,14 @@ export function renderDoctorReport(report) {
         .filter(([_, score]) => score > 0)
         .map(([c, s]) => `${c.charAt(0)}:${s.toFixed(1)}`)
         .join(" ");
-      lines.push(`- ${m.id} (${m.quality}) [${caps}]`);
+      const fit = typeof m.fitScore === "number" ? ` fit:${m.fitScore}` : "";
+      lines.push(`- ${m.id} (${m.quality})${fit} [${caps}]`);
+    }
+  }
+  if (report.ollama.bestModel) {
+    lines.push(`ollama best model: ${report.ollama.bestModel}`);
+    if (report.ollama.bestReason) {
+      lines.push(`ollama best reason: ${report.ollama.bestReason}`);
     }
   }
   if (report.ollama.hardwareClass) {
@@ -126,10 +152,24 @@ export function renderDoctorReport(report) {
     lines.push(`ollama planner max quality: ${report.ollama.plannerMaxQuality}`);
   }
   if (report.ollama.plannerModel) {
-    lines.push(`ollama planner model: ${report.ollama.plannerModel}`);
+    lines.push(`ollama planner override: ${report.ollama.plannerModel}`);
   }
   if (!report.ollama.hardwareClass && !report.ollama.maxModelSizeB && !report.ollama.plannerModel) {
-    lines.push("ollama planner hint: missing hardware/planner config; shell will default to a small model");
+    lines.push("ollama planner hint: missing hardware/planner config; shell will use the live model-fit matrix and default to a small model if needed");
+  }
+
+  lines.push("upgrade advisory:");
+  for (const item of report.packageUpdates?.packages ?? []) {
+    const current = item.currentVersion ?? "unknown";
+    const latest = item.latestVersion ?? "unavailable";
+    if (item.status === "current") {
+      lines.push(`- ${item.name}: ${current} is current`);
+    } else {
+      lines.push(`- ${item.name}: current ${current}, latest ${latest}`);
+    }
+  }
+  if (report.packageUpdates?.comment) {
+    lines.push(report.packageUpdates.comment);
   }
 
   lines.push(`project config: ${report.config.projectPath}`);

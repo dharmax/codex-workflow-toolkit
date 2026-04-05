@@ -3,3 +3,9 @@ node_modules
 
 /.obsidian/
 /.ai-workflow/state/run-artifacts/
+.ai-workflow/cache/
+.ai-workflow/config.json
+.codex
+.idea/.name
+.idea/*.iml
+Untitled*.base

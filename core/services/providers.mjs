@@ -4,10 +4,13 @@ import { openWorkflowStore } from "../db/sqlite-store.mjs";
 import { getGlobalConfigPath, getProjectConfigPath, readConfig, readConfigSafe, writeConfigValue } from "../../cli/lib/config-store.mjs";
 import { loadKnowledge } from "./knowledge.mjs";
 import { leanCtxInstallHint, probeLeanCtx } from "./lean-ctx.mjs";
+import { sha1 } from "../lib/hash.mjs";
 
 const execFileAsync = promisify(execFile);
+const OLLAMA_DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const ollamaDiscoveryCache = new Map();
 
-export async function discoverProviderState({ root = process.cwd() } = {}) {
+export async function discoverProviderState({ root = process.cwd(), forceRefresh = false, cacheTtlMs = OLLAMA_DISCOVERY_CACHE_TTL_MS } = {}) {
   const [projectConfigState, globalConfigState] = await Promise.all([
     readConfigSafe(getProjectConfigPath(root)),
     readConfigSafe(getGlobalConfigPath())
@@ -21,19 +24,37 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
   const leanCtx = await probeLeanCtx();
   const ollamaHosts = resolveOllamaHosts(ollamaConfig);
   const configuredOllamaModels = normalizeConfiguredModels("ollama", ollamaConfig, []);
-  const ollama = ollamaConfig.enabled === false
-    ? {
-      installed: false,
-      models: [],
-      details: "disabled by config",
-      host: ollamaConfig.host,
-      hosts: ollamaHosts
-    }
-    : await probeOllamaHosts({
-      hosts: ollamaHosts,
-      reference: knowledge.modelReference,
-      cachedModels: configuredOllamaModels
-    });
+  const ollamaCacheKey = sha1(JSON.stringify({
+    root,
+    enabled: ollamaConfig.enabled !== false,
+    host: ollamaConfig.host ?? null,
+    endpoints: ollamaConfig.endpoints ?? [],
+    plannerModel: ollamaConfig.plannerModel ?? null,
+    plannerMaxQuality: ollamaConfig.plannerMaxQuality ?? null,
+    hardwareClass: ollamaConfig.hardwareClass ?? null,
+    maxModelSizeB: ollamaConfig.maxModelSizeB ?? null,
+    hosts: ollamaHosts
+  }));
+  const cachedOllama = forceRefresh ? null : ollamaDiscoveryCache.get(ollamaCacheKey);
+  let ollama = null;
+  if (cachedOllama && Date.now() - cachedOllama.cachedAt < cacheTtlMs) {
+    ollama = cachedOllama.value;
+  } else {
+    ollama = ollamaConfig.enabled === false
+      ? {
+        installed: false,
+        models: [],
+        details: "disabled by config",
+        host: ollamaConfig.host,
+        hosts: ollamaHosts
+      }
+      : await probeOllamaHosts({
+        hosts: ollamaHosts,
+        reference: knowledge.modelReference,
+        cachedModels: configuredOllamaModels
+      });
+    ollamaDiscoveryCache.set(ollamaCacheKey, { cachedAt: Date.now(), value: ollama });
+  }
 
   const configuredProviders = mergeProviderConfig(globalConfig.providers, projectConfig.providers);
   const providers = {};
@@ -106,7 +127,7 @@ export async function discoverProviderState({ root = process.cwd() } = {}) {
     configWarnings,
     routingPolicy: {
       capabilityMapping: knowledge.capabilityMapping,
-      preferLocalFor: ["data", "summarization", "extraction", "note-normalization", "strategy"],
+      preferLocalFor: ["data", "summarization", "extraction", "note-normalization", "strategy", "artifact-evaluation"],
       minimumQuality: knowledge.minimumQuality,
       quotaStrategy: "prefer-free-remote",
       contextCompression: leanCtx.installed ? "lean-ctx" : "fallback",
@@ -234,12 +255,52 @@ export function resolveOllamaConfig({ projectConfig = {}, globalConfig = {} } = 
   };
 }
 
-export async function generateWithOllama({ model, prompt, system = "", host, format = null } = {}) {
+export async function generateWithOllama({ model, prompt, system = "", host, format = null, contentParts = null } = {}) {
   if (!model) {
     throw new Error("model is required");
   }
 
   const resolvedHost = normalizeOllamaHost(host ?? process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434");
+  const hasImages = Array.isArray(contentParts) && contentParts.some((part) => part?.type === "image" && part.data);
+  const extraText = Array.isArray(contentParts)
+    ? contentParts
+      .filter((part) => part?.type === "text" && String(part.text ?? "").trim())
+      .map((part) => String(part.text ?? "").trim())
+      .join("\n\n")
+    : "";
+  const promptText = [prompt, extraText].filter(Boolean).join("\n\n");
+  if (hasImages) {
+    const response = await fetch(`${resolvedHost}/api/chat`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        model,
+        messages: buildOllamaMessages({ prompt, system, contentParts }),
+        stream: false,
+        format,
+        options: {
+          temperature: 0.1
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`ollama chat request failed with ${response.status}`);
+    }
+
+    const payload = await response.json();
+    const text = payload.message?.content ?? payload.response ?? "";
+    return {
+      providerId: "ollama",
+      host: resolvedHost,
+      model,
+      response: String(text ?? "").trim(),
+      raw: payload
+    };
+  }
+
   const response = await fetch(`${resolvedHost}/api/generate`, {
     method: "POST",
     headers: {
@@ -247,7 +308,7 @@ export async function generateWithOllama({ model, prompt, system = "", host, for
     },
     body: JSON.stringify({
       model,
-      prompt,
+      prompt: promptText,
       system,
       stream: false,
       format,
@@ -271,7 +332,7 @@ export async function generateWithOllama({ model, prompt, system = "", host, for
   };
 }
 
-export async function generateWithGemini({ model, prompt, system = "", apiKey } = {}) {
+export async function generateWithGemini({ model, prompt, system = "", apiKey, contentParts = null } = {}) {
   const key = apiKey ?? process.env.GOOGLE_API_KEY;
   if (!key) {
     throw new Error("Gemini API key is required (GOOGLE_API_KEY or config)");
@@ -285,7 +346,7 @@ export async function generateWithGemini({ model, prompt, system = "", apiKey } 
     },
     body: JSON.stringify({
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts: buildGeminiParts({ prompt, contentParts }) }],
       generationConfig: {
         temperature: 0.1,
         maxOutputTokens: 2048
@@ -308,7 +369,7 @@ export async function generateWithGemini({ model, prompt, system = "", apiKey } 
   };
 }
 
-export async function generateWithOpenAI({ model, prompt, system = "", apiKey, baseUrl } = {}) {
+export async function generateWithOpenAI({ model, prompt, system = "", apiKey, baseUrl, contentParts = null } = {}) {
   const key = apiKey ?? process.env.OPENAI_API_KEY;
   if (!key) {
     throw new Error("OpenAI API key is required (OPENAI_API_KEY or config)");
@@ -325,7 +386,7 @@ export async function generateWithOpenAI({ model, prompt, system = "", apiKey, b
       model,
       messages: [
         ...(system ? [{ role: "system", content: system }] : []),
-        { role: "user", content: prompt }
+        { role: "user", content: buildOpenAIMessageContent({ prompt, contentParts }) }
       ],
       temperature: 0.1
     })
@@ -346,7 +407,7 @@ export async function generateWithOpenAI({ model, prompt, system = "", apiKey, b
   };
 }
 
-export async function generateWithAnthropic({ model, prompt, system = "", apiKey, baseUrl } = {}) {
+export async function generateWithAnthropic({ model, prompt, system = "", apiKey, baseUrl, contentParts = null } = {}) {
   const key = apiKey ?? process.env.ANTHROPIC_API_KEY;
   if (!key) {
     throw new Error("Anthropic API key is required (ANTHROPIC_API_KEY or config)");
@@ -365,7 +426,7 @@ export async function generateWithAnthropic({ model, prompt, system = "", apiKey
       system: system || undefined,
       max_tokens: 2048,
       temperature: 0.1,
-      messages: [{ role: "user", content: prompt }]
+      messages: [{ role: "user", content: buildAnthropicContent({ prompt, contentParts }) }]
     })
   });
 
@@ -395,24 +456,117 @@ export function registerProvider(providerId, implementation) {
   CUSTOM_PROVIDERS.set(providerId, implementation);
 }
 
-export async function generateCompletion({ providerId, modelId, prompt, system, config = {} } = {}) {
+export async function generateCompletion({ providerId, modelId, prompt, system, config = {}, contentParts = null } = {}) {
   const custom = CUSTOM_PROVIDERS.get(providerId);
   if (custom) {
-    return custom.generate({ modelId, prompt, system, config });
+    return custom.generate({ modelId, prompt, system, config, contentParts });
   }
 
   switch (providerId) {
     case "ollama":
-      return generateWithOllama({ model: modelId, prompt, system, host: config.host, format: config.format });
+      return generateWithOllama({ model: modelId, prompt, system, host: config.host, format: config.format, contentParts });
     case "google":
-      return generateWithGemini({ model: modelId, prompt, system, apiKey: config.apiKey });
+      return generateWithGemini({ model: modelId, prompt, system, apiKey: config.apiKey, contentParts });
     case "openai":
-      return generateWithOpenAI({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl });
+      return generateWithOpenAI({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl, contentParts });
     case "anthropic":
-      return generateWithAnthropic({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl });
+      return generateWithAnthropic({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl, contentParts });
     default:
       throw new Error(`Unsupported provider for completion: ${providerId}`);
   }
+}
+
+function buildOpenAIMessageContent({ prompt, contentParts = null }) {
+  if (!Array.isArray(contentParts) || !contentParts.length) {
+    return prompt;
+  }
+
+  return [
+    { type: "text", text: prompt },
+    ...contentParts.flatMap((part) => normalizeOpenAIContentPart(part))
+  ];
+}
+
+function normalizeOpenAIContentPart(part) {
+  if (part?.type === "image" && part.data && part.mimeType) {
+    return [{
+      type: "image_url",
+      image_url: {
+        url: `data:${part.mimeType};base64,${part.data}`
+      }
+    }];
+  }
+
+  if (part?.type === "text") {
+    return [{
+      type: "text",
+      text: String(part.text ?? "")
+    }];
+  }
+
+  return [];
+}
+
+function buildGeminiParts({ prompt, contentParts = null }) {
+  const parts = [{ text: prompt }];
+  for (const part of Array.isArray(contentParts) ? contentParts : []) {
+    if (part?.type === "text") {
+      parts.push({ text: String(part.text ?? "") });
+      continue;
+    }
+    if (part?.type === "image" && part.data && part.mimeType) {
+      parts.push({
+        inline_data: {
+          mime_type: part.mimeType,
+          data: part.data
+        }
+      });
+    }
+  }
+  return parts;
+}
+
+function buildAnthropicContent({ prompt, contentParts = null }) {
+  const content = [{ type: "text", text: prompt }];
+  for (const part of Array.isArray(contentParts) ? contentParts : []) {
+    if (part?.type === "text") {
+      content.push({ type: "text", text: String(part.text ?? "") });
+      continue;
+    }
+    if (part?.type === "image" && part.data && part.mimeType) {
+      content.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: part.mimeType,
+          data: part.data
+        }
+      });
+    }
+  }
+  return content;
+}
+
+function buildOllamaMessages({ prompt, system = "", contentParts = null }) {
+  const textParts = [];
+  const images = [];
+  for (const part of Array.isArray(contentParts) ? contentParts : []) {
+    if (part?.type === "text" && String(part.text ?? "").trim()) {
+      textParts.push(String(part.text ?? ""));
+      continue;
+    }
+    if (part?.type === "image" && part.data) {
+      images.push(String(part.data));
+    }
+  }
+
+  const content = [prompt, ...textParts].filter(Boolean).join("\n\n");
+  const messages = [];
+  if (system) {
+    messages.push({ role: "system", content: system });
+  }
+  messages.push(images.length ? { role: "user", content, images } : { role: "user", content });
+  return messages;
 }
 
 function normalizeOllamaHost(host) {
@@ -463,11 +617,11 @@ function normalizeConfiguredModels(providerId, config, builtinModels = []) {
   );
 }
 
-export async function refreshProviderRegistry({ root = process.cwd(), scope = "global" } = {}) {
+export async function refreshProviderRegistry({ root = process.cwd(), scope = "global", forceRefresh = true } = {}) {
   const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(root);
   const projectConfig = await readConfigSafe(getProjectConfigPath(root));
   const globalConfig = await readConfigSafe(getGlobalConfigPath());
-  const providerState = await discoverProviderState({ root });
+  const providerState = await discoverProviderState({ root, forceRefresh });
   const refreshed = [];
 
   const providers = providerState.providers ?? {};
@@ -505,6 +659,14 @@ export async function refreshProviderRegistry({ root = process.cwd(), scope = "g
     refreshed,
     providerState
   };
+}
+
+export function invalidateOllamaDiscoveryCache(root = null) {
+  if (root) {
+    ollamaDiscoveryCache.clear();
+    return;
+  }
+  ollamaDiscoveryCache.clear();
 }
 
 function resolveOllamaHosts(config) {

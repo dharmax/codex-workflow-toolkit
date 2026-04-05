@@ -2,8 +2,9 @@ import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { getGlobalConfigPath, writeConfigValue } from "./config-store.mjs";
 import { spawn } from "node:child_process";
+import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 
-export async function handleProviderConnect(providerId, { rl: existingRl } = {}) {
+export async function handleProviderConnect(providerId, { rl: existingRl, root = process.cwd() } = {}) {
   if (!providerId) {
     console.error("Usage: ai-workflow provider connect <provider-id>");
     return 1;
@@ -17,9 +18,9 @@ export async function handleProviderConnect(providerId, { rl: existingRl } = {})
       case "anthropic":
       case "google":
       case "gemini":
-        return await connectWithApiKey(rl, providerId.toLowerCase());
+        return await connectWithApiKey(rl, providerId.toLowerCase(), { root });
       case "session":
-        return await connectSessionProvider(rl);
+        return await connectSessionProvider(rl, { root });
       default:
         console.error(`Unsupported provider for connection: ${providerId}`);
         return 1;
@@ -31,7 +32,7 @@ export async function handleProviderConnect(providerId, { rl: existingRl } = {})
   }
 }
 
-async function connectWithApiKey(rl, providerId) {
+async function connectWithApiKey(rl, providerId, { root } = {}) {
   const configPath = getGlobalConfigPath();
   const canonicalId = providerId === "gemini" ? "google" : providerId;
   const urlMap = {
@@ -55,7 +56,7 @@ async function connectWithApiKey(rl, providerId) {
     return 1;
   }
 
-  await writeConfigValue(configPath, `providers.${canonicalId}.apiKey`, apiKey.trim());
+  await withWorkspaceMutation(root, `provider connect ${canonicalId}`, async () => writeConfigValue(configPath, `providers.${canonicalId}.apiKey`, apiKey.trim()));
   const freeQuotaInput = await rl.question(`Enter remaining free quota in USD for ${canonicalId} (blank if unknown): `);
   if (freeQuotaInput.trim()) {
     const numeric = Number(freeQuotaInput);
@@ -63,7 +64,7 @@ async function connectWithApiKey(rl, providerId) {
       console.error("Free quota must be numeric when provided.");
       return 1;
     }
-    await writeConfigValue(configPath, `providers.${canonicalId}.quota.freeUsdRemaining`, String(Number(numeric.toFixed(2))));
+    await withWorkspaceMutation(root, `provider connect ${canonicalId} quota free`, async () => writeConfigValue(configPath, `providers.${canonicalId}.quota.freeUsdRemaining`, String(Number(numeric.toFixed(2)))));
   }
   const monthlyQuotaInput = await rl.question(`Enter monthly free quota in USD for ${canonicalId} (blank if unknown): `);
   if (monthlyQuotaInput.trim()) {
@@ -72,19 +73,19 @@ async function connectWithApiKey(rl, providerId) {
       console.error("Monthly free quota must be numeric when provided.");
       return 1;
     }
-    await writeConfigValue(configPath, `providers.${canonicalId}.quota.monthlyFreeUsd`, String(Number(numeric.toFixed(2))));
+    await withWorkspaceMutation(root, `provider connect ${canonicalId} quota monthly`, async () => writeConfigValue(configPath, `providers.${canonicalId}.quota.monthlyFreeUsd`, String(Number(numeric.toFixed(2)))));
   }
   const resetAt = await rl.question(`Enter quota reset date for ${canonicalId} (YYYY-MM-DD, blank if unknown): `);
   if (resetAt.trim()) {
-    await writeConfigValue(configPath, `providers.${canonicalId}.quota.resetAt`, resetAt.trim());
+    await withWorkspaceMutation(root, `provider connect ${canonicalId} quota reset`, async () => writeConfigValue(configPath, `providers.${canonicalId}.quota.resetAt`, resetAt.trim()));
   }
   const paidAllowed = await rl.question(`Allow paid usage after free quota is exhausted? [y/N] `);
-  await writeConfigValue(configPath, `providers.${canonicalId}.paidAllowed`, String(/^y(es)?$/i.test(paidAllowed.trim())));
+  await withWorkspaceMutation(root, `provider connect ${canonicalId} paidAllowed`, async () => writeConfigValue(configPath, `providers.${canonicalId}.paidAllowed`, String(/^y(es)?$/i.test(paidAllowed.trim()))));
   console.log(`Successfully connected to ${canonicalId}!`);
   return 0;
 }
 
-async function connectSessionProvider(rl) {
+async function connectSessionProvider(rl, { root } = {}) {
   const configPath = getGlobalConfigPath();
   console.log("Connecting to the browser-login session provider...");
   // In a real scenario, this might involve OAuth or a special login URL
@@ -97,7 +98,7 @@ async function connectSessionProvider(rl) {
     return 1;
   }
 
-  await writeConfigValue(configPath, "providers.session.token", token.trim());
+  await withWorkspaceMutation(root, "provider connect session", async () => writeConfigValue(configPath, "providers.session.token", token.trim()));
   console.log("Successfully connected.");
   return 0;
 }

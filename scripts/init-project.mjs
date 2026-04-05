@@ -7,6 +7,8 @@ import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { syncProject } from "../core/services/sync.mjs";
 import { onboardProjectBrief } from "../core/services/orchestrator.mjs";
+import { assertDirectCommandChannel } from "../core/lib/command-channel.mjs";
+import { withWorkspaceMutation } from "../core/lib/workspace-mutation.mjs";
 
 const HELP = `Usage:
   node scripts/init-project.mjs --target /path/to/project
@@ -44,6 +46,10 @@ const force = Boolean(args.force);
 const dryRun = Boolean(args["dry-run"]);
 const runInitialSync = !dryRun && !args["no-sync"];
 const briefSource = args.brief ? path.resolve(targetRoot, String(args.brief)) : null;
+
+if (!dryRun) {
+  assertDirectCommandChannel("ai-workflow init");
+}
 
 const plan = [
   {
@@ -86,7 +92,11 @@ const plan = [
     source: path.resolve(templatesRoot, ".github", "workflows", "ai-workflow-audit.yml"),
     target: path.resolve(targetRoot, ".github", "workflows", "ai-workflow-audit.yml")
   },
-  ...(await buildRuntimePlan(runtimeRoot, path.resolve(targetRoot, "scripts", "ai-workflow")))
+  ...(await buildRuntimePlan(runtimeRoot, path.resolve(targetRoot, "scripts", "ai-workflow"))),
+  {
+    target: path.resolve(targetRoot, "scripts", "ai-workflow", "toolkit-root.txt"),
+    content: `${repoRoot}\n`
+  }
 ];
 
 const summary = {
@@ -105,53 +115,86 @@ const summary = {
 
 await mkdir(targetRoot, { recursive: true });
 
-for (const entry of plan) {
-  const action = await classifyAction(entry.source, entry.target, force);
+const looksLikeJsProject = await fileExists(path.resolve(targetRoot, "package.json"));
+let syncResult = null;
+let briefResult = null;
 
-  if (action.type === "identical") {
-    summary.identical.push(relativeTarget(targetRoot, entry.target));
-    continue;
-  }
+if (dryRun) {
+  for (const entry of plan) {
+    const action = await classifyAction(entry, force);
 
-  if (action.type === "skip") {
-    summary.skipped.push(relativeTarget(targetRoot, entry.target));
-    continue;
-  }
+    if (action.type === "identical") {
+      summary.identical.push(relativeTarget(targetRoot, entry.target));
+      continue;
+    }
 
-  if (!dryRun) {
-    await mkdir(path.dirname(entry.target), { recursive: true });
-    await copyFile(entry.source, entry.target);
-    if (entry.target.endsWith(".mjs")) {
-      await chmod(entry.target, 0o755).catch(() => {});
+    if (action.type === "skip") {
+      summary.skipped.push(relativeTarget(targetRoot, entry.target));
+      continue;
+    }
+
+    const relative = relativeTarget(targetRoot, entry.target);
+    if (action.type === "overwrite") {
+      summary.overwritten.push(relative);
+    } else {
+      summary.installed.push(relative);
     }
   }
+} else {
+  const mutationResult = await withWorkspaceMutation(targetRoot, "init project", async () => {
+    for (const entry of plan) {
+      const action = await classifyAction(entry, force);
 
-  const relative = relativeTarget(targetRoot, entry.target);
-  if (action.type === "overwrite") {
-    summary.overwritten.push(relative);
-  } else {
-    summary.installed.push(relative);
-  }
-}
+      if (action.type === "identical") {
+        summary.identical.push(relativeTarget(targetRoot, entry.target));
+        continue;
+      }
 
-const looksLikeJsProject = await fileExists(path.resolve(targetRoot, "package.json"));
-if (looksLikeJsProject) {
-  await reconcilePackageScripts(targetRoot, summary.packageScripts, { force, dryRun });
-}
+      if (action.type === "skip") {
+        summary.skipped.push(relativeTarget(targetRoot, entry.target));
+        continue;
+      }
 
-let syncResult = null;
-if (runInitialSync) {
-  syncResult = await syncProject({ projectRoot: targetRoot });
-}
+      await mkdir(path.dirname(entry.target), { recursive: true });
+      if (entry.content !== undefined) {
+        await writeFile(entry.target, entry.content, "utf8");
+      } else {
+        await copyFile(entry.source, entry.target);
+      }
+      if (entry.target.endsWith(".mjs")) {
+        await chmod(entry.target, 0o755).catch(() => {});
+      }
 
-let briefResult = null;
-if (!dryRun && briefSource) {
-  const briefRl = readline.createInterface({ input, output });
-  try {
-    briefResult = await onboardProjectBrief(briefSource, { root: targetRoot, rl: briefRl });
-  } finally {
-    briefRl.close();
-  }
+      const relative = relativeTarget(targetRoot, entry.target);
+      if (action.type === "overwrite") {
+        summary.overwritten.push(relative);
+      } else {
+        summary.installed.push(relative);
+      }
+    }
+
+    if (looksLikeJsProject) {
+      await reconcilePackageScripts(targetRoot, summary.packageScripts, { force, dryRun });
+    }
+
+    if (briefSource) {
+      const briefRl = readline.createInterface({ input, output });
+      try {
+        briefResult = await onboardProjectBrief(briefSource, { root: targetRoot, rl: briefRl });
+      } finally {
+        briefRl.close();
+      }
+    }
+
+    if (runInitialSync) {
+      syncResult = await syncProject({ projectRoot: targetRoot });
+    }
+
+    return { syncResult, briefResult };
+  }, { syncAfter: false, syncBefore: false });
+
+  syncResult = mutationResult.syncResult;
+  briefResult = mutationResult.briefResult;
 }
 
 const lines = [];
@@ -270,8 +313,27 @@ async function buildRuntimePlan(sourceRoot, targetRootPath) {
   const entries = await walkFiles(sourceRoot);
   return entries.map((sourcePath) => ({
     source: sourcePath,
-    target: path.resolve(targetRootPath, path.relative(sourceRoot, sourcePath))
+    target: path.resolve(targetRootPath, path.relative(sourceRoot, sourcePath)),
+    content: isRuntimeWrapper(sourcePath, sourceRoot) ? renderRuntimeWrapper(path.relative(sourceRoot, sourcePath)) : undefined
   }));
+}
+
+function isRuntimeWrapper(sourcePath, sourceRoot) {
+  const relative = path.relative(sourceRoot, sourcePath);
+  return !relative.startsWith("lib/");
+}
+
+function renderRuntimeWrapper(relativeScriptPath) {
+  return `#!/usr/bin/env node
+
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { getToolkitRoot } from "./lib/toolkit-root.mjs";
+
+const scriptPath = path.resolve(getToolkitRoot(), "runtime", "scripts", "ai-workflow", ${JSON.stringify(relativeScriptPath)});
+process.env.AIWF_WRAPPED_RUNTIME = "1";
+await import(pathToFileURL(scriptPath).href);
+`;
 }
 
 async function walkFiles(rootPath) {
@@ -294,8 +356,9 @@ async function walkFiles(rootPath) {
   return files;
 }
 
-async function classifyAction(sourcePath, targetPath, forceOverwrite) {
-  const sourceContent = await readFile(sourcePath, "utf8");
+async function classifyAction(entry, forceOverwrite) {
+  const sourceContent = entry.content ?? await readFile(entry.source, "utf8");
+  const targetPath = entry.target;
 
   if (!(await fileExists(targetPath))) {
     return { type: "install" };

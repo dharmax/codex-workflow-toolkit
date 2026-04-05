@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { writeFile } from "node:fs/promises";
 import { parseArgs, printAndExit, requireArg, splitCsv } from "./lib/cli.mjs";
 import { readText } from "./lib/fs-utils.mjs";
-import { getToolkitRoot } from "./lib/toolkit-root.mjs";
+import { assertDirectCommandChannel } from "../../../core/lib/command-channel.mjs";
+import { withWorkspaceMutation } from "../../../core/lib/workspace-mutation.mjs";
 import {
   archiveOldDoneTickets,
   createTicket,
@@ -14,8 +14,6 @@ import {
   parseKanbanDocument,
   renderKanbanDocument
 } from "./lib/kanban-edit-utils.mjs";
-
-const { syncProject } = await import(pathToFileURL(path.resolve(getToolkitRoot(), "core", "services", "sync.mjs")).href);
 
 const HELP = `Usage:
   node scripts/ai-workflow/kanban.mjs <new|move|next|archive|migrate> [options]
@@ -61,6 +59,7 @@ switch (subcommand) {
 }
 
 async function runNew(argv) {
+  assertDirectCommandChannel("ai-workflow kanban new");
   const args = parseArgs(argv);
   const root = path.resolve(String(args.root ?? process.cwd()));
   const kanbanPath = path.resolve(root, String(args.file ?? "kanban.md"));
@@ -85,8 +84,9 @@ async function runNew(argv) {
   const nextMarkdown = renderKanbanDocument(document);
 
   if (!args["dry-run"]) {
-    await writeFile(kanbanPath, nextMarkdown, "utf8");
-    await syncProject({ projectRoot: root, writeProjections: true });
+    await withWorkspaceMutation(root, "kanban new", async () => {
+      await writeFile(kanbanPath, nextMarkdown, "utf8");
+    });
   }
 
   if (args.json) {
@@ -98,6 +98,7 @@ async function runNew(argv) {
 }
 
 async function runMove(argv) {
+  assertDirectCommandChannel("ai-workflow kanban move");
   const args = parseArgs(argv);
   const root = path.resolve(String(args.root ?? process.cwd()));
   const kanbanPath = path.resolve(root, String(args.file ?? "kanban.md"));
@@ -116,8 +117,9 @@ async function runMove(argv) {
   const nextMarkdown = renderKanbanDocument(document);
 
   if (!args["dry-run"]) {
-    await writeFile(kanbanPath, nextMarkdown, "utf8");
-    await syncProject({ projectRoot: root, writeProjections: true });
+    await withWorkspaceMutation(root, "kanban move", async () => {
+      await writeFile(kanbanPath, nextMarkdown, "utf8");
+    });
   }
 
   if (args.json) {
@@ -157,6 +159,7 @@ async function runNext(argv) {
 }
 
 async function runArchive(argv) {
+  assertDirectCommandChannel("ai-workflow kanban archive");
   const args = parseArgs(argv);
   const root = path.resolve(String(args.root ?? process.cwd()));
   const kanbanPath = path.resolve(root, String(args.file ?? "kanban.md"));
@@ -174,9 +177,10 @@ async function runArchive(argv) {
   });
 
   if (!args["dry-run"]) {
-    await writeFile(kanbanPath, result.kanbanMarkdown, "utf8");
-    await writeFile(archivePath, result.archiveMarkdown, "utf8");
-    await syncProject({ projectRoot: root, writeProjections: true });
+    await withWorkspaceMutation(root, "kanban archive", async () => {
+      await writeFile(kanbanPath, result.kanbanMarkdown, "utf8");
+      await writeFile(archivePath, result.archiveMarkdown, "utf8");
+    });
   }
 
   if (args.json) {
@@ -197,6 +201,7 @@ async function runArchive(argv) {
 }
 
 async function runMigrate(argv) {
+  assertDirectCommandChannel("ai-workflow kanban migrate");
   const args = parseArgs(argv);
   const root = path.resolve(String(args.root ?? process.cwd()));
   const kanbanPath = path.resolve(root, String(args.file ?? "kanban.md"));
@@ -213,7 +218,9 @@ async function runMigrate(argv) {
   const migrated = migrateLegacyKanban(markdown);
 
   if (!args["dry-run"]) {
-    await writeFile(kanbanPath, migrated, "utf8");
+    await withWorkspaceMutation(root, "kanban migrate", async () => {
+      await writeFile(kanbanPath, migrated, "utf8");
+    });
   }
 
   process.stdout.write(`Migrated kanban.md to Obsidian board format: ${kanbanPath}\n`);

@@ -17,6 +17,13 @@ Keep execution disciplined, test-backed, and easy to hand off.
 9. Update kanban and DB together in the same command burst, then guidance docs if durable contracts changed, and archive stale done cards when needed.
 10. If the thread is getting heavy, create a compact handoff artifact before continuing.
 11. If the work adds or changes smart codelets or dev-mode observer behavior, document the candidate codelets and new recurring patterns in the workflow DB as part of the same burst.
+12. The shell must refuse mutating project work unless exactly one ticket is already in `In Progress`; if the board is not ready, stop and move the ticket first. State-changing actions that belong to a dedicated CLI command should be redirected to that command instead of being executed from shell chat.
+13. If the work begins from a messy project description, run the brief-onboarding flow first (`ai-workflow init --brief <file>` or `ai-workflow onboard <file>`), then generate epics from the stabilized brief.
+
+## Workflow-First Context
+
+- Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer.
+- Keep `ai-workflow sync` as the first step before major context extraction so the DB and projections are current before deeper inspection.
 
 ## Ticket Ownership
 
@@ -71,7 +78,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - Default validation cadence:
   - small ticket: quick but meaningful unit or module tests first
   - related batch or one larger ticket: E2E, including visual checks when UI is part of the change
-  - every few batches or when risk accumulates: super-E2E, simulation, or emulator-backed runs when the project supports it
+  - every few batches or when risk accumulates: super-E2E, simulation, or emulator-backed runs when the project supports them
   - special flows: add special tests for the exact mechanism or path that carries unique risk
 - Default validation stack:
   - workflow/docs/kanban changes: `workflow-audit`
@@ -84,6 +91,12 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - If a full rerun isolates one failing artifact, stop the sweep and switch to focused reproduction.
 - End long verification work in one truthful state only: green with proof, bounded checkpoint, or explicit blocker.
 - If workflow docs or project rules changed, run `node scripts/ai-workflow/workflow-audit.mjs`.
+
+## Failure Handling
+
+- If `ai-workflow` fails, stop, identify root cause, and either fix it or report the blocker before continuing.
+- If you discover a bug while working on something else, stop and tell the operator unless they explicitly asked for full-batch triage.
+- Prefer the cheapest capable model route when the tool can use it; if it is unavailable, say so instead of silently widening the fallback.
 
 ## Session Hygiene
 

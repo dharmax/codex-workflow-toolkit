@@ -14,6 +14,12 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Keep hot-path guidance lean. Archive history elsewhere instead of turning active guidance files into context sinks.
 - Keep the core kanban lanes fixed and only show rare lanes when populated. `Archived` is not a live lane; it belongs in `kanban-archive.md`.
 - Smart codelets should be routed through the cheapest suitable provider, not hardcoded to one model family.
+- Shell planning should use the live model-fit matrix plus cached web evidence and explicit refresh controls; `providers.ollama.plannerModel` is a manual override, not the normal default.
+- Mutating shell work must be blocked until the board has exactly one ticket in `In Progress`; the shell should tell the operator to move the ticket first instead of bypassing workflow state. State changes with their own command surface should use that command surface instead of shell execution.
+- Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer.
+- If `ai-workflow` fails, stop, identify root cause, and either fix it or report the blocker before continuing.
+- If you discover a bug while working on something else, stop and tell the operator unless they explicitly asked for full-batch triage.
+- Prefer the cheapest capable model route when the tool can use it; if it is unavailable, say so instead of silently widening the fallback.
 
 ## Architecture
 

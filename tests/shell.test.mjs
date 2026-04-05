@@ -5,6 +5,20 @@ import path from "node:path";
 import { chooseShellPlannerModel, compileShellAction, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, buildShellPlannerPrompt, planShellRequestWithAgent, resolveShellPlanners, runShellTurn } from "../cli/lib/shell.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
 
+const defaultShellTestFetch = async (url) => {
+  if (String(url).includes("duckduckgo")) {
+    return {
+      ok: true,
+      async text() {
+        return "<html><body></body></html>";
+      }
+    };
+  }
+  throw new Error(`Unexpected fetch URL in shell test: ${url}`);
+};
+
+globalThis.fetch = defaultShellTestFetch;
+
 test("buildShellContext reads foundational project files", async (t) => {
   const root = path.resolve("/tmp/ai-workflow-test-" + Math.random().toString(36).slice(2));
   await fs.mkdir(root, { recursive: true });
@@ -70,6 +84,94 @@ test("resolveShellPlanners prefers local shell planning when remote access is en
     } else {
       process.env.GOOGLE_API_KEY = originalGoogleKey;
     }
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveShellPlanners keeps local Ollama first even when a remote provider is configured", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-route-local-first-" + Math.random().toString(36).slice(2));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "qwen2.5-coder:7b", size: 7 * 1024 ** 3 }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  await fs.mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".ai-workflow", "config.json"),
+    JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://127.0.0.1:11434"
+        },
+        openai: {
+          apiKey: "openai-key"
+        }
+      }
+    }, null, 2)
+  );
+
+  try {
+    const planners = await resolveShellPlanners(root);
+    assert.equal(planners.planners[0]?.providerId, "ollama");
+    assert.equal(planners.planners[0]?.modelId, "qwen2.5-coder:7b");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveShellPlanners uses the live model-fit matrix to prefer gemma4 for shell planning", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-gemma4-" + Math.random().toString(36).slice(2));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "qwen2.5-coder:7b", size: 7 * 1024 ** 3 },
+              { name: "gemma4:9b", size: 9 * 1024 ** 3 }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  await fs.mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".ai-workflow", "config.json"),
+    JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://127.0.0.1:11434",
+          hardwareClass: "medium",
+          maxModelSizeB: 14
+        }
+      }
+    }, null, 2)
+  );
+
+  try {
+    const planners = await resolveShellPlanners(root);
+    assert.equal(planners.planners[0]?.providerId, "ollama");
+    assert.equal(planners.planners[0]?.modelId, "gemma4:9b");
+  } finally {
+    globalThis.fetch = originalFetch;
     await fs.rm(root, { recursive: true, force: true });
   }
 });
@@ -734,6 +836,80 @@ test("runShellTurn narrates non-mutating tool results through the assistant laye
   }
 });
 
+test("runShellTurn blocks mutating shell plans until exactly one ticket is in progress", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-guard-" + Math.random().toString(36).slice(2));
+  await fs.mkdir(root, { recursive: true });
+
+  try {
+    const result = await runShellTurn("fix bug-overlay-01", {
+      root,
+      json: false,
+      yes: true,
+      noAi: true,
+      planOnly: false,
+      plannerContext: {
+        ...plannerContext,
+        summary: {
+          ...plannerContext.summary,
+          activeTickets: [
+            { id: "BUG-OVERLAY-01", title: "Restore global overlay handling", lane: "Todo" }
+          ]
+        }
+      },
+      planners: {
+        planners: [],
+        heuristic: { mode: "heuristic", reason: "fallback" }
+      },
+      history: []
+    });
+
+    assert.equal(result.plan.kind, "reply");
+    assert.match(result.plan.reply, /In Progress/);
+    assert.match(result.plan.reply, /BUG-OVERLAY-01/);
+    assert.equal(result.executed.length, 0);
+    assert.equal(result.executedGraph.nodes.length, 0);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runShellTurn redirects direct state-changing shell actions to their dedicated commands", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-direct-guard-" + Math.random().toString(36).slice(2));
+  await fs.mkdir(root, { recursive: true });
+
+  try {
+    const result = await runShellTurn("sync", {
+      root,
+      json: false,
+      yes: true,
+      noAi: true,
+      planOnly: false,
+      plannerContext: {
+        ...plannerContext,
+        summary: {
+          ...plannerContext.summary,
+          activeTickets: [
+            { id: "BUG-OVERLAY-01", title: "Restore global overlay handling", lane: "In Progress" }
+          ]
+        }
+      },
+      planners: {
+        planners: [],
+        heuristic: { mode: "heuristic", reason: "fallback" }
+      },
+      history: []
+    });
+
+    assert.equal(result.plan.kind, "reply");
+    assert.match(result.plan.reply, /direct command channel/i);
+    assert.match(result.plan.reply, /ai-workflow sync/);
+    assert.equal(result.executed.length, 0);
+    assert.equal(result.executedGraph.nodes.length, 0);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("runShellTurn executes branch/assert/replan nodes and exposes continuation state", async () => {
   const root = path.resolve("/tmp/ai-workflow-shell-graph-" + Math.random().toString(36).slice(2));
   await fs.mkdir(root, { recursive: true });
@@ -970,16 +1146,18 @@ test("chooseShellPlannerModel defaults to a smaller model when hardware is unkno
   assert.equal(selected.needsHardwareHint, true);
 });
 
-test("chooseShellPlannerModel respects pinned planner models and hardware classes", () => {
-  const pinned = chooseShellPlannerModel({
+test("chooseShellPlannerModel ignores planner overrides when the matrix prefers a different model", () => {
+  const selected = chooseShellPlannerModel({
     plannerModel: "qwen2.5:14b",
     models: [
-      { id: "qwen2.5:32b", quality: "high", sizeB: 32 },
-      { id: "qwen2.5:14b", quality: "medium", sizeB: 14 }
+      { id: "qwen2.5:32b", quality: "high", sizeB: 32, fitScore: 10 },
+      { id: "qwen2.5:14b", quality: "medium", sizeB: 14, fitScore: 12 },
+      { id: "gemma4:9b", quality: "medium", sizeB: 9, fitScore: 94 }
     ]
   });
-  assert.equal(pinned.id, "qwen2.5:14b");
-  assert.equal(pinned.needsHardwareHint, false);
+  assert.equal(selected.id, "gemma4:9b");
+  assert.equal(selected.needsHardwareHint, true);
+  assert.match(selected.reason, /matrix fit 94/);
 
   const sized = chooseShellPlannerModel({
     hardwareClass: "medium",

@@ -4,6 +4,8 @@ import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { getGlobalConfigPath, getProjectConfigPath, readConfig, writeConfigValue } from "./config-store.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
+import { assertDirectCommandChannel } from "../../core/lib/command-channel.mjs";
+import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 
 const HARDWARE_CLASS_TO_SIZE = {
   tiny: 4,
@@ -18,6 +20,19 @@ export async function handleSetOllamaHw(rest, { root = process.cwd() } = {}) {
   const args = parseArgs(rest);
   if (args.help) {
     printAndExit(SET_OLLAMA_HW_HELP.trim());
+  }
+
+  const readOnlyProbe = Boolean(args["print-probe-cmd"])
+    && !args.probe
+    && !args.gpu
+    && args.cpu == null
+    && args["vram-gb"] == null
+    && args["ram-gb"] == null
+    && !args["hardware-class"]
+    && !args["planner-model"]
+    && args["max-model-size-b"] == null;
+  if (!readOnlyProbe) {
+    assertDirectCommandChannel("ai-workflow set-ollama-hw");
   }
 
   const result = await configureOllamaHardware({
@@ -120,7 +135,7 @@ export async function configureOllamaHardware({
   const finalHardwareClass = resolvedHardwareClass ?? inferred?.hardwareClass ?? null;
   const finalMaxModelSizeB = resolvedMaxModelSizeB ?? inferred?.maxModelSizeB ?? (finalHardwareClass ? HARDWARE_CLASS_TO_SIZE[finalHardwareClass] : null);
 
-  await writeOllamaHardwareConfig({
+  await withWorkspaceMutation(root, "set-ollama-hw", async () => writeOllamaHardwareConfig({
     configPath,
     existing,
     configWarning,
@@ -128,7 +143,7 @@ export async function configureOllamaHardware({
     hardwareClass: finalHardwareClass,
     maxModelSizeB: finalMaxModelSizeB,
     plannerModel: resolvedPlannerModel
-  });
+  }));
 
   return {
     configPath,

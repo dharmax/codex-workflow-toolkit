@@ -17,17 +17,32 @@ export async function probeLeanCtx() {
       };
     }
 
+    const version = await probeLeanCtxVersion();
     return {
       installed: true,
       path: commandPath,
-      details: `lean-ctx available at ${commandPath}`
+      version,
+      details: `lean-ctx available at ${commandPath}${version ? ` (${version})` : ""}`
     };
   } catch (error) {
     return {
       installed: false,
       path: null,
+      version: null,
       details: error?.message ?? String(error)
     };
+  }
+}
+
+export async function probeLeanCtxVersion() {
+  try {
+    const { stdout } = await execFileAsync("lean-ctx", ["--version"], {
+      maxBuffer: 1024 * 1024
+    });
+    const version = normalizeVersion(String(stdout ?? ""));
+    return version;
+  } catch {
+    return null;
   }
 }
 
@@ -37,4 +52,9 @@ export function leanCtxInstallHint() {
 
 export function leanCtxSetupHint() {
   return "After install, verify with `lean-ctx -c git status` and use `lean-ctx -c <command>` for compressed shell output.";
+}
+
+function normalizeVersion(text) {
+  const match = String(text ?? "").match(/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
+  return match ? match[1] : String(text ?? "").trim() || null;
 }

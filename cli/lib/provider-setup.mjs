@@ -3,6 +3,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe, writeConfigValue } from "./config-store.mjs";
 import { discoverProviderState, refreshProviderRegistry } from "../../core/services/providers.mjs";
 import { handleProviderConnect } from "./provider-connect.mjs";
+import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 
 const REMOTE_PROVIDER_IDS = ["openai", "anthropic", "google"];
 
@@ -25,7 +26,7 @@ export async function runProviderSetupWizard({
   const registeredEndpoints = [];
 
   try {
-    let providerState = await discoverProviderStateImpl({ root });
+    let providerState = await discoverProviderStateImpl({ root, forceRefresh: true });
 
     if (providerState.providers.ollama?.installed) {
       const ollama = providerState.providers.ollama;
@@ -42,7 +43,7 @@ export async function runProviderSetupWizard({
         const storedEndpoints = normalizeHostList(storedOllama.endpoints ?? []);
 
         if (!storedOllama.host) {
-          await writeConfigValue(configPath, "providers.ollama.host", ollama.host);
+          await withWorkspaceMutation(root, "provider setup ollama host", async () => writeConfigValue(configPath, "providers.ollama.host", ollama.host));
         }
 
         const answer = await rl.question(
@@ -55,7 +56,7 @@ export async function runProviderSetupWizard({
 
         if (nextEndpoints.length) {
           const mergedEndpoints = normalizeHostList([...storedEndpoints, ...nextEndpoints]);
-          await writeConfigValue(configPath, "providers.ollama.endpoints", JSON.stringify(mergedEndpoints));
+          await withWorkspaceMutation(root, "provider setup ollama endpoints", async () => writeConfigValue(configPath, "providers.ollama.endpoints", JSON.stringify(mergedEndpoints)));
           registeredEndpoints.push(...nextEndpoints);
           messages.push(`Registered ${nextEndpoints.length} additional Ollama endpoint${nextEndpoints.length === 1 ? "" : "s"}.`);
         }
@@ -85,8 +86,8 @@ export async function runProviderSetupWizard({
       }
     }
 
-    providerState = await discoverProviderStateImpl({ root });
-    const refreshResult = await refreshProviderRegistryImpl({ root, scope });
+    providerState = await discoverProviderStateImpl({ root, forceRefresh: true });
+    const refreshResult = await refreshProviderRegistryImpl({ root, scope, forceRefresh: true });
 
     return {
       configPath,

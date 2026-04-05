@@ -2,21 +2,24 @@ import path from "node:path";
 import { writeFile } from "node:fs/promises";
 import { ensureDir } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 import { getProjectConfigPath, readConfig } from "./config-store.mjs";
+import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 
 export async function installAgents({ toolkitRoot, projectRoot = process.cwd() }) {
-  const results = [];
+  return withWorkspaceMutation(projectRoot, "install agents", async () => {
+    const results = [];
 
-  await ensureDir(path.resolve(projectRoot, ".ai-workflow"));
-  await ensureDir(path.resolve(projectRoot, ".ai-workflow", "codelets"));
-  await ensureDir(path.resolve(projectRoot, ".ai-workflow", "cache"));
-  await ensureDir(path.resolve(projectRoot, ".ai-workflow", "generated"));
-  await ensureDir(path.resolve(projectRoot, ".ai-workflow", "notes"));
-  await ensureDir(path.resolve(projectRoot, ".ai-workflow", "state"));
+    await ensureDir(path.resolve(projectRoot, ".ai-workflow"));
+    await ensureDir(path.resolve(projectRoot, ".ai-workflow", "codelets"));
+    await ensureDir(path.resolve(projectRoot, ".ai-workflow", "cache"));
+    await ensureDir(path.resolve(projectRoot, ".ai-workflow", "generated"));
+    await ensureDir(path.resolve(projectRoot, ".ai-workflow", "notes"));
+    await ensureDir(path.resolve(projectRoot, ".ai-workflow", "state"));
 
-  results.push({ path: ".ai-workflow", status: "created" });
+    results.push({ path: ".ai-workflow", status: "created" });
 
-  await ensureProjectConfig(projectRoot, toolkitRoot);
-  return results;
+    await ensureProjectConfig(projectRoot, toolkitRoot);
+    return results;
+  });
 }
 
 async function ensureProjectConfig(projectRoot) {

@@ -176,6 +176,62 @@ test("ai-workflow ticket helpers prefer the discovered real kanban source over s
   }
 });
 
+test("ai-workflow config set rejects shell-channel execution", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-shell-channel-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+
+    const result = await runNode(
+      [path.join(repoRoot, "cli", "ai-workflow.mjs"), "config", "set", "workflow.mode", "tool-dev"],
+      {
+        cwd: targetRoot,
+        env: {
+          ...process.env,
+          AIWF_COMMAND_CHANNEL: "shell"
+        }
+      }
+    );
+
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /direct command channel/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("ai-workflow kanban new rejects shell-channel execution", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-kanban-shell-channel-"));
+
+  try {
+    const result = await runNode(
+      [
+        path.join(repoRoot, "runtime", "scripts", "ai-workflow", "kanban.mjs"),
+        "new",
+        "--root",
+        targetRoot,
+        "--id",
+        "TKT-001",
+        "--title",
+        "Channel guard regression",
+        "--to",
+        "Todo"
+      ],
+      {
+        env: {
+          ...process.env,
+          AIWF_COMMAND_CHANNEL: "shell"
+        }
+      }
+    );
+
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /direct command channel/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("ai-workflow project epic and story commands query the DB with heading-based epics", { concurrency: false }, async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-epic-query-"));
 

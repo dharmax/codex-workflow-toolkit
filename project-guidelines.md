@@ -14,6 +14,12 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Keep hot-path guidance lean. Archive history elsewhere instead of turning active guidance files into context sinks.
 - Keep the core kanban lanes fixed and only show rare lanes when populated. `Archived` is not a live lane; it belongs in `kanban-archive.md`.
 - Smart codelets should be routed through the cheapest suitable provider, not hardcoded to one model family.
+- Shell planning should use the live model-fit matrix plus cached web evidence and explicit refresh controls; `providers.ollama.plannerModel` is a manual override, not the normal default.
+- Mutating shell work must be blocked until the board has exactly one ticket in `In Progress`; the shell should tell the operator to move the ticket first instead of bypassing workflow state. State changes with their own command surface should use that command surface instead of shell execution.
+- Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer.
+- If `ai-workflow` fails, stop, identify root cause, and either fix it or report the blocker before continuing.
+- If you discover a bug while working on something else, stop and tell the operator unless they explicitly asked for full-batch triage.
+- Prefer the cheapest capable model route when the tool can use it; if it is unavailable, say so instead of silently widening the fallback.
 
 ## Architecture
 
@@ -89,7 +95,7 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
   - workflow/guidance/kanban contract changes should prove themselves through `workflow-audit`
   - small tickets should default to quick but meaningful unit or module tests
   - related batches or larger tickets should add E2E, including visual proof when UI behavior changed
-  - every few batches should run super-E2E, simulation, or emulator-backed flows when the project supports it
+  - every few batches should run super-E2E, simulation, or emulator-backed flows when the project supports them
   - special mechanisms and rare flows should get special-purpose tests instead of being left to generic coverage
   - domain changes should prefer focused deterministic tests before broader runs
   - E2E should cover system paths and regressions, not replace module-level proof
@@ -121,3 +127,15 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 
 Add machine-readable rule blocks in fenced `ai-workflow-audit` JSON blocks when a project-specific rule becomes important enough to enforce automatically.
 Keep the rules narrow, file-scoped, and explainable.
+
+Schema example:
+
+```json
+{
+  "headers": [],
+  "forbiddenPatterns": [],
+  "requiredPatterns": [],
+  "forbiddenImports": [],
+  "allowlists": []
+}
+```

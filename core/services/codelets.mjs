@@ -3,6 +3,7 @@ import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { ensureDir } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 import { getToolkitRoot } from "../lib/operating-context.mjs";
 import { stableId } from "../lib/hash.mjs";
+import { withWorkspaceMutation } from "../lib/workspace-mutation.mjs";
 
 export { getToolkitRoot } from "../lib/operating-context.mjs";
 
@@ -45,49 +46,55 @@ export async function getProjectCodelet(root, name) {
 }
 
 export async function upsertProjectCodelet(root, name, filePath, mode) {
-  const codeletsDir = getProjectCodeletsDir(root);
-  const manifestPath = path.resolve(codeletsDir, `${name}.json`);
-  const relativeEntry = path.relative(root, path.resolve(root, filePath)).split(path.sep).join("/");
-  const existing = await getProjectCodelet(root, name);
+  return withWorkspaceMutation(root, `project codelet ${mode} ${name}`, async () => {
+    const codeletsDir = getProjectCodeletsDir(root);
+    const manifestPath = path.resolve(codeletsDir, `${name}.json`);
+    const relativeEntry = path.relative(root, path.resolve(root, filePath)).split(path.sep).join("/");
+    const existing = await getProjectCodelet(root, name);
 
-  const manifest = {
-    id: name,
-    summary: existing?.summary ?? `${mode === "add" ? "Staged" : "Updated"} project codelet.`,
-    runner: "node-script",
-    entry: relativeEntry,
-    stability: "staged",
-    status: "staged"
-  };
+    const manifest = {
+      id: name,
+      summary: existing?.summary ?? `${mode === "add" ? "Staged" : "Updated"} project codelet.`,
+      runner: "node-script",
+      entry: relativeEntry,
+      stability: "staged",
+      status: "staged"
+    };
 
-  await ensureDir(codeletsDir);
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-  return { ...manifest, manifestPath, sourceKind: "project" };
+    await ensureDir(codeletsDir);
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    return { ...manifest, manifestPath, sourceKind: "project" };
+  });
 }
 
 export async function removeProjectCodelet(root, name) {
-  const manifestPath = path.resolve(getProjectCodeletsDir(root), `${name}.json`);
-  await rm(manifestPath, { force: true });
+  return withWorkspaceMutation(root, `project codelet remove ${name}`, async () => {
+    const manifestPath = path.resolve(getProjectCodeletsDir(root), `${name}.json`);
+    await rm(manifestPath, { force: true });
+  });
 }
 
 export async function forgeProjectCodelet(root, name) {
-  const stagedDir = path.resolve(root, ".ai-workflow", "staged-codelets");
-  const entryPath = path.resolve(stagedDir, `${name}.mjs`);
-  const manifest = await upsertProjectCodelet(root, name, entryPath, "add");
-  const source = [
-    "/* Responsibility: Project-local staged codelet for bounded low-risk helper work.",
-    "Scope: Keep this deterministic and review it before treating it as a stable built-in. */",
-    "import process from \"node:process\";",
-    "",
-    "const args = process.argv.slice(2);",
-    `process.stdout.write(JSON.stringify({ codelet: ${JSON.stringify(name)}, args }, null, 2) + \"\\n\");`
-  ].join("\n");
+  return withWorkspaceMutation(root, `forge project codelet ${name}`, async () => {
+    const stagedDir = path.resolve(root, ".ai-workflow", "staged-codelets");
+    const entryPath = path.resolve(stagedDir, `${name}.mjs`);
+    const manifest = await upsertProjectCodelet(root, name, entryPath, "add");
+    const source = [
+      "/* Responsibility: Project-local staged codelet for bounded low-risk helper work.",
+      "Scope: Keep this deterministic and review it before treating it as a stable built-in. */",
+      "import process from \"node:process\";",
+      "",
+      "const args = process.argv.slice(2);",
+      `process.stdout.write(JSON.stringify({ codelet: ${JSON.stringify(name)}, args }, null, 2) + \"\\n\");`
+    ].join("\n");
 
-  await ensureDir(stagedDir);
-  await writeFile(entryPath, `${source}\n`, "utf8");
-  return {
-    ...manifest,
-    entryPath
-  };
+    await ensureDir(stagedDir);
+    await writeFile(entryPath, `${source}\n`, "utf8");
+    return {
+      ...manifest,
+      entryPath
+    };
+  });
 }
 
 export async function refreshCodeletRegistry(store, { projectRoot = store.projectRoot, toolkitRoot = getToolkitRoot() } = {}) {

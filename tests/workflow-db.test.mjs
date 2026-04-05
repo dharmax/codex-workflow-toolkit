@@ -8,6 +8,8 @@ import { addManualNote, evaluateProjectReadiness, getEpic, getProjectSummary, li
 import { buildTicketEntity, renderEpicsProjection, renderKanbanProjection } from "../core/services/projections.mjs";
 import { openWorkflowStore } from "../core/db/sqlite-store.mjs";
 import { PROTOCOL_VERSION, validateEvaluateReadinessResponse } from "../core/contracts/dual-surface-protocol.mjs";
+import { withWorkspaceMutation } from "../core/lib/workspace-mutation.mjs";
+import { writeProjectFile } from "../core/lib/filesystem.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureRoot = path.join(repoRoot, "tests", "fixtures", "workflow-repo");
@@ -33,6 +35,47 @@ test("syncProject indexes a realistic fixture repo and imports legacy projection
   }
 });
 
+test("syncProject skips indexing when the project snapshot is unchanged", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-skip-"));
+
+  try {
+    await cp(fixtureRoot, targetRoot, { recursive: true });
+    const first = await syncProject({ projectRoot: targetRoot, writeProjections: true });
+    const second = await syncProject({ projectRoot: targetRoot, writeProjections: true });
+
+    assert.equal(first.skipped, undefined);
+    assert.equal(second.skipped, true);
+    assert.equal(second.indexedFiles, 0);
+    assert.equal(second.reason, "project state unchanged");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("withWorkspaceMutation picks up manual edits before a later project write", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-mutation-"));
+
+  try {
+    await withWorkspaceMutation(targetRoot, "seed project files", async () => {
+      await writeProjectFile(targetRoot, "README.md", "# Seed\n");
+      await writeProjectFile(targetRoot, "notes.md", "initial note\n");
+    });
+
+    await writeFile(path.join(targetRoot, "README.md"), "# Manual edit\n", "utf8");
+
+    await withWorkspaceMutation(targetRoot, "follow-up project write", async () => {
+      await writeProjectFile(targetRoot, "more-notes.md", "follow up\n");
+    });
+
+    const result = await syncProject({ projectRoot: targetRoot, writeProjections: false });
+    assert.equal(result.skipped, true);
+    assert.equal(await readFile(path.join(targetRoot, "README.md"), "utf8"), "# Manual edit\n");
+    assert.equal(await readFile(path.join(targetRoot, "more-notes.md"), "utf8"), "follow up\n");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("syncProject mirrors codelets into the DB registry", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-codelets-"));
 
@@ -47,11 +90,14 @@ test("syncProject mirrors codelets into the DB registry", async () => {
       const codelets = store.listEntities({ entityType: "codelet" });
       const doctor = codelets.find((item) => item.data?.codeletId === "doctor");
       const executeTicket = codelets.find((item) => item.data?.codeletId === "execute-ticket");
+      const artifactJudge = codelets.find((item) => item.data?.codeletId === "artifact-judge");
 
       assert.equal(Boolean(doctor), true);
       assert.equal(doctor?.data?.backing?.status, "builtin");
       assert.equal(Boolean(executeTicket), true);
       assert.equal(executeTicket?.data?.backing?.exists, true);
+      assert.equal(Boolean(artifactJudge), true);
+      assert.equal(artifactJudge?.data?.backing?.exists, true);
     });
   } finally {
     await rm(targetRoot, { recursive: true, force: true });

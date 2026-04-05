@@ -5,6 +5,8 @@ import path from "node:path";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { generateWithAnthropic, generateWithOllama, probeOllama, refreshProviderQuotaState, resolveOllamaConfig } from "../core/services/providers.mjs";
 import { discoverProviderState } from "../core/services/providers.mjs";
+import { buildModelFitMatrix } from "../core/services/model-fit.mjs";
+import { searchWebEvidence } from "../core/services/web-search.mjs";
 import { runProviderSetupWizard } from "../cli/lib/provider-setup.mjs";
 
 test("probeOllama reads models from a configured HTTP host", async () => {
@@ -112,6 +114,91 @@ test("discoverProviderState tolerates malformed project config and reports a war
   }
 });
 
+test("discoverProviderState caches Ollama discovery until explicitly refreshed", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "providers-cache-"));
+  let tagsRequests = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      tagsRequests += 1;
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "gemma4:9b", size: 9 * 1024 ** 3 }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+    await writeFile(path.join(root, ".ai-workflow", "config.json"), JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://127.0.0.1:11434"
+        }
+      }
+    }, null, 2), "utf8");
+
+    const first = await discoverProviderState({ root });
+    const second = await discoverProviderState({ root });
+    const refreshed = await discoverProviderState({ root, forceRefresh: true });
+
+    assert.equal(tagsRequests, 2);
+    assert.equal(first.providers.ollama.models[0].id, "gemma4:9b");
+    assert.equal(second.providers.ollama.models[0].id, "gemma4:9b");
+    assert.equal(refreshed.providers.ollama.models[0].id, "gemma4:9b");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("searchWebEvidence caches DuckDuckGo results until explicitly refreshed", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "web-search-cache-"));
+  let requests = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    requests += 1;
+    assert.match(String(url), /duckduckgo/i);
+    return {
+      ok: true,
+      async text() {
+        return `
+          <html>
+            <body>
+              <a class="result__a" href="//example.com/models/gemma4">Gemma 4 local benchmark</a>
+              <div class="result__snippet">Fast coding and reasoning model for local hardware.</div>
+            </body>
+          </html>
+        `;
+      }
+    };
+  };
+
+  try {
+    const first = await searchWebEvidence({ root, query: "gemma4 benchmark" });
+    const second = await searchWebEvidence({ root, query: "gemma4 benchmark" });
+    const refreshed = await searchWebEvidence({ root, query: "gemma4 benchmark", forceRefresh: true });
+
+    assert.equal(requests, 2);
+    assert.equal(first.results[0].title, "Gemma 4 local benchmark");
+    assert.equal(first.results[0].url, "https://example.com/models/gemma4");
+    assert.match(first.results[0].snippet, /coding and reasoning/);
+    assert.equal(second.results[0].title, "Gemma 4 local benchmark");
+    assert.equal(refreshed.results[0].title, "Gemma 4 local benchmark");
+    assert.equal(first.signals.logic > 0, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("discoverProviderState surfaces configured remote-provider quota metadata", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "providers-quota-"));
   try {
@@ -135,6 +222,85 @@ test("discoverProviderState surfaces configured remote-provider quota metadata",
     assert.equal(state.providers.google.quota.resetAt, "2026-04-01");
     assert.equal(state.providers.google.paidAllowed, false);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("buildModelFitMatrix uses web evidence to improve live routing fit", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "web-fit-matrix-"));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const query = decodeURIComponent(String(url).split("q=")[1] ?? "");
+    if (query.includes("alpha")) {
+      return {
+        ok: true,
+        async text() {
+          return `
+            <html>
+              <body>
+                <a class="result__a" href="//example.com/alpha">Alpha model coding benchmark</a>
+                <div class="result__snippet">Fast coding and software reasoning for local hardware.</div>
+              </body>
+            </html>
+          `;
+        }
+      };
+    }
+    if (query.includes("beta")) {
+      return {
+        ok: true,
+        async text() {
+          return `
+            <html>
+              <body>
+                <a class="result__a" href="//example.com/beta">Beta model overview</a>
+                <div class="result__snippet">General overview with no coding signal.</div>
+              </body>
+            </html>
+          `;
+        }
+      };
+    }
+    throw new Error(`Unexpected search query: ${query}`);
+  };
+
+  try {
+    const providerState = {
+      knowledge: {
+        version: "test",
+        minimumQuality: {},
+        inferenceHeuristics: {}
+      },
+      routingPolicy: {
+        minimumQuality: {}
+      },
+      providers: {
+        ollama: {
+          local: true,
+          available: true,
+          configured: true,
+          hardwareClass: "medium",
+          maxModelSizeB: 14,
+          models: [
+            { id: "alpha:7b", quality: "medium", sizeB: 7, costTier: 1, capabilities: {} },
+            { id: "beta:7b", quality: "medium", sizeB: 7, costTier: 1, capabilities: {} }
+          ]
+        }
+      }
+    };
+
+    const matrix = await buildModelFitMatrix({
+      root,
+      providerState,
+      taskClass: "code-generation",
+      allowRemoteEnrichment: false
+    });
+
+    assert.equal(matrix.evidence?.profiles?.length >= 2, true);
+    assert.equal(matrix.models[0].modelId, "alpha:7b");
+    assert.equal(matrix.models[0].source, "heuristic+web");
+  } finally {
+    globalThis.fetch = originalFetch;
     await rm(root, { recursive: true, force: true });
   }
 });

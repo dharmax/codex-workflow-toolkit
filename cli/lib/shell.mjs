@@ -19,11 +19,13 @@ import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, 
 import { buildDoctorReport, renderDoctorReport } from "./doctor.mjs";
 import { configureOllamaHardware } from "./ollama-hw.mjs";
 import { runProviderSetupWizard } from "./provider-setup.mjs";
+import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 
 const STREAMED_STDIO = "__STREAMED_STDIO__";
 const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
 const CONTINUATION_REQUEST_RE = /^(?:continue|go deeper|branch on that|why did that fail\??|what failed\??|keep going)$/i;
 const TICKET_ID_PATTERN = "[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+";
+const WORKFLOW_GATED_MUTATIONS = new Set(["add_note", "create_ticket", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
 
 const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
 const NOTE_TYPES = ["NOTE", "TODO", "FIXME", "HACK", "BUG", "RISK"];
@@ -182,10 +184,9 @@ export async function resolveShellPlanners(root = process.cwd()) {
   const route = await routeTask({ root, taskClass: "shell-planning" });
   const planners = [];
   const providers = route.providers ?? {};
-  const configuredRemoteAvailable = Object.values(providers).some((provider) => !provider.local && provider.available && provider.configured);
 
   const ollamaProvider = providers.ollama;
-  if (ollamaProvider?.available && !configuredRemoteAvailable) {
+  if (ollamaProvider?.available) {
     try {
       const localShellModel = chooseShellPlannerModel(ollamaProvider);
       planners.push({
@@ -194,7 +195,7 @@ export async function resolveShellPlanners(root = process.cwd()) {
         modelId: localShellModel.id,
         host: ollamaProvider.host,
         needsHardwareHint: Boolean(localShellModel.needsHardwareHint),
-        reason: localShellModel.reason ?? "local shell fallback"
+        reason: localShellModel.reason ?? "local shell planner"
       });
     } catch {
       // keep route-derived planners only
@@ -1597,6 +1598,17 @@ export async function runShellTurn(inputText, options) {
     return result;
   }
 
+  const mutationGate = evaluateShellMutationPolicy(plan, options.plannerContext);
+  if (mutationGate) {
+    return {
+      ...result,
+      plan: replyPlan(mutationGate.reply, 0.15, mutationGate.reason),
+      executed: [],
+      executedGraph: { nodes: [], executions: [], branchPath: [] },
+      preRendered: false
+    };
+  }
+
   if (!options.yes && !options.planOnly && plan.actions.some((action) => isMutatingAction(action))) {
     const approved = await confirmPlan(plan, options);
     if (!approved) {
@@ -1753,11 +1765,11 @@ export async function executeShellAction(action, options) {
       });
     }
     if (action.type === "execute_ticket") {
-      const payload = await executeTicket({
+      const payload = await withWorkspaceMutation(options.root, `shell execute_ticket ${action.ticketId}`, async () => executeTicket({
         root: options.root,
         ticketId: action.ticketId,
         apply: action.apply !== false
-      });
+      }));
       const ok = action.apply === false ? true : Boolean(payload.success);
       const rendered = options.json ? `${JSON.stringify(payload, null, 2)}\n` : renderExecuteTicketResult(action, payload);
       return attachStructuredExecution({
@@ -1916,13 +1928,13 @@ export async function runInteractiveShell(options) {
     const canBootstrapProviders = process.stdin.isTTY && process.stdout.isTTY;
     if (canBootstrapProviders) {
       const interactiveSetup = !options.noAi;
-      const setupResult = await runProviderSetupWizard({
+      const setupResult = await withWorkspaceMutation(options.root, "shell provider setup", async () => runProviderSetupWizard({
         root: options.root,
         scope: "global",
         interactive: interactiveSetup,
         rl,
         promptRemoteProviders: interactiveSetup
-      });
+      }));
 
       if (interactiveSetup) {
         for (const message of setupResult.messages ?? []) {
@@ -1975,11 +1987,11 @@ export async function runInteractiveShell(options) {
         const answer = (await promptShellQuestion(rl, "Configure Ollama hardware now? [Y/n] ") ?? "").trim().toLowerCase();
         if (!answer || answer === "y" || answer === "yes") {
           rl.pause();
-          await configureOllamaHardware({
+          await withWorkspaceMutation(options.root, "shell configure ollama hardware", async () => configureOllamaHardware({
             root: options.root,
             interactive: true,
             rl
-          });
+          }));
           rl.resume();
           options.planners = await resolveShellPlanners(options.root);
           output.write(`\nUpdated planner: ${renderPlannerLine(options.planners.planners[0] ?? options.planners.heuristic)}\n\n`);
@@ -2207,13 +2219,13 @@ async function runShellActionDirect(action, options) {
       await runDoctor({ root: options.root, json: options.json });
       return "";
     case "provider_connect":
-      return await handleProviderConnect(action.providerId, { rl: options.rl }).then(code => code === 0 ? "Connected.\n" : "Connection failed.\n");
+      return await withWorkspaceMutation(options.root, `shell provider_connect ${action.providerId}`, async () => handleProviderConnect(action.providerId, { rl: options.rl }).then(code => code === 0 ? "Connected.\n" : "Connection failed.\n"));
     case "set_ollama_hw": {
-      const result = await configureOllamaHardware({
+      const result = await withWorkspaceMutation(options.root, "shell set_ollama_hw", async () => configureOllamaHardware({
         root: options.root,
         global: Boolean(action.global),
         interactive: true
-      });
+      }));
       return options.json ? `${JSON.stringify(result, null, 2)}\n` : renderConfiguredOllamaHardware(result);
     }
     case "set_provider_key": {
@@ -2229,7 +2241,7 @@ async function runShellActionDirect(action, options) {
         throw new Error("API key is required.");
       }
       const filePath = getGlobalConfigPath();
-      await writeConfigValue(filePath, `providers.${action.providerId}.apiKey`, key);
+      await withWorkspaceMutation(options.root, `shell set_provider_key ${action.providerId}`, async () => writeConfigValue(filePath, `providers.${action.providerId}.apiKey`, key));
       return `Successfully saved API key for ${action.providerId} to global config.\n`;
     }
     case "config": {
@@ -2242,22 +2254,22 @@ async function runShellActionDirect(action, options) {
       }
       if (action.action === "set") {
         if (!action.key || action.value === undefined) throw new Error("Key and value required.");
-        const config = await writeConfigValue(configPath, action.key, action.value);
+        const config = await withWorkspaceMutation(options.root, `shell config set ${action.key}`, async () => writeConfigValue(configPath, action.key, action.value));
         return `${JSON.stringify({ path: configPath, value: getConfigValue(config, action.key) }, null, 2)}\n`;
       }
       if (action.action === "unset") {
         if (!action.key) throw new Error("Key required.");
-        await removeConfigValue(configPath, action.key);
+        await withWorkspaceMutation(options.root, `shell config unset ${action.key}`, async () => removeConfigValue(configPath, action.key));
         return `Removed ${action.key} from ${scope} config.\n`;
       }
       if (action.action === "clear") {
-        await removeConfigFile(configPath);
+        await withWorkspaceMutation(options.root, `shell config clear ${scope}`, async () => removeConfigFile(configPath));
         return `Cleared ${scope} config.\n`;
       }
       throw new Error(`Unsupported config action: ${action.action}`);
     }
     case "add_note": {
-      const note = await addManualNote({
+      const note = await withWorkspaceMutation(options.root, `shell add_note ${action.noteType}`, async () => addManualNote({
         projectRoot: options.root,
         note: {
           noteType: action.noteType,
@@ -2265,18 +2277,20 @@ async function runShellActionDirect(action, options) {
           filePath: action.filePath,
           line: action.line
         }
-      });
+      }));
       return options.json ? `${JSON.stringify(note, null, 2)}\n` : `${note.noteType} ${note.body}\n`;
     }
     case "create_ticket": {
-      const entity = buildTicketEntity({
-        id: action.id,
-        title: action.title,
-        lane: action.lane ?? "Todo",
-        epicId: action.epicId,
-        summary: action.summary ?? ""
+      const ticket = await withWorkspaceMutation(options.root, `shell create_ticket ${action.id}`, async () => {
+        const entity = buildTicketEntity({
+          id: action.id,
+          title: action.title,
+          lane: action.lane ?? "Todo",
+          epicId: action.epicId,
+          summary: action.summary ?? ""
+        });
+        return createTicket({ projectRoot: options.root, entity });
       });
-      const ticket = await createTicket({ projectRoot: options.root, entity });
       return options.json ? `${JSON.stringify(ticket, null, 2)}\n` : `${ticket.id} ${ticket.title} [${ticket.lane}]\n`;
     }
     case "extract_ticket":
@@ -2290,24 +2304,24 @@ async function runShellActionDirect(action, options) {
         : `Decomposition plan for ${action.ticketId}:\n${plan.map((t, i) => `${i + 1}. [${t.class}] ${t.summary}${t.file ? ` (${t.file})` : ""}`).join("\n")}\n`;
     }
     case "execute_ticket": {
-      const payload = await executeTicket({
+      const payload = await withWorkspaceMutation(options.root, `shell execute_ticket ${action.ticketId}`, async () => executeTicket({
         root: options.root,
         ticketId: action.ticketId,
         apply: action.apply !== false
-      });
+      }));
       if (options.json) {
         return `${JSON.stringify(payload, null, 2)}\n`;
       }
       return renderExecuteTicketResult(action, payload);
     }
     case "ideate_feature":
-      return ideateFeature(action.intent, options);
+      return withWorkspaceMutation(options.root, `shell ideate_feature`, async () => ideateFeature(action.intent, options));
     case "sweep_bugs":
-      return sweepBugs(options);
+      return withWorkspaceMutation(options.root, `shell sweep_bugs`, async () => sweepBugs(options));
     case "ingest_artifact": {
       const rl = options.rl ?? readline.createInterface({ input, output });
       try {
-        const result = await ingestArtifact(path.resolve(options.root, action.filePath), { root: options.root, rl });
+        const result = await withWorkspaceMutation(options.root, `shell ingest_artifact ${action.filePath}`, async () => ingestArtifact(path.resolve(options.root, action.filePath), { root: options.root, rl }));
         return options.json ? `${JSON.stringify(result, null, 2)}\n` : `Ingested ${action.filePath}: Generated ${result.epic.id} and ${result.tickets.length} tickets.\n`;
       } finally {
         if (!options.rl) rl.close();
@@ -2345,8 +2359,10 @@ async function runShellActionDirect(action, options) {
         "run().catch(err => { console.error(err); process.exit(1); });"
       ].join("\n");
       const { writeFile, mkdir } = await import("node:fs/promises");
-      await mkdir(stagedDir, { recursive: true });
-      await writeFile(entryPath, source, "utf8");
+      await withWorkspaceMutation(options.root, "shell run_dynamic_codelet", async () => {
+        await mkdir(stagedDir, { recursive: true });
+        await writeFile(entryPath, source, "utf8");
+      });
       return runCodeletById("dynamic", [], { ...options, _dynamicEntry: entryPath });
     }
     case "run_review":
@@ -3163,6 +3179,120 @@ function isMutatingAction(action) {
   return MUTATING_ACTIONS.has(action.type);
 }
 
+function evaluateShellMutationPolicy(plan, plannerContext) {
+  const actions = Array.isArray(plan?.actions) ? plan.actions : [];
+  const mutationActions = actions.filter((action) => isMutatingAction(action));
+  if (!mutationActions.length) {
+    return null;
+  }
+
+  const directActions = mutationActions.filter((action) => !WORKFLOW_GATED_MUTATIONS.has(action.type));
+  if (directActions.length) {
+    return {
+      reason: "shell mutating actions must use their direct command channel",
+      reply: renderDirectMutationChannelReply(directActions, plannerContext)
+    };
+  }
+
+  const summary = plannerContext?.summary ?? {};
+  const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
+  const inProgressTickets = activeTickets.filter((ticket) => /in progress/i.test(String(ticket.lane ?? "")));
+  const gatedTicketIds = mutationActions
+    .filter((action) => action?.type === "execute_ticket" && action.apply !== false)
+    .map((action) => String(action.ticketId ?? "").trim().toUpperCase())
+    .filter(Boolean);
+
+  if (inProgressTickets.length !== 1) {
+    return {
+      reason: inProgressTickets.length > 1
+        ? "workflow gate blocked: multiple tickets are in progress"
+        : "workflow gate blocked: no ticket is in progress",
+      reply: renderWorkflowMutationGateReply({
+        activeTickets,
+        inProgressTickets,
+        blockedTicketIds: gatedTicketIds,
+        plannerContext
+      })
+    };
+  }
+
+  const inProgressId = String(inProgressTickets[0].id ?? "").trim().toUpperCase();
+  if (gatedTicketIds.length && gatedTicketIds.some((id) => id !== inProgressId)) {
+    return {
+      reason: "workflow gate blocked: plan targets a ticket that is not in progress",
+      reply: renderWorkflowMutationGateReply({
+        activeTickets,
+        inProgressTickets,
+        blockedTicketIds: gatedTicketIds,
+        plannerContext
+      })
+    };
+  }
+
+  return null;
+}
+
+function renderDirectMutationChannelReply(actions, plannerContext) {
+  const lines = [
+    "I will not execute state-changing actions from the conversational shell.",
+    "Use the dedicated direct command channel for those changes."
+  ];
+
+  const commands = actions
+    .map((action) => {
+      try {
+        return compileShellAction(action, { json: false }).display;
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  if (commands.length) {
+    lines.push("Direct commands for this plan:");
+    for (const command of commands.slice(0, 8)) {
+      lines.push(`- \`${command}\``);
+    }
+  }
+
+  const projectName = path.basename(plannerContext?.root ?? process.cwd());
+  lines.push(`Current project: ${projectName}.`);
+  return lines.join("\n");
+}
+
+function renderWorkflowMutationGateReply({ activeTickets, inProgressTickets, blockedTicketIds, plannerContext }) {
+  const lines = [
+    "I will not run mutating shell actions until the workflow has exactly one ticket in `In Progress`.",
+    "Move the current work item first, then retry."
+  ];
+
+  if (!activeTickets.length) {
+    lines.push("I do not see any active tickets yet. Run `ai-workflow sync` and create or select a ticket first.");
+  } else {
+    lines.push("Current active tickets:");
+    for (const ticket of activeTickets.slice(0, 8)) {
+      lines.push(`- [${ticket.lane}] ${ticket.id}: ${ticket.title}`);
+    }
+  }
+
+  if (inProgressTickets.length > 1) {
+    lines.push(`I found multiple in-progress tickets: ${inProgressTickets.map((ticket) => ticket.id).join(", ")}.`);
+    lines.push("Keep exactly one live ticket in `In Progress` before mutating the project.");
+  } else if (inProgressTickets.length === 1) {
+    lines.push(`Active in-progress ticket: ${inProgressTickets[0].id}.`);
+  } else if (activeTickets.length) {
+    lines.push(`Move one ticket to ` + "`In Progress`" + ` with \`ai-workflow kanban move --id <ticket> --to In Progress\`.`);
+  }
+
+  if (blockedTicketIds.length) {
+    lines.push(`The blocked plan targets: ${blockedTicketIds.join(", ")}.`);
+  }
+
+  const projectName = path.basename(plannerContext?.root ?? process.cwd());
+  lines.push(`Current project: ${projectName}.`);
+  return lines.join("\n");
+}
+
 function extractReadinessGoal(text) {
   const source = String(text ?? "").trim();
   if (!source) {
@@ -3810,17 +3940,6 @@ export function chooseShellPlannerModel(ollamaProvider) {
     throw new Error("No Ollama models available for shell planning.");
   }
 
-  const pinned = ollamaProvider.plannerModel
-    ? models.find((model) => model.id === ollamaProvider.plannerModel)
-    : null;
-  if (pinned) {
-    return {
-      ...pinned,
-      needsHardwareHint: false,
-      reason: `Pinned shell planner model from config.`
-    };
-  }
-
   const qualityCap = ollamaProvider.plannerMaxQuality ?? defaultPlannerQualityCap(ollamaProvider.hardwareClass);
   const sizeCap = ollamaProvider.maxModelSizeB ?? defaultPlannerSizeCap(ollamaProvider.hardwareClass);
   const sizeFiltered = models.filter((model) => model.sizeB == null || sizeCap == null || model.sizeB <= sizeCap);
@@ -3832,6 +3951,9 @@ export function chooseShellPlannerModel(ollamaProvider) {
       : models;
 
   pool.sort((left, right) =>
+    (right.fitScore ?? -1) - (left.fitScore ?? -1)
+    || (right.fitReasons?.length ?? 0) - (left.fitReasons?.length ?? 0)
+    ||
     qualityRank(left.quality) - qualityRank(right.quality)
     || (left.sizeB ?? Number.POSITIVE_INFINITY) - (right.sizeB ?? Number.POSITIVE_INFINITY)
     || left.id.localeCompare(right.id)
@@ -3850,6 +3972,9 @@ export function chooseShellPlannerModel(ollamaProvider) {
   }
   if (qualityCap) {
     reasonParts.push(`planner quality cap ${qualityCap}`);
+  }
+  if (typeof selected.fitScore === "number") {
+    reasonParts.push(`matrix fit ${selected.fitScore}`);
   }
   return {
     ...selected,
@@ -3888,13 +4013,15 @@ function defaultPlannerQualityCap(hardwareClass) {
 }
 
 function qualityRank(value) {
-  switch (value) {
+  switch (String(value ?? "").toLowerCase()) {
     case "high":
       return 3;
     case "medium":
       return 2;
-    default:
+    case "low":
       return 1;
+    default:
+      return 0;
   }
 }
 

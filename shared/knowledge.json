@@ -4,7 +4,7 @@
     "summarization", "extraction", "classification", "clustering", "ranking", 
     "note-normalization", "candidate-review", "naming", "architectural-reasoning", 
     "risky-planning", "code-generation", "review", "shell-planning", 
-    "task-decomposition", "architectural-design", "ui-styling", "ui-layout", 
+    "task-decomposition", "architectural-design", "ui-styling", "ui-layout", "artifact-evaluation",
     "templating", "pure-function", "refactoring", "bug-hunting", "prose-composition", 
     "ideation", "stylistic-polishing", "creative-thinking", "graphic-scaffolding", "design-tokens"
   ],
@@ -15,7 +15,7 @@
     "creative-thinking": "creative", "ui-layout": "visual", "ui-styling": "visual", 
     "graphic-scaffolding": "visual", "design-tokens": "visual", "task-decomposition": "strategy", 
     "note-normalization": "data", "extraction": "data", "shell-planning": "strategy", 
-    "summarization": "data"
+    "summarization": "data", "artifact-evaluation": "visual"
   },
   "minimumQuality": {
     "pure-function": "low", "refactoring": "medium", "debugging": "medium", 
@@ -23,7 +23,7 @@
     "ideation": "medium", "stylistic-polishing": "low", "creative-thinking": "high", 
     "ui-layout": "low", "ui-styling": "low", "graphic-scaffolding": "medium", 
     "design-tokens": "low", "task-decomposition": "low", "note-normalization": "low", 
-    "extraction": "medium", "shell-planning": "low"
+    "extraction": "medium", "shell-planning": "low", "artifact-evaluation": "medium"
   },
   "inferenceHeuristics": {
     "logic": { "keywords": ["coder", "code", "stheno", "math"], "bonus": 2, "base": 2 },

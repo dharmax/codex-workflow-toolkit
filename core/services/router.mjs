@@ -1,4 +1,5 @@
 import { discoverProviderState } from "./providers.mjs";
+import { applyModelFitMatrix, buildModelFitMatrix } from "./model-fit.mjs";
 
 const QUALITY_ORDER = {
   low: 1,
@@ -12,17 +13,19 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
   }
 
   const providerState = await discoverProviderState({ root });
-  const knowledge = providerState.knowledge;
+  const modelFitMatrix = await buildModelFitMatrix({ root, providerState, taskClass });
+  const routedState = applyModelFitMatrix(providerState, modelFitMatrix);
+  const knowledge = routedState.knowledge;
   const capability = knowledge.capabilityMapping[taskClass] ?? domain ?? "logic";
   const minimumQuality = knowledge.minimumQuality[taskClass] ?? "medium";
-  const preferLocalForTask = preferLocal ?? providerState.routingPolicy.preferLocalFor?.includes(taskClass) ?? providerState.routingPolicy.preferLocalFor?.includes(capability) ?? false;
-  const quotaStrategy = providerState.routingPolicy.quotaStrategy ?? "prefer-free-remote";
+  const preferLocalForTask = preferLocal ?? routedState.routingPolicy.preferLocalFor?.includes(taskClass) ?? routedState.routingPolicy.preferLocalFor?.includes(capability) ?? false;
+  const quotaStrategy = routedState.routingPolicy.quotaStrategy ?? "prefer-free-remote";
   const candidates = [];
-  const remoteFreeQuotaAvailable = Object.values(providerState.providers).some((provider) =>
+  const remoteFreeQuotaAvailable = Object.values(routedState.providers).some((provider) =>
     !provider.local && provider.available && hasFreeQuota(provider)
   );
 
-  for (const [providerId, provider] of Object.entries(providerState.providers)) {
+  for (const [providerId, provider] of Object.entries(routedState.providers)) {
     if (!provider.available) {
       continue;
     }
@@ -56,7 +59,8 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
       const modelMetrics = providerState.metricsSummary?.byModel?.find(m => m.model_id === model.id);
       const reliabilityBonus = modelMetrics ? (modelMetrics.success_rate / 20) : 2; // 0-5 bonus based on success rate
       const quotaBonus = scoreQuota(provider, { quotaStrategy, remoteFreeQuotaAvailable });
-      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + reliabilityBonus + quotaBonus + configTrustBonus;
+      const fitBonus = typeof model.fitScore === "number" ? (model.fitScore / 10) : 0;
+      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + reliabilityBonus + quotaBonus + configTrustBonus + fitBonus;
       
       candidates.push({
         providerId,
@@ -65,6 +69,8 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
         quality,
         costTier: model.costTier ?? 5,
         competency,
+        fitScore: model.fitScore ?? null,
+        fitReasons: model.fitReasons ?? [],
         quota: provider.quota ?? null,
         freeQuotaRemaining: provider.quota?.freeUsdRemaining ?? null,
         score
@@ -91,10 +97,11 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
       local: candidate.local,
       reason: buildReason(candidate, taskClass, minimumQuality, capability)
     })),
-    providers: providerState.providers,
+    providers: routedState.providers,
+    modelFitMatrix,
     tooling: {
-      leanCtx: providerState.leanCtx,
-      contextCompression: providerState.routingPolicy.contextCompression
+      leanCtx: routedState.leanCtx,
+      contextCompression: routedState.routingPolicy.contextCompression
     }
   };
 }
@@ -103,6 +110,9 @@ function buildReason(candidate, taskClass, minimumQuality, capability) {
   const parts = [];
   parts.push(`competency ${candidate.competency}/5 for ${capability}`);
   parts.push(candidate.local ? "local-first candidate" : "remote provider candidate");
+  if (typeof candidate.fitScore === "number") {
+    parts.push(`fit score ${candidate.fitScore}`);
+  }
   if (candidate.freeQuotaRemaining !== null) {
     parts.push(`free quota $${candidate.freeQuotaRemaining.toFixed(2)} remaining`);
   }

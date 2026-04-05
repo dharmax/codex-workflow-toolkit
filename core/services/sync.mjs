@@ -1,6 +1,6 @@
 import path from "node:path";
 import { openWorkflowStore } from "../db/sqlite-store.mjs";
-import { collectProjectFiles, readProjectFile } from "../lib/filesystem.mjs";
+import { collectProjectFileSnapshot, readProjectFile } from "../lib/filesystem.mjs";
 import { sha1, stableId } from "../lib/hash.mjs";
 import { parseIndexedFile } from "../parsers/index.mjs";
 import { deriveCandidateFromNote, reviewCandidates } from "./lifecycle.mjs";
@@ -8,17 +8,52 @@ import { buildProjectSummary, buildSmartProjectStatus, compareEpicPriority, crea
 import { auditArchitecture } from "./critic.mjs";
 import { SEMANTICS } from "../lib/registry.mjs";
 import { evaluateReadiness } from "./readiness-evaluator.mjs";
-import { refreshCodeletRegistry, listCodeletsFromStore, getCodeletFromStore, searchCodeletsFromStore } from "./codelets.mjs";
+import { refreshCodeletRegistry, listCodeletsFromStore, getCodeletFromStore, searchCodeletsFromStore, listProjectCodelets } from "./codelets.mjs";
+import { withWorkspaceMutationGuardDisabled } from "../lib/workspace-mutation.mjs";
 
 export async function syncProject({ projectRoot = process.cwd(), writeProjections = false } = {}) {
-  const store = await openWorkflowStore({ projectRoot });
   const startedAt = new Date().toISOString();
 
-  // LAY-003: Dynamic Artifact Detection
-  const dynamicIgnores = await detectBuildArtifacts(projectRoot);
+  return withWorkspaceMutationGuardDisabled(async () => {
+    // LAY-003: Dynamic Artifact Detection
+    const dynamicIgnores = await detectBuildArtifacts(projectRoot);
+    const store = await openWorkflowStore({ projectRoot });
 
-  try {
-    const files = await collectProjectFiles(projectRoot, { ignore: dynamicIgnores });
+    try {
+      const snapshot = await collectProjectFileSnapshot(projectRoot, { ignore: dynamicIgnores });
+      const fingerprint = await computeProjectFingerprint({ projectRoot, store, snapshot });
+      const lastSync = store.getMeta("lastSyncFingerprint", null);
+    const files = snapshot.map((entry) => entry.relativePath);
+
+    if (lastSync?.fingerprint === fingerprint) {
+      const summary = buildProjectSummary(store);
+      const projections = writeProjections
+        ? await writeProjectProjections(store, { projectRoot })
+        : null;
+      return {
+        projectRoot,
+        dbPath: store.dbPath,
+        indexedFiles: 0,
+        indexedSymbols: 0,
+        indexedClaims: 0,
+        indexedNotes: 0,
+        codeletRegistry: {
+          codeletsIndexed: summary.codeletCount ?? 0
+        },
+        importSummary: {
+          importedTickets: 0
+        },
+        lifecycle: {
+          reviewed: [],
+          skipped: true
+        },
+        projections,
+        summary,
+        skipped: true,
+        reason: "project state unchanged"
+      };
+    }
+
     store.pruneIndexedFiles(files);
     let symbolCount = 0;
     let claimCount = 0;
@@ -69,6 +104,13 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
     // RAG-003: Shadow Sync
     await performShadowSync(store, projectRoot);
 
+    let projections = null;
+    if (writeProjections) {
+      projections = await writeProjectProjections(store, { projectRoot });
+    }
+
+    const finalFingerprint = await computeProjectFingerprint({ projectRoot, store, snapshot });
+
     store.setMeta("lastSync", {
       startedAt,
       fileCount: files.length,
@@ -77,11 +119,11 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
       noteCount,
       codeletCount: codeletRegistry.codeletsIndexed
     });
-
-    let projections = null;
-    if (writeProjections) {
-      projections = await writeProjectProjections(store, { projectRoot });
-    }
+    store.setMeta("lastSyncFingerprint", {
+      startedAt,
+      fingerprint: finalFingerprint,
+      fileCount: files.length
+    });
 
     const summary = buildProjectSummary(store);
     return {
@@ -97,8 +139,78 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
       projections,
       summary
     };
-  } finally {
-    store.close();
+    } finally {
+      store.close();
+    }
+  });
+}
+
+async function computeProjectFingerprint({ projectRoot, store, snapshot }) {
+  const [derivedState, projectCodelets] = await Promise.all([
+    readDerivedProjectionState(projectRoot, store),
+    listProjectCodelets(projectRoot).catch(() => [])
+  ]);
+  const fingerprintEntries = snapshot.filter((entry) => !isDerivedProjectionSnapshot(entry.relativePath, derivedState));
+  const codeletEntries = projectCodelets
+    .map((codelet) => ({
+      id: codelet.id,
+      summary: codelet.summary ?? "",
+      stability: codelet.stability ?? "",
+      status: codelet.status ?? "",
+      entry: codelet.entry ?? "",
+      manifestPath: codelet.manifestPath ?? "",
+      sourceKind: codelet.sourceKind ?? "project"
+    }))
+    .sort((left, right) => String(left.manifestPath).localeCompare(String(right.manifestPath)) || String(left.id).localeCompare(String(right.id)));
+  return sha1(JSON.stringify({ snapshot: fingerprintEntries, codelets: codeletEntries }));
+}
+
+async function readDerivedProjectionState(projectRoot, store) {
+  const [kanbanMd, epicsMd, missionMd, geminiMd, rootGeminiMd] = await Promise.all([
+    readProjectFileOptional(projectRoot, "kanban.md"),
+    readProjectFileOptional(projectRoot, "epics.md"),
+    readProjectFileOptional(projectRoot, "MISSION.md"),
+    readProjectFileOptional(projectRoot, ".gemini/GEMINI.md"),
+    readProjectFileOptional(projectRoot, "GEMINI.md")
+  ]);
+
+  const lastProjectionDigest = store.getMeta("lastProjectionDigest", null);
+  const missionText = String(store.getMeta("mission") ?? "");
+  const geminiText = String(store.getMeta("gemini") ?? "");
+
+  return {
+    kanbanHash: kanbanMd ? sha1(kanbanMd.content) : null,
+    epicsHash: epicsMd ? sha1(epicsMd.content) : null,
+    missionHash: missionMd ? sha1(missionMd.content) : null,
+    geminiHash: geminiMd ? sha1(geminiMd.content) : (rootGeminiMd ? sha1(rootGeminiMd.content) : null),
+    lastProjectionDigest,
+    missionDigest: missionText ? sha1(missionText) : null,
+    geminiDigest: geminiText ? sha1(geminiText) : null
+  };
+}
+
+function isDerivedProjectionSnapshot(relativePath, derivedState) {
+  const normalized = String(relativePath ?? "").replace(/\\/g, "/");
+  if (normalized === "kanban.md") {
+    return Boolean(derivedState.lastProjectionDigest?.kanban && derivedState.kanbanHash === derivedState.lastProjectionDigest.kanban);
+  }
+  if (normalized === "epics.md") {
+    return Boolean(derivedState.lastProjectionDigest?.epics && derivedState.epicsHash === derivedState.lastProjectionDigest.epics);
+  }
+  if (normalized === "MISSION.md") {
+    return Boolean(derivedState.missionDigest && derivedState.missionHash === derivedState.missionDigest);
+  }
+  if (normalized === ".gemini/GEMINI.md" || normalized === "GEMINI.md") {
+    return Boolean(derivedState.geminiDigest && derivedState.geminiHash === derivedState.geminiDigest);
+  }
+  return false;
+}
+
+async function readProjectFileOptional(projectRoot, relativePath) {
+  try {
+    return await readProjectFile(projectRoot, relativePath);
+  } catch {
+    return null;
   }
 }
 

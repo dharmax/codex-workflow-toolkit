@@ -28,6 +28,11 @@ import { updateKnowledgeRemote } from "../../core/services/knowledge.mjs";
 import { assertSafeRepairTarget, getToolkitRoot as getOperatingToolkitRoot, resolveOperatingContext } from "../../core/lib/operating-context.mjs";
 import { readLatestRunArtifact } from "../../core/lib/run-artifacts.mjs";
 import { resolveHostRequest } from "../../core/services/host-resolver.mjs";
+import { discoverProviderState, refreshProviderRegistry } from "../../core/services/providers.mjs";
+import { invalidateModelFitCache } from "../../core/services/model-fit.mjs";
+import { invalidateWebSearchCache } from "../../core/services/web-search.mjs";
+import { assertDirectCommandChannel } from "../../core/lib/command-channel.mjs";
+import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 
 const toolkitRoot = getToolkitRoot();
 const execFileAsync = promisify(execFile);
@@ -36,7 +41,7 @@ const HELP = `Usage:
   ai-workflow setup [--project <path>]
   ai-workflow init [options]
   ai-workflow install [--project <path>]
-  ai-workflow doctor [--json]
+  ai-workflow doctor [--json] [--refresh-models]
   ai-workflow version [--json]
   ai-workflow audit architecture [--json]
   ai-workflow kanban <new|move|next|archive|migrate> [...]
@@ -74,6 +79,7 @@ const HELP = `Usage:
   ai-workflow provider connect <provider-id>
   ai-workflow provider setup [--global]
   ai-workflow provider quota refresh [provider-id|all] [--global] [--json]
+  ai-workflow provider refresh [models|all] [--global] [--json]
   ai-workflow mode set <default|tool-dev> [--global]
   ai-workflow mode status [--json]
   ai-workflow knowledge update-remote [--url <remote-url>] [--json]
@@ -103,7 +109,7 @@ export async function main(argv) {
     case "install":
       return handleInstall(rest);
     case "doctor":
-      await runDoctor({ root: process.cwd(), json: rest.includes("--json") });
+      await runDoctor({ root: process.cwd(), json: rest.includes("--json"), forceRefresh: rest.includes("--refresh-models") });
       return 0;
     case "version":
       return handleVersion(rest);
@@ -128,7 +134,7 @@ export async function main(argv) {
     case "sync":
       return handleSync(rest);
     case "reprofile":
-      await runDoctor({ root: process.cwd(), json: rest.includes("--json") });
+      await runDoctor({ root: process.cwd(), json: rest.includes("--json"), forceRefresh: true });
       return 0;
     case "list":
       return handleList(rest);
@@ -218,6 +224,7 @@ async function handleVersion(rest) {
 }
 
 async function handleSync(rest) {
+  assertDirectCommandChannel("ai-workflow sync");
   const args = parseArgs(rest);
   const result = await syncProject({
     projectRoot: process.cwd(),
@@ -337,6 +344,7 @@ async function handleRun(rest) {
 }
 
 async function handleAdd(rest, mode) {
+  assertDirectCommandChannel(`ai-workflow ${mode}`);
   const [name, filePath] = rest;
   if (!name || !filePath) {
     printAndExit(`Usage: ai-workflow ${mode} <codelet> <file>`, 1);
@@ -349,6 +357,7 @@ async function handleAdd(rest, mode) {
 }
 
 async function handleRemove(rest) {
+  assertDirectCommandChannel("ai-workflow remove");
   const name = rest[0];
   if (!name) {
     printAndExit("Usage: ai-workflow remove <codelet>", 1);
@@ -401,6 +410,7 @@ async function handleVerify(rest) {
 }
 
 async function handleForge(rest) {
+  assertDirectCommandChannel("ai-workflow forge codelet");
   const [kind, name] = rest;
   if (kind !== "codelet" || !name) {
     printAndExit("Usage: ai-workflow forge codelet <name>", 1);
@@ -597,78 +607,84 @@ async function handleProject(rest) {
   }
 
   if (subcommand === "ticket" && args._[0] === "create") {
-    const id = args.id;
-    const title = args.title;
-    if (!id || !title) {
-      printAndExit("Usage: ai-workflow project ticket create --id <id> --title <title> [--lane <lane>] [--epic <epic-id>] [--summary <text>] [--json]", 1);
-    }
-
-    const ticket = buildTicketEntity({
-      id,
-      title,
-      lane: String(args.lane ?? "Todo"),
-      epicId: args.epic ? String(args.epic) : null,
-      summary: args.summary ? String(args.summary) : ""
-    });
-    await withWorkflowStore(process.cwd(), async (store) => {
-      if (args.epic) {
-        const epicId = String(args.epic);
-        const existingEpic = store.getEntity(epicId);
-        if (!existingEpic) {
-          store.upsertEntity({
-            id: epicId,
-            entityType: "epic",
-            title: epicId,
-            lane: null,
-            state: "open",
-            confidence: 1,
-            provenance: "manual",
-            sourceKind: "manual",
-            reviewState: "active",
-            data: {}
-          });
-        }
+    assertDirectCommandChannel("ai-workflow project ticket create");
+    return withWorkspaceMutation(process.cwd(), "project ticket create", async () => {
+      const id = args.id;
+      const title = args.title;
+      if (!id || !title) {
+        printAndExit("Usage: ai-workflow project ticket create --id <id> --title <title> [--lane <lane>] [--epic <epic-id>] [--summary <text>] [--json]", 1);
       }
-      store.upsertEntity(ticket);
-      store.db.prepare(`
-        INSERT INTO search_index (id, scope, ref_id, title, body, tags, updated_at)
-        VALUES (?, 'entity', ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          title = excluded.title,
-          body = excluded.body,
-          tags = excluded.tags,
-          updated_at = excluded.updated_at
-      `).run(`entity:${ticket.id}`, ticket.id, ticket.title, JSON.stringify(ticket.data), `ticket,${ticket.lane}`, new Date().toISOString());
-      await writeProjectProjections(store, { projectRoot: process.cwd() });
-    });
-    if (args.json) {
-      process.stdout.write(`${JSON.stringify(ticket, null, 2)}\n`);
+
+      const ticket = buildTicketEntity({
+        id,
+        title,
+        lane: String(args.lane ?? "Todo"),
+        epicId: args.epic ? String(args.epic) : null,
+        summary: args.summary ? String(args.summary) : ""
+      });
+      await withWorkflowStore(process.cwd(), async (store) => {
+        if (args.epic) {
+          const epicId = String(args.epic);
+          const existingEpic = store.getEntity(epicId);
+          if (!existingEpic) {
+            store.upsertEntity({
+              id: epicId,
+              entityType: "epic",
+              title: epicId,
+              lane: null,
+              state: "open",
+              confidence: 1,
+              provenance: "manual",
+              sourceKind: "manual",
+              reviewState: "active",
+              data: {}
+            });
+          }
+        }
+        store.upsertEntity(ticket);
+        store.db.prepare(`
+          INSERT INTO search_index (id, scope, ref_id, title, body, tags, updated_at)
+          VALUES (?, 'entity', ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            body = excluded.body,
+            tags = excluded.tags,
+            updated_at = excluded.updated_at
+        `).run(`entity:${ticket.id}`, ticket.id, ticket.title, JSON.stringify(ticket.data), `ticket,${ticket.lane}`, new Date().toISOString());
+        await writeProjectProjections(store, { projectRoot: process.cwd() });
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(ticket, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(`${ticket.id} ${ticket.title} [${ticket.lane}]\n`);
       return 0;
-    }
-    process.stdout.write(`${ticket.id} ${ticket.title} [${ticket.lane}]\n`);
-    return 0;
+    });
   }
 
   if (subcommand === "note" && args._[0] === "add") {
-    if (!args.type || !args.body) {
-      printAndExit("Usage: ai-workflow project note add --type <NOTE|TODO|FIXME|HACK|BUG|RISK> --body <text> [--file <path>] [--line <n>] [--symbol <name>] [--json]", 1);
-    }
-    const note = await addManualNote({
-      projectRoot: process.cwd(),
-      note: {
-        noteType: String(args.type).toUpperCase(),
-        body: String(args.body),
-        filePath: args.file ? String(args.file) : null,
-        line: args.line ? Number(args.line) : null,
-        symbolName: args.symbol ? String(args.symbol) : null
+    assertDirectCommandChannel("ai-workflow project note add");
+    return withWorkspaceMutation(process.cwd(), "project note add", async () => {
+      if (!args.type || !args.body) {
+        printAndExit("Usage: ai-workflow project note add --type <NOTE|TODO|FIXME|HACK|BUG|RISK> --body <text> [--file <path>] [--line <n>] [--symbol <name>] [--json]", 1);
       }
-    });
-    if (args.json) {
-      process.stdout.write(`${JSON.stringify(note, null, 2)}\n`);
+      const note = await addManualNote({
+        projectRoot: process.cwd(),
+        note: {
+          noteType: String(args.type).toUpperCase(),
+          body: String(args.body),
+          filePath: args.file ? String(args.file) : null,
+          line: args.line ? Number(args.line) : null,
+          symbolName: args.symbol ? String(args.symbol) : null
+        }
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(note, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(`${note.noteType} ${note.body}\n`);
       return 0;
-    }
-    process.stdout.write(`${note.noteType} ${note.body}\n`);
-    return 0;
+    });
   }
 
   if (subcommand === "review-candidates") {
@@ -694,9 +710,12 @@ async function handleProject(rest) {
   }
 
   if (subcommand === "import-projections") {
-    const result = await withWorkflowStore(process.cwd(), async (store) => importLegacyProjections(store, { projectRoot: process.cwd() }));
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return 0;
+    assertDirectCommandChannel("ai-workflow project import-projections");
+    return withWorkspaceMutation(process.cwd(), "project import-projections", async () => {
+      const result = await withWorkflowStore(process.cwd(), async (store) => importLegacyProjections(store, { projectRoot: process.cwd() }));
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return 0;
+    });
   }
 
   printAndExit("Usage: ai-workflow project <summary|readiness|search|epic|story|codelet|ticket|note|review-candidates|render|import-projections> ...", 1);
@@ -794,53 +813,89 @@ async function handleTelegram(rest) {
 async function handleProvider(rest) {
   const [subcommand, providerId, ...extras] = rest;
   if (subcommand === "setup") {
-    const args = parseArgs(rest.slice(1));
-    const scope = args.project ? "project" : "global";
-    const result = await runProviderSetupWizard({
-      root: process.cwd(),
-      scope,
-      interactive: process.stdin.isTTY && process.stdout.isTTY
-    });
+    assertDirectCommandChannel("ai-workflow provider setup");
+    return withWorkspaceMutation(process.cwd(), "provider setup", async () => {
+      const args = parseArgs(rest.slice(1));
+      const scope = args.project ? "project" : "global";
+      const result = await runProviderSetupWizard({
+        root: process.cwd(),
+        scope,
+        interactive: process.stdin.isTTY && process.stdout.isTTY
+      });
 
-    if (args.json) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return 0;
+      }
+
+      for (const message of result.messages ?? []) {
+        process.stdout.write(`${message}\n`);
+      }
+      if (result.connectedProviders?.length) {
+        process.stdout.write(`Connected providers: ${result.connectedProviders.join(", ")}\n`);
+      }
+      if (result.registeredEndpoints?.length) {
+        process.stdout.write(`Registered Ollama endpoints: ${result.registeredEndpoints.join(", ")}\n`);
+      }
       return 0;
-    }
-
-    for (const message of result.messages ?? []) {
-      process.stdout.write(`${message}\n`);
-    }
-    if (result.connectedProviders?.length) {
-      process.stdout.write(`Connected providers: ${result.connectedProviders.join(", ")}\n`);
-    }
-    if (result.registeredEndpoints?.length) {
-      process.stdout.write(`Registered Ollama endpoints: ${result.registeredEndpoints.join(", ")}\n`);
-    }
-    return 0;
+    });
+  }
+  if (subcommand === "refresh") {
+    assertDirectCommandChannel("ai-workflow provider refresh");
+    return withWorkspaceMutation(process.cwd(), "provider refresh", async () => {
+      const target = providerId ?? "models";
+      const args = parseArgs(extras);
+      if (target === "models" || target === "all") {
+        await invalidateModelFitCache(process.cwd());
+        await invalidateWebSearchCache(process.cwd());
+        const registry = await refreshProviderRegistry({
+          root: process.cwd(),
+          scope: args.global ? "global" : "project",
+          forceRefresh: true
+        });
+        const discovery = registry.providerState ?? await discoverProviderState({ root: process.cwd(), forceRefresh: true });
+        const result = {
+          discovery,
+          registry,
+          refreshed: discovery.providers?.ollama?.models?.length ?? 0
+        };
+        if (args.json) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+          return 0;
+        }
+        process.stdout.write(`Refreshed provider state and model matrix for ${result.refreshed} Ollama models.\n`);
+        return 0;
+      }
+      return 0;
+    });
   }
   if (subcommand === "connect") {
-    return await handleProviderConnect(providerId);
+    assertDirectCommandChannel("ai-workflow provider connect");
+    return withWorkspaceMutation(process.cwd(), "provider connect", async () => handleProviderConnect(providerId));
   }
   if (subcommand === "quota") {
     const [action, target] = [providerId, extras[0]];
     const args = parseArgs(extras.slice(1));
     if (action === "refresh") {
-      const result = await refreshProviderQuotaState({
-        root: process.cwd(),
-        providerId: target ?? "all",
-        scope: args.global ? "global" : "project"
-      });
-      if (args.json) {
-        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      assertDirectCommandChannel("ai-workflow provider quota refresh");
+      return withWorkspaceMutation(process.cwd(), "provider quota refresh", async () => {
+        const result = await refreshProviderQuotaState({
+          root: process.cwd(),
+          providerId: target ?? "all",
+          scope: args.global ? "global" : "project"
+        });
+        if (args.json) {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+          return 0;
+        }
+        for (const item of result.refreshed) {
+          process.stdout.write(`${item.providerId}: ${item.changed ? "refreshed" : "unchanged"}\n`);
+        }
         return 0;
-      }
-      for (const item of result.refreshed) {
-        process.stdout.write(`${item.providerId}: ${item.changed ? "refreshed" : "unchanged"}\n`);
-      }
-      return 0;
+      });
     }
   }
-  printAndExit("Usage: ai-workflow provider connect <provider-id>\n       ai-workflow provider setup [--global]\n       ai-workflow provider quota refresh [provider-id|all] [--global] [--json]", 1);
+  printAndExit("Usage: ai-workflow provider connect <provider-id>\n       ai-workflow provider setup [--global]\n       ai-workflow provider refresh [models|all] [--global] [--json]\n       ai-workflow provider quota refresh [provider-id|all] [--global] [--json]", 1);
 }
 
 async function handleMode(rest) {
@@ -851,13 +906,16 @@ async function handleMode(rest) {
   const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(process.cwd());
 
   if (action === "set") {
-    const normalized = normalizeModeValue(value);
-    if (!normalized) {
-      printAndExit("Usage: ai-workflow mode set <default|tool-dev> [--global]", 1);
-    }
-    const config = await writeConfigValue(configPath, "mode", normalized);
-    process.stdout.write(`${JSON.stringify({ path: configPath, mode: getConfigValue(config, "mode") }, null, 2)}\n`);
-    return 0;
+    assertDirectCommandChannel("ai-workflow mode set");
+    return withWorkspaceMutation(process.cwd(), "mode set", async () => {
+      const normalized = normalizeModeValue(value);
+      if (!normalized) {
+        printAndExit("Usage: ai-workflow mode set <default|tool-dev> [--global]", 1);
+      }
+      const config = await writeConfigValue(configPath, "mode", normalized);
+      process.stdout.write(`${JSON.stringify({ path: configPath, mode: getConfigValue(config, "mode") }, null, 2)}\n`);
+      return 0;
+    });
   }
 
   if (action === "status") {
@@ -892,23 +950,26 @@ async function handleKnowledge(rest) {
   const args = parseArgs(tail);
 
   if (action === "update-remote") {
-    const result = await updateKnowledgeRemote({
-      root: process.cwd(),
-      sourceUrl: args.url ? String(args.url) : null
+    assertDirectCommandChannel("ai-workflow knowledge update-remote");
+    return withWorkspaceMutation(process.cwd(), "knowledge update-remote", async () => {
+      const result = await updateKnowledgeRemote({
+        root: process.cwd(),
+        sourceUrl: args.url ? String(args.url) : null
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return 0;
+      }
+      if (result.success) {
+        process.stdout.write(`Refreshed builtin knowledge from ${result.sourceUrl}\n`);
+        return 0;
+      }
+      if (result.skipped) {
+        process.stdout.write(`${result.reason}\n${result.hint ?? ""}\n`.trimEnd() + "\n");
+        return 0;
+      }
+      printAndExit(result.reason ?? "Failed to refresh builtin knowledge.", 1);
     });
-    if (args.json) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-      return 0;
-    }
-    if (result.success) {
-      process.stdout.write(`Refreshed builtin knowledge from ${result.sourceUrl}\n`);
-      return 0;
-    }
-    if (result.skipped) {
-      process.stdout.write(`${result.reason}\n${result.hint ?? ""}\n`.trimEnd() + "\n");
-      return 0;
-    }
-    printAndExit(result.reason ?? "Failed to refresh builtin knowledge.", 1);
   }
 
   printAndExit("Usage: ai-workflow knowledge update-remote [--url <remote-url>] [--json]", 1);
@@ -953,41 +1014,53 @@ async function handleConfig(rest) {
   }
 
   if (action === "set") {
-    if (!key || value === undefined) {
-      printAndExit("Usage: ai-workflow config set <key> <value> [--global]", 1);
-    }
-    const config = await writeConfigValue(configPath, key, value);
-    process.stdout.write(`${JSON.stringify({ path: configPath, value: getConfigValue(config, key) }, null, 2)}\n`);
-    return 0;
+    assertDirectCommandChannel("ai-workflow config set");
+    return withWorkspaceMutation(process.cwd(), "config set", async () => {
+      if (!key || value === undefined) {
+        printAndExit("Usage: ai-workflow config set <key> <value> [--global]", 1);
+      }
+      const config = await writeConfigValue(configPath, key, value);
+      process.stdout.write(`${JSON.stringify({ path: configPath, value: getConfigValue(config, key) }, null, 2)}\n`);
+      return 0;
+    });
   }
 
   if (action === "unset") {
-    if (!key) {
-      printAndExit("Usage: ai-workflow config unset <key> [--global]", 1);
-    }
-    await removeConfigValue(configPath, key);
-    process.stdout.write(`${JSON.stringify({ path: configPath, removed: key }, null, 2)}\n`);
-    return 0;
+    assertDirectCommandChannel("ai-workflow config unset");
+    return withWorkspaceMutation(process.cwd(), "config unset", async () => {
+      if (!key) {
+        printAndExit("Usage: ai-workflow config unset <key> [--global]", 1);
+      }
+      await removeConfigValue(configPath, key);
+      process.stdout.write(`${JSON.stringify({ path: configPath, removed: key }, null, 2)}\n`);
+      return 0;
+    });
   }
 
   if (action === "clear") {
-    await removeConfigFile(configPath);
-    process.stdout.write(`${JSON.stringify({ path: configPath, cleared: true }, null, 2)}\n`);
-    return 0;
+    assertDirectCommandChannel("ai-workflow config clear");
+    return withWorkspaceMutation(process.cwd(), "config clear", async () => {
+      await removeConfigFile(configPath);
+      process.stdout.write(`${JSON.stringify({ path: configPath, cleared: true }, null, 2)}\n`);
+      return 0;
+    });
   }
 
   printAndExit("Usage: ai-workflow config <get|set|unset|clear> ...", 1);
 }
 
 async function handleInstall(rest) {
+  assertDirectCommandChannel("ai-workflow install");
   const args = parseArgs(rest);
   const projectRoot = path.resolve(String(args.project ?? process.cwd()));
-  const results = await installAgents({
-    toolkitRoot,
-    projectRoot
+  return withWorkspaceMutation(projectRoot, "install", async () => {
+    await installAgents({
+      toolkitRoot,
+      projectRoot
+    });
+    process.stdout.write(`Installation complete in ${projectRoot}\n`);
+    return 0;
   });
-  process.stdout.write(`Installation complete in ${projectRoot}\n`);
-  return 0;
 }
 
 async function handleAudit(rest) {
@@ -1018,33 +1091,36 @@ async function handleAudit(rest) {
 }
 
 async function handleSetProviderKey(rest) {
-  const [providerId] = rest;
-  if (!providerId) {
-    printAndExit("Usage: ai-workflow set-provider-key <provider-id> [--global]", 1);
-  }
-  const args = parseArgs(rest);
-  const scope = args.global ? "global" : "project";
-  const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(process.cwd());
+  assertDirectCommandChannel("ai-workflow set-provider-key");
+  return withWorkspaceMutation(process.cwd(), "set-provider-key", async () => {
+    const [providerId] = rest;
+    if (!providerId) {
+      printAndExit("Usage: ai-workflow set-provider-key <provider-id> [--global]", 1);
+    }
+    const args = parseArgs(rest);
+    const scope = args.global ? "global" : "project";
+    const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(process.cwd());
 
-  const rl = readline.createInterface({ input, output });
-  const prompt = providerId === "google"
-    ? `Enter Gemini API key (from https://aistudio.google.com/): `
-    : `Enter ${providerId} API key: `;
-  
-  if (providerId === "google") {
-    process.stdout.write("Pro-tip: You can get a free Gemini API key at https://aistudio.google.com/\n");
-  }
+    const rl = readline.createInterface({ input, output });
+    const prompt = providerId === "google"
+      ? `Enter Gemini API key (from https://aistudio.google.com/): `
+      : `Enter ${providerId} API key: `;
 
-  const key = (await rl.question(prompt) ?? "").trim();
-  rl.close();
+    if (providerId === "google") {
+      process.stdout.write("Pro-tip: You can get a free Gemini API key at https://aistudio.google.com/\n");
+    }
 
-  if (!key) {
-    printAndExit("API key is required.", 1);
-  }
+    const key = (await rl.question(prompt) ?? "").trim();
+    rl.close();
 
-  await writeConfigValue(configPath, `providers.${providerId}.apiKey`, key);
-  process.stdout.write(`Successfully saved API key for ${providerId} to ${scope} config.\n`);
-  return 0;
+    if (!key) {
+      printAndExit("API key is required.", 1);
+    }
+
+    await writeConfigValue(configPath, `providers.${providerId}.apiKey`, key);
+    process.stdout.write(`Successfully saved API key for ${providerId} to ${scope} config.\n`);
+    return 0;
+  });
 }
 
 async function handleMetrics(rest) {
@@ -1071,37 +1147,41 @@ async function handleIngest(rest) {
 }
 
 async function handleOnboard(rest) {
-  const [filePath] = rest;
-  if (!filePath || filePath === "--help" || filePath === "-h") {
-    printAndExit("Usage: ai-workflow onboard <brief-file> [--json]", 1);
-  }
-  const args = parseArgs(rest);
-  const rl = readline.createInterface({ input, output });
-
-  try {
-    const targetPath = path.resolve(process.cwd(), filePath);
-    const result = await onboardProjectBrief(targetPath, { root: process.cwd(), rl });
-    if (args.json) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    } else {
-      process.stdout.write(`\nOnboarding complete. Generated Epic: ${result.epic.id} with ${result.tickets.length} tickets.\n`);
+  assertDirectCommandChannel("ai-workflow onboard");
+  return withWorkspaceMutation(process.cwd(), "onboard", async () => {
+    const [filePath] = rest;
+    if (!filePath || filePath === "--help" || filePath === "-h") {
+      printAndExit("Usage: ai-workflow onboard <brief-file> [--json]", 1);
     }
-  } catch (error) {
-    printAndExit(`Onboarding failed: ${error.message}`, 1);
-  } finally {
-    rl.close();
-  }
-  return 0;
+    const args = parseArgs(rest);
+    const rl = readline.createInterface({ input, output });
+
+    try {
+      const targetPath = path.resolve(process.cwd(), filePath);
+      const result = await onboardProjectBrief(targetPath, { root: process.cwd(), rl });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } else {
+        process.stdout.write(`\nOnboarding complete. Generated Epic: ${result.epic.id} with ${result.tickets.length} tickets.\n`);
+      }
+    } catch (error) {
+      printAndExit(`Onboarding failed: ${error.message}`, 1);
+    } finally {
+      rl.close();
+    }
+    return 0;
+  });
 }
 
 async function handleConsult(rest) {
+  assertDirectCommandChannel("ai-workflow consult");
   const root = process.cwd();
   const rl = readline.createInterface({ input, output });
 
   try {
-    const pending = await withWorkflowStore(root, async (store) => {
+    const pending = await withWorkspaceMutation(root, "consult", async () => withWorkflowStore(root, async (store) => {
       return store.db.prepare("SELECT * FROM entities WHERE consultation_question IS NOT NULL").all();
-    });
+    }));
 
     if (!pending.length) {
       process.stdout.write("No active consultation requests.\n");
@@ -1116,13 +1196,13 @@ async function handleConsult(rest) {
       const answer = (await rl.question("Your Answer (leave blank to skip): ")).trim();
       
       if (answer) {
-        await withWorkflowStore(root, async (store) => {
+        await withWorkspaceMutation(root, "consult answer", async () => withWorkflowStore(root, async (store) => {
           const entity = store.getEntity(row.id);
           entity.consultationQuestion = null;
           entity.data.consultationResponse = answer;
           entity.lane = "Todo"; // Move back to Todo
           store.upsertEntity(entity);
-        });
+        }));
         process.stdout.write("Answer recorded. Ticket moved back to Todo.\n\n");
       } else {
         process.stdout.write("Skipped.\n\n");
@@ -1258,6 +1338,7 @@ function runNodeScriptLive(scriptPath, args) {
 }
 
 async function handleToolObserve(rest) {
+  assertDirectCommandChannel("ai-workflow tool observe");
   const args = parseArgs(rest);
   const context = await resolveOperatingContext({
     cwd: process.cwd(),

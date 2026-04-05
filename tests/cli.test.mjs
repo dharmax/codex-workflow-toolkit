@@ -53,7 +53,7 @@ async function countInstallableFiles() {
   const runtimeDir = path.resolve(repoRoot, "runtime", "scripts", "ai-workflow");
   const files = await walkFiles(runtimeDir);
   // + templates
-  return files.length + 10; 
+  return files.length + 11;
 }
 
 async function walkFiles(dir) {

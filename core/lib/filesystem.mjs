@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { ensureDir } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 import { getAllSupportedExtensions } from "./registry.mjs";
+import { isWorkspaceMutationGuardDisabled, withWorkspaceMutation, withWorkspaceMutationGuardDisabled } from "./workspace-mutation.mjs";
 
 const DEFAULT_IGNORES = new Set([
   ".git",
@@ -83,6 +84,64 @@ export async function collectProjectFiles(root, options = {}) {
 
   await walk(root);
   return files.sort((left, right) => left.localeCompare(right));
+}
+
+export async function collectProjectFileSnapshot(root, options = {}) {
+  const files = [];
+  const ignore = new Set([...DEFAULT_IGNORES, ...(options.ignore ?? [])]);
+  const supported = new Set(getAllSupportedExtensions());
+  const projectIgnore = await loadProjectIgnore(root);
+
+  async function walk(currentDir) {
+    const entries = await readdir(currentDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const absolutePath = path.resolve(currentDir, entry.name);
+      const relativePath = normalizePath(path.relative(root, absolutePath));
+
+      if (entry.isDirectory()) {
+        if (ignore.has(entry.name)) {
+          continue;
+        }
+        if (relativePath.startsWith(".ai-workflow/cache") || relativePath.startsWith(".ai-workflow/generated")) {
+          continue;
+        }
+        if (shouldIgnorePath(relativePath, projectIgnore)) {
+          continue;
+        }
+        if (await isNestedProjectRoot(root, absolutePath, relativePath)) {
+          continue;
+        }
+        await walk(absolutePath);
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      if (shouldIgnoreFile(entry.name, relativePath)) {
+        continue;
+      }
+      if (shouldIgnorePath(relativePath, projectIgnore)) {
+        continue;
+      }
+
+      if (!supported.has(path.extname(entry.name).toLowerCase())) {
+        continue;
+      }
+
+      const stats = await stat(absolutePath);
+      files.push({
+        relativePath,
+        sizeBytes: stats.size,
+        mtimeMs: Number(stats.mtimeMs.toFixed(0))
+      });
+    }
+  }
+
+  await walk(root);
+  return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
 function shouldIgnoreFile(name, relativePath) {
@@ -184,12 +243,20 @@ export async function readProjectFile(root, relativePath) {
 }
 
 export async function writeProjectFile(root, relativePath, content) {
+  if (!isWorkspaceMutationGuardDisabled()) {
+    return withWorkspaceMutation(root, `write ${relativePath}`, async () => withWorkspaceMutationGuardDisabled(async () => writeProjectFileRaw(root, relativePath, content)));
+  }
+
+  return writeProjectFileRaw(root, relativePath, content);
+}
+
+async function writeProjectFileRaw(root, relativePath, content) {
   const absolutePath = path.resolve(root, relativePath);
   const tempPath = `${absolutePath}.tmp-${Date.now()}`;
   const { rename, unlink } = await import("node:fs/promises");
-  
+
   await ensureDir(path.dirname(absolutePath));
-  
+
   try {
     await writeFile(tempPath, content, "utf8");
     await rename(tempPath, absolutePath);
