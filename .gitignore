@@ -3,6 +3,7 @@ node_modules
 
 /.obsidian/
 /.ai-workflow/state/run-artifacts/
+.ai-workflow/state/workflow.db
 .ai-workflow/cache/
 .ai-workflow/config.json
 .codex
