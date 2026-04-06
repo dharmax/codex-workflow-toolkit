@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn } from "node:child_process";
 import { access } from "node:fs/promises";
@@ -522,6 +522,96 @@ test("ask command renders readiness in assistant-first language for plugin-style
     assert.doesNotMatch(result.stdout, /Evidence basis:/);
   } finally {
     await cleanup(evidenceRoot);
+  }
+});
+
+test("shell trace uses a text-capable Ollama planner for a multi-phase epic request", async () => {
+  const projectRoot = await makeTempDir();
+  const preloadPath = path.join(projectRoot, "shell-preload.mjs");
+  const prompt = "i want a new epic: Telegram remote-control. it should be multi-phase. i want you to first creatively think about the long-term vision of it, and then break it into small, easy to achieve steps, each step adding a feature/s .";
+
+  try {
+    await mkdir(path.join(projectRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          ollama: {
+            host: "http://127.0.0.1:11434"
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(projectRoot, "MISSION.md"),
+      "Telegram remote-control mission",
+      "utf8"
+    );
+    await writeFile(
+      preloadPath,
+      [
+        "globalThis.fetch = async (url) => {",
+        "  const text = String(url);",
+        "  if (text.endsWith('/api/tags')) {",
+        "    return {",
+        "      ok: true,",
+        "      async json() {",
+        "        return {",
+        "          models: [",
+        "            { name: 'moondream:latest', size: 2 * 1024 ** 3 },",
+        "            { name: 'qwen2.5-coder:7b', size: 7 * 1024 ** 3 }",
+        "          ]",
+        "        };",
+        "      }",
+        "    };",
+        "  }",
+        "  if (text.includes('duckduckgo')) {",
+        "    return {",
+        "      ok: true,",
+        "      async text() {",
+        "        return '<html><body></body></html>';",
+        "      }",
+        "    };",
+        "  }",
+        "  if (text.endsWith('/api/generate') || text.endsWith('/api/chat')) {",
+        "    return {",
+        "      ok: true,",
+        "      async json() {",
+        "        return {",
+        "          response: JSON.stringify({",
+        "            kind: 'reply',",
+        "            confidence: 0.97,",
+        "            reason: 'The request is a multi-phase product vision question.',",
+        "            strategy: 'First define the remote-control vision, then phase the work into discovery, transport, command routing, safety, and operator UX.',",
+        "            reply: 'Vision: build a resilient Telegram remote-control layer with explicit approval, auditability, and staged rollout. Phases: 1) discovery, 2) command transport, 3) execution controls, 4) safety/observability, 5) operator polish.'",
+        "          })",
+        "        };",
+        "      }",
+        "    };",
+        "  }",
+        "  throw new Error(`Unexpected fetch URL: ${text}`);",
+        "};"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await runNode([
+      "--import",
+      preloadPath,
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      prompt,
+      "--trace"
+    ], { cwd: projectRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /\[trace\] planner request -> ollama:qwen2\.5-coder:7b @ http:\/\/127\.0\.0\.1:11434/);
+    assert.doesNotMatch(result.stdout, /moondream:latest/);
+    assert.match(result.stdout, /Current User Request:\n"i want a new epic: Telegram remote-control\./);
+    assert.match(result.stdout, /Vision: build a resilient Telegram remote-control layer with explicit approval, auditability, and staged rollout\./);
+  } finally {
+    await cleanup(projectRoot);
   }
 });
 
