@@ -62,7 +62,15 @@ export async function runProviderSetupWizard({
         }
       }
     } else {
-      messages.push("No Ollama endpoint is currently reachable.");
+      const ollama = providerState.providers.ollama ?? {};
+      if (ollama.host && Array.isArray(ollama.models) && ollama.models.length) {
+        messages.push(`Ollama at ${ollama.host} did not respond during discovery.`);
+        messages.push("Using the configured model registry from config for routing.");
+      } else if (ollama.host) {
+        messages.push(`Ollama at ${ollama.host} did not respond during discovery.`);
+      } else {
+        messages.push("No Ollama endpoint is currently reachable.");
+      }
     }
 
     if (interactive && rl && promptRemoteProviders) {

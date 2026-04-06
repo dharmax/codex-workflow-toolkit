@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { chooseShellPlannerModel, compileShellAction, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, buildShellPlannerPrompt, planShellRequestWithAgent, resolveShellPlanners, runShellTurn } from "../cli/lib/shell.mjs";
+import { chooseShellPlannerModel, compileShellAction, handleShellCommand, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, buildShellPlannerPrompt, planShellRequestWithAgent, resolveShellPlanners, runShellTurn } from "../cli/lib/shell.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
 
 const defaultShellTestFetch = async (url) => {
@@ -456,6 +456,61 @@ test("planShellRequestWithAgent multi-turn grounding scenario", async (t) => {
   assert.match(capturedPrompt, /\[TKT-99\] Add tests/);
 });
 
+test("handleShellCommand toggles plan, mutate, and trace state", () => {
+  const options = {
+    shellMode: "plan",
+    trace: false,
+    json: false
+  };
+
+  assert.deepEqual(handleShellCommand("mutate", options), { handled: true });
+  assert.equal(options.shellMode, "mutate");
+
+  assert.deepEqual(handleShellCommand("trace on", options), { handled: true });
+  assert.equal(options.trace, true);
+
+  assert.deepEqual(handleShellCommand("plan", options), { handled: true });
+  assert.equal(options.shellMode, "plan");
+
+  assert.deepEqual(handleShellCommand("trace off", options), { handled: true });
+  assert.equal(options.trace, false);
+});
+
+test("planShellRequestWithAgent traces the selected model and response", async () => {
+  const traceEvents = [];
+  registerProvider("mock-trace", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async () => ({
+      response: JSON.stringify({
+        kind: "reply",
+        confidence: 0.91,
+        reason: "Trace test",
+        reply: "Tracing works."
+      })
+    })
+  });
+
+  const options = {
+    root: "/tmp",
+    planner: { providerId: "mock-trace", modelId: "brain-v1" },
+    plannerContext: { summary: {}, toolkitCodelets: [], projectCodelets: [] },
+    history: [],
+    traceAi: (event) => traceEvents.push(event)
+  };
+
+  const result = await planShellRequestWithAgent("explain trace", options);
+
+  assert.equal(result.kind, "reply");
+  assert.equal(result.reply, "Tracing works.");
+  assert.equal(traceEvents.length >= 2, true);
+  assert.equal(traceEvents[0].phase, "request");
+  assert.equal(traceEvents[0].stage, "planner");
+  assert.equal(traceEvents[0].planner.modelId, "brain-v1");
+  assert.equal(traceEvents.some((event) => event.phase === "response" && event.stage === "planner" && event.planner.modelId === "brain-v1"), true);
+});
+
 const plannerContext = {
   toolkitCodelets: [
     { id: "review", summary: "Review changed files." },
@@ -847,6 +902,7 @@ test("runShellTurn blocks mutating shell plans until exactly one ticket is in pr
       yes: true,
       noAi: true,
       planOnly: false,
+      shellMode: "mutate",
       plannerContext: {
         ...plannerContext,
         summary: {
@@ -873,7 +929,7 @@ test("runShellTurn blocks mutating shell plans until exactly one ticket is in pr
   }
 });
 
-test("runShellTurn redirects direct state-changing shell actions to their dedicated commands", async () => {
+test("runShellTurn asks to switch modes before mutating in plan mode", async () => {
   const root = path.resolve("/tmp/ai-workflow-shell-direct-guard-" + Math.random().toString(36).slice(2));
   await fs.mkdir(root, { recursive: true });
 
@@ -881,9 +937,10 @@ test("runShellTurn redirects direct state-changing shell actions to their dedica
     const result = await runShellTurn("sync", {
       root,
       json: false,
-      yes: true,
+      yes: false,
       noAi: true,
       planOnly: false,
+      shellMode: "plan",
       plannerContext: {
         ...plannerContext,
         summary: {
@@ -901,10 +958,48 @@ test("runShellTurn redirects direct state-changing shell actions to their dedica
     });
 
     assert.equal(result.plan.kind, "reply");
-    assert.match(result.plan.reply, /direct command channel/i);
-    assert.match(result.plan.reply, /ai-workflow sync/);
+    assert.match(result.plan.reply, /mutating mode/i);
+    assert.match(result.plan.reply, /mutate/i);
+    assert.match(result.plan.reply, /plan/i);
     assert.equal(result.executed.length, 0);
     assert.equal(result.executedGraph.nodes.length, 0);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("runShellTurn executes mutating shell actions in mutating mode", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-mutate-mode-" + Math.random().toString(36).slice(2));
+  await fs.mkdir(root, { recursive: true });
+
+  try {
+    const result = await runShellTurn("config set workflow.mode tool-dev", {
+      root,
+      json: false,
+      yes: true,
+      noAi: true,
+      planOnly: false,
+      shellMode: "mutate",
+      plannerContext: {
+        ...plannerContext,
+        summary: {
+          ...plannerContext.summary,
+          activeTickets: [
+            { id: "BUG-OVERLAY-01", title: "Restore global overlay handling", lane: "In Progress" }
+          ]
+        }
+      },
+      planners: {
+        planners: [],
+        heuristic: { mode: "heuristic", reason: "fallback" }
+      },
+      history: []
+    });
+
+    assert.equal(result.plan.kind, "plan");
+    assert.equal(result.executed.length, 1);
+    assert.equal(result.executedGraph.nodes.length > 0, true);
+    assert.equal(result.executed.some((item) => item.action.type === "config"), true);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

@@ -7,14 +7,22 @@ const QUALITY_ORDER = {
   high: 3
 };
 
-export async function routeTask({ root = process.cwd(), taskClass, domain = null, preferLocal = true, allowWeak = false } = {}) {
+export async function routeTask({
+  root = process.cwd(),
+  taskClass,
+  domain = null,
+  preferLocal = true,
+  allowWeak = false,
+  forceRefresh = false,
+  providerState = null
+} = {}) {
   if (!taskClass) {
     throw new Error("taskClass is required");
   }
 
-  const providerState = await discoverProviderState({ root });
-  const modelFitMatrix = await buildModelFitMatrix({ root, providerState, taskClass });
-  const routedState = applyModelFitMatrix(providerState, modelFitMatrix);
+  const discoveredProviderState = providerState ?? await discoverProviderState({ root, forceRefresh });
+  const modelFitMatrix = await buildModelFitMatrix({ root, providerState: discoveredProviderState, taskClass });
+  const routedState = applyModelFitMatrix(discoveredProviderState, modelFitMatrix);
   const knowledge = routedState.knowledge;
   const capability = knowledge.capabilityMapping[taskClass] ?? domain ?? "logic";
   const minimumQuality = knowledge.minimumQuality[taskClass] ?? "medium";
@@ -56,7 +64,7 @@ export async function routeTask({ root = process.cwd(), taskClass, domain = null
       const configTrustBonus = provider.local ? 1 : provider.configured ? 2 : -3;
       
       // Item 35: Historical Success Bias
-      const modelMetrics = providerState.metricsSummary?.byModel?.find(m => m.model_id === model.id);
+      const modelMetrics = routedState.metricsSummary?.byModel?.find(m => m.model_id === model.id);
       const reliabilityBonus = modelMetrics ? (modelMetrics.success_rate / 20) : 2; // 0-5 bonus based on success rate
       const quotaBonus = scoreQuota(provider, { quotaStrategy, remoteFreeQuotaAvailable });
       const fitBonus = typeof model.fitScore === "number" ? (model.fitScore / 10) : 0;

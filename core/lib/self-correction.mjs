@@ -16,6 +16,15 @@ export async function attemptActionCorrection({ failedAction, error, options, hi
   const prompt = "Propose a fix. If the ID was wrong, try to search for the correct one. Output ONLY JSON.";
 
   try {
+    const trace = typeof options?.traceAi === "function" ? options.traceAi : null;
+    trace?.({
+      phase: "request",
+      stage: "correction",
+      planner: options.planner,
+      system,
+      prompt
+    });
+    const start = Date.now();
     const completion = await generateCompletion({
       providerId: options.planner.providerId,
       modelId: options.planner.modelId,
@@ -23,9 +32,24 @@ export async function attemptActionCorrection({ failedAction, error, options, hi
       prompt,
       config: { apiKey: options.planner.apiKey, host: options.planner.host, format: "json" }
     });
+    trace?.({
+      phase: "response",
+      stage: "correction",
+      planner: options.planner,
+      response: completion.response,
+      elapsedMs: Date.now() - start
+    });
     const parsed = JSON.parse(completion.response);
     return parsed.action || null;
-  } catch {
+  } catch (error) {
+    if (typeof options?.traceAi === "function") {
+      options.traceAi({
+        phase: "error",
+        stage: "correction",
+        planner: options.planner,
+        error: error?.message ?? String(error)
+      });
+    }
     return null;
   }
 }

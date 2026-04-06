@@ -194,7 +194,7 @@ test("ai-workflow config set rejects shell-channel execution", { concurrency: fa
     );
 
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /direct command channel/i);
+    assert.match(result.stderr, /regular ai-workflow CLI/i);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }
@@ -226,7 +226,7 @@ test("ai-workflow kanban new rejects shell-channel execution", { concurrency: fa
     );
 
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /direct command channel/i);
+    assert.match(result.stderr, /regular ai-workflow CLI/i);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

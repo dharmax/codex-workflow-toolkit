@@ -627,6 +627,60 @@ test("runProviderSetupWizard reports Gemini availability when Google is already 
   }
 });
 
+test("runProviderSetupWizard explains configured Ollama models when the host does not respond", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "providers-setup-ollama-unreachable-"));
+  const tempHome = await mkdtemp(path.join(os.tmpdir(), "providers-setup-ollama-unreachable-home-"));
+  const originalFetch = globalThis.fetch;
+  const originalHome = process.env.HOME;
+  const originalOllamaHost = process.env.OLLAMA_HOST;
+  process.env.HOME = tempHome;
+  process.env.OLLAMA_HOST = "http://lotus:11434";
+  globalThis.fetch = async () => {
+    throw new Error("network unavailable");
+  };
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+    await writeFile(path.join(root, ".ai-workflow", "config.json"), JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://lotus:11434",
+          models: [
+            { id: "hermes3:8b" },
+            { id: "qwen2.5-coder:7b" }
+          ]
+        }
+      }
+    }, null, 2), "utf8");
+
+    const result = await runProviderSetupWizard({
+      root,
+      scope: "project",
+      interactive: false,
+      connectProviderImpl: async () => 0
+    });
+
+    const text = result.messages.join("\n");
+    assert.match(text, /Ollama at http:\/\/lotus:11434 did not respond during discovery\./);
+    assert.match(text, /Using the configured model registry from config for routing\./);
+    assert.doesNotMatch(text, /No Ollama endpoint is currently reachable\./);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalOllamaHost === undefined) {
+      delete process.env.OLLAMA_HOST;
+    } else {
+      process.env.OLLAMA_HOST = originalOllamaHost;
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
 test("generateWithAnthropic sends a direct API request", async () => {
   const originalFetch = globalThis.fetch;
   let captured = null;

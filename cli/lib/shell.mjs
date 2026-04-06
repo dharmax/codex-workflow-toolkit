@@ -65,30 +65,33 @@ export async function handleShell(rest, { cliPath } = {}) {
     yes: Boolean(args.yes),
     noAi: Boolean(args["no-ai"]),
     planOnly: Boolean(args["plan-only"]),
+    trace: Boolean(args.trace),
+    shellMode: "plan",
     cliPath: cliPath ?? path.resolve(root, "cli", "ai-workflow.mjs"),
     plannerContext: null,
     planners: null
   };
+  options.traceAi = (event) => logShellTrace(options, event);
 
   const prompt = args._.join(" ").trim();
   if (prompt) {
     await runProviderSetupWizard({ root, scope: "global", interactive: false });
     await syncProject({ projectRoot: root, writeProjections: true });
     options.plannerContext = await buildShellContext(root);
-    options.planners = await resolveShellPlanners(root);
+    options.planners = await resolveShellPlanners(root, { providerState: options.plannerContext.providerState });
     const result = await runShellTurn(prompt, options);
     return emitShellResult(result, options);
   }
 
   await runProviderSetupWizard({ root, scope: "global", interactive: false });
   options.plannerContext = await buildShellContext(root);
-  options.planners = await resolveShellPlanners(root);
+  options.planners = await resolveShellPlanners(root, { providerState: options.plannerContext.providerState });
   return runInteractiveShell(options);
 }
 
 function parseShellArgs(argv) {
   const args = { _: [] };
-  const booleanFlags = new Set(["help", "json", "yes", "plan-only", "no-ai"]);
+  const booleanFlags = new Set(["help", "json", "yes", "plan-only", "no-ai", "trace"]);
   for (const value of argv) {
     if (!String(value).startsWith("--")) {
       args._.push(value);
@@ -109,7 +112,7 @@ export async function buildShellContext(root = process.cwd()) {
     listToolkitCodelets(),
     listProjectCodelets(root),
     safeGetProjectSummary(root),
-    discoverProviderState({ root }),
+    discoverProviderState({ root, forceRefresh: true }),
     getSmartProjectStatus({ projectRoot: root }).catch(() => "Status unavailable.")
   ]);
 
@@ -180,8 +183,13 @@ async function readFirstExistingEntry(filePaths) {
   return null;
 }
 
-export async function resolveShellPlanners(root = process.cwd()) {
-  const route = await routeTask({ root, taskClass: "shell-planning" });
+export async function resolveShellPlanners(root = process.cwd(), { providerState = null } = {}) {
+  const route = await routeTask({
+    root,
+    taskClass: "shell-planning",
+    forceRefresh: !providerState,
+    providerState
+  });
   const planners = [];
   const providers = route.providers ?? {};
 
@@ -1034,9 +1042,9 @@ export async function planShellRequestWithAgent(inputText, options) {
   let errorMsg = null;
 
   try {
-    completion = await generateCompletion({
-      providerId: options.planner.providerId,
-      modelId: options.planner.modelId,
+    completion = await runShellCompletion({
+      stage: "planner",
+      planner: options.planner,
       system,
       prompt,
       config: {
@@ -1044,7 +1052,9 @@ export async function planShellRequestWithAgent(inputText, options) {
         baseUrl: options.planner.baseUrl,
         host: options.planner.host,
         format: "json"
-      }
+      },
+      options,
+      contentParts: null
     });
   } catch (error) {
     success = false;
@@ -1097,6 +1107,45 @@ export async function planShellRequestWithAgent(inputText, options) {
     }
   } catch (error) {
     return replyPlan(completion.response, 0.4, `Structural error: ${error.message}`);
+  }
+}
+
+async function runShellCompletion({ stage, planner, system, prompt, config = {}, options, contentParts = null }) {
+  const trace = typeof options?.traceAi === "function" ? options.traceAi : null;
+  trace?.({
+    phase: "request",
+    stage,
+    planner,
+    system,
+    prompt
+  });
+  const start = Date.now();
+  try {
+    const completion = await generateCompletion({
+      providerId: planner.providerId,
+      modelId: planner.modelId,
+      system,
+      prompt,
+      config,
+      contentParts
+    });
+    trace?.({
+      phase: "response",
+      stage,
+      planner,
+      response: completion.response,
+      elapsedMs: Date.now() - start
+    });
+    return completion;
+  } catch (error) {
+    trace?.({
+      phase: "error",
+      stage,
+      planner,
+      error: error?.message ?? String(error),
+      elapsedMs: Date.now() - start
+    });
+    throw error;
   }
 }
 
@@ -1294,7 +1343,7 @@ function validateShellCondition(condition) {
 }
 
 function shouldAutoNarratePlan(actions, options) {
-  if (options.json || options.planOnly) {
+  if (options.json) {
     return false;
   }
   if (!Array.isArray(actions) || !actions.length) {
@@ -1304,7 +1353,7 @@ function shouldAutoNarratePlan(actions, options) {
 }
 
 function shouldNarrateShellPlan(plan, options) {
-  if (plan?.presentation === "assistant-first" && !options.json && !options.planOnly) {
+  if (plan?.presentation === "assistant-first" && !options.json) {
     return true;
   }
   return shouldAutoNarratePlan(plan?.actions, options);
@@ -1341,9 +1390,9 @@ async function synthesizeShellExecutionReply({ inputText, plan, executed, option
   }
 
   try {
-    const completion = await generateCompletion({
-      providerId: planner.providerId,
-      modelId: planner.modelId,
+    const completion = await runShellCompletion({
+      stage: "assistant",
+      planner,
       system: [
         "You are the conversational shell for ai-workflow.",
         "Speak like a strong coding assistant, not a command router.",
@@ -1365,7 +1414,8 @@ async function synthesizeShellExecutionReply({ inputText, plan, executed, option
         apiKey: planner.apiKey,
         baseUrl: planner.baseUrl,
         host: planner.host
-      }
+      },
+      options
     });
     const text = String(completion.response ?? "").trim();
     return text || renderFallbackAssistantReply({ inputText, plan, executed, plannerContext: options.plannerContext });
@@ -1598,6 +1648,17 @@ export async function runShellTurn(inputText, options) {
     return result;
   }
 
+  const mutationModeGate = await ensureMutatingModeForPlan(plan, options);
+  if (mutationModeGate) {
+    return {
+      ...result,
+      plan: replyPlan(mutationModeGate.reply, 0.15, mutationModeGate.reason),
+      executed: [],
+      executedGraph: { nodes: [], executions: [], branchPath: [] },
+      preRendered: false
+    };
+  }
+
   const mutationGate = evaluateShellMutationPolicy(plan, options.plannerContext);
   if (mutationGate) {
     return {
@@ -1605,32 +1666,6 @@ export async function runShellTurn(inputText, options) {
       plan: replyPlan(mutationGate.reply, 0.15, mutationGate.reason),
       executed: [],
       executedGraph: { nodes: [], executions: [], branchPath: [] },
-      preRendered: false
-    };
-  }
-
-  if (!options.yes && !options.planOnly && plan.actions.some((action) => isMutatingAction(action))) {
-    const approved = await confirmPlan(plan, options);
-    if (!approved) {
-      return {
-        input: inputText,
-        plan: {
-          ...plan,
-          kind: "reply",
-          reply: "Cancelled.",
-          actions: []
-        },
-        executed: [],
-        preRendered: false
-      };
-    }
-  }
-
-  if (options.planOnly) {
-    return {
-      input: inputText,
-      plan,
-      executed: [],
       preRendered: false
     };
   }
@@ -1923,41 +1958,20 @@ export async function runInteractiveShell(options) {
   options.rl = rl;
   options.blacklist = new Set();
   options.history = [];
+  options.shellMode ??= "plan";
+  options.trace ??= false;
+  options.traceAi ??= (event) => logShellTrace(options, event);
   const processingIndicator = createShellProcessingIndicator(options);
   try {
-    const canBootstrapProviders = process.stdin.isTTY && process.stdout.isTTY;
-    if (canBootstrapProviders) {
-      const interactiveSetup = !options.noAi;
-      const setupResult = await withWorkspaceMutation(options.root, "shell provider setup", async () => runProviderSetupWizard({
-        root: options.root,
-        scope: "global",
-        interactive: interactiveSetup,
-        rl,
-        promptRemoteProviders: interactiveSetup
-      }));
-
-      if (interactiveSetup) {
-        for (const message of setupResult.messages ?? []) {
-          output.write(`${message}\n`);
-        }
-        if ((setupResult.messages ?? []).length) {
-          output.write("\n");
-        }
-      }
-
-      options.plannerContext = await buildShellContext(options.root);
-      options.planners = await resolveShellPlanners(options.root);
-    }
-
     if (!options.plannerContext || !options.planners) {
       options.plannerContext = await buildShellContext(options.root);
-      options.planners = await resolveShellPlanners(options.root);
+      options.planners = await resolveShellPlanners(options.root, { providerState: options.plannerContext.providerState });
     }
 
     const primary = options.noAi
       ? { ...options.planners.heuristic, mode: "heuristic-forced", reason: "AI planning disabled for this shell session." }
       : options.planners.planners[0] ?? options.planners.heuristic;
-    output.write(`ai-workflow shell\n${renderPlannerLine(primary)}\nType 'help' for examples. Type 'exit' to quit.\n\n`);
+    output.write(`ai-workflow shell\n${renderPlannerLine(primary)}\n${renderShellModeLine(options)}\nType 'help' for examples. Type 'plan', 'mutate', 'trace on', 'trace off', or 'exit' to quit.\n\n`);
 
     if (!options.noAi && !options.planners.planners.length) {
       output.write([
@@ -1993,7 +2007,8 @@ export async function runInteractiveShell(options) {
             rl
           }));
           rl.resume();
-          options.planners = await resolveShellPlanners(options.root);
+          options.plannerContext = await buildShellContext(options.root);
+          options.planners = await resolveShellPlanners(options.root, { providerState: options.plannerContext.providerState });
           output.write(`\nUpdated planner: ${renderPlannerLine(options.planners.planners[0] ?? options.planners.heuristic)}\n\n`);
         } else {
           output.write("\n");
@@ -2011,6 +2026,14 @@ export async function runInteractiveShell(options) {
           continue;
         }
 
+        const commandResult = handleShellCommand(line, options);
+        if (commandResult?.handled) {
+          if (commandResult.exit) {
+            break;
+          }
+          continue;
+        }
+
         // 0. Ensure bidirectional sync so manual edits are ingested and DB changes are projected
         processingIndicator.update("syncing project");
         await syncProject({ projectRoot: options.root, writeProjections: true });
@@ -2018,6 +2041,7 @@ export async function runInteractiveShell(options) {
         // 1. Refresh context before every turn so the Brain sees the latest state
         processingIndicator.update("refreshing context");
         options.plannerContext = await buildShellContext(options.root);
+        options.planners = await resolveShellPlanners(options.root, { providerState: options.plannerContext.providerState });
 
         processingIndicator.update("planning and running");
         const result = await runShellTurn(line, options);
@@ -2048,7 +2072,7 @@ export async function runInteractiveShell(options) {
 
         const mutated = result.executed.some(e => e.mutation);
         if (mutated) {
-          options.planners = await resolveShellPlanners(options.root);
+          options.planners = await resolveShellPlanners(options.root, { providerState: options.plannerContext.providerState });
           if (!options.json) {
             output.write(`Planners updated: ${renderPlannerLine(options.planners.planners[0] ?? options.planners.heuristic)}\n\n`);
           }
@@ -2088,21 +2112,127 @@ function createShellProcessingIndicator(options) {
   };
 }
 
-async function confirmPlan(plan, options) {
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    return false;
+function renderShellModeLine(options) {
+  const mode = options.shellMode === "mutate" ? "mutating" : "plan-only";
+  const trace = options.trace ? "on" : "off";
+  return `mode: ${mode} | trace: ${trace}`;
+}
+
+function renderShellModeMessage(mode) {
+  return `Shell mode: ${mode === "mutate" ? "mutating" : "plan-only"}.`;
+}
+
+function setShellMode(options, mode, { announce = false } = {}) {
+  options.shellMode = mode;
+  if (announce && !options.json) {
+    output.write(`${renderShellModeMessage(mode)}\n`);
   }
-  output.write(clearShellStatusLine());
-  const rl = options.rl ?? readline.createInterface({ input, output });
-  try {
-    output.write(`Planned actions:\n${renderActionList(plan.actions)}\n`);
-    const answer = (await promptShellQuestion(rl, "Run mutating actions? [y/N] ") ?? "").trim().toLowerCase();
-    return answer === "y" || answer === "yes";
-  } finally {
-    if (!options.rl) {
-      rl.close();
+}
+
+function setShellTrace(options, enabled, { announce = false } = {}) {
+  options.trace = enabled;
+  if (announce && !options.json) {
+    output.write(`${enabled ? "Trace enabled." : "Trace disabled."}\n`);
+  }
+}
+
+export function handleShellCommand(line, options) {
+  const normalized = String(line ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === "plan") {
+    setShellMode(options, "plan", { announce: true });
+    return { handled: true };
+  }
+
+  if (normalized === "mutate") {
+    setShellMode(options, "mutate", { announce: true });
+    return { handled: true };
+  }
+
+  if (normalized === "trace on") {
+    setShellTrace(options, true, { announce: true });
+    return { handled: true };
+  }
+
+  if (normalized === "trace off") {
+    setShellTrace(options, false, { announce: true });
+    return { handled: true };
+  }
+
+  if (normalized === "trace") {
+    if (!options.json) {
+      output.write(`Trace is ${options.trace ? "on" : "off"}.\n`);
     }
+    return { handled: true };
   }
+
+  return null;
+}
+
+function logShellTrace(options, event) {
+  if (!options?.trace || options?.json) {
+    return;
+  }
+
+  const stage = String(event?.stage ?? "ai").trim();
+  const phase = String(event?.phase ?? "event").trim();
+  const planner = describeShellPlanner(event?.planner);
+  const lines = [`[trace] ${stage} ${phase} -> ${planner}`];
+
+  if (event?.system) {
+    lines.push("system:");
+    lines.push(String(event.system).trimEnd());
+  }
+  if (event?.prompt) {
+    lines.push("prompt:");
+    lines.push(String(event.prompt).trimEnd());
+  }
+  if (event?.response !== undefined) {
+    lines.push("response:");
+    lines.push(String(event.response).trimEnd());
+  }
+  if (event?.error !== undefined) {
+    lines.push("error:");
+    lines.push(String(event.error).trimEnd());
+  }
+  if (Number.isFinite(event?.elapsedMs)) {
+    lines.push(`latency: ${event.elapsedMs}ms`);
+  }
+
+  output.write(`${lines.join("\n")}\n`);
+}
+
+function describeShellPlanner(planner) {
+  if (!planner) {
+    return "heuristic";
+  }
+  if (planner.mode === "ollama") {
+    return `${planner.providerId ?? "ollama"}:${planner.modelId ?? "unknown"}${planner.host ? ` @ ${planner.host}` : ""}`;
+  }
+  if (planner.providerId && planner.modelId) {
+    return `${planner.providerId}:${planner.modelId}`;
+  }
+  if (planner.providerId) {
+    return planner.providerId;
+  }
+  if (planner.mode) {
+    return planner.mode;
+  }
+  return "unknown";
+}
+
+function renderPlanModeMutationReply(actions, plannerContext) {
+  const projectName = path.basename(plannerContext?.root ?? process.cwd());
+  return [
+    "This request needs mutating mode.",
+    "Planned actions:",
+    renderActionList(actions),
+    "Type `mutate` to switch into mutating mode and run it, or `plan` to stay read-only.",
+    `Current project: ${projectName}.`
+  ].join("\n");
 }
 
 async function promptShellQuestion(rl, prompt) {
@@ -2942,9 +3072,9 @@ async function generateReplanGraphFragment({ node, nodeMap, options }) {
     return [];
   }
 
-  const completion = await generateCompletion({
-    providerId: planner.providerId,
-    modelId: planner.modelId,
+  const completion = await runShellCompletion({
+    stage: "replan",
+    planner,
     system: [
       "You are replanning a shell execution graph for ai-workflow.",
       "Use prior node results to produce the next graph fragment only.",
@@ -2970,7 +3100,8 @@ async function generateReplanGraphFragment({ node, nodeMap, options }) {
       baseUrl: planner.baseUrl,
       host: planner.host,
       format: "json"
-    }
+    },
+    options
   });
 
   const parsed = JSON.parse(String(completion.response ?? "{}"));
@@ -3179,19 +3310,50 @@ function isMutatingAction(action) {
   return MUTATING_ACTIONS.has(action.type);
 }
 
+async function ensureMutatingModeForPlan(plan, options) {
+  const mutationActions = Array.isArray(plan?.actions) ? plan.actions.filter((action) => isMutatingAction(action)) : [];
+  if (!mutationActions.length || options.shellMode === "mutate") {
+    return null;
+  }
+
+  if (options.yes) {
+    setShellMode(options, "mutate");
+    return null;
+  }
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    return {
+      reason: "shell is in plan mode",
+      reply: renderPlanModeMutationReply(mutationActions, options.plannerContext)
+    };
+  }
+
+  output.write(clearShellStatusLine());
+  const rl = options.rl ?? readline.createInterface({ input, output });
+  try {
+    output.write(`Planned actions:\n${renderActionList(mutationActions)}\n`);
+    const answer = (await promptShellQuestion(rl, "Switch to mutating mode and run them? [y/N] ") ?? "").trim().toLowerCase();
+    if (answer === "y" || answer === "yes") {
+      setShellMode(options, "mutate", { announce: true });
+      return null;
+    }
+  } finally {
+    if (!options.rl) {
+      rl.close();
+    }
+  }
+
+  return {
+    reason: "shell is in plan mode",
+    reply: renderPlanModeMutationReply(mutationActions, options.plannerContext)
+  };
+}
+
 function evaluateShellMutationPolicy(plan, plannerContext) {
   const actions = Array.isArray(plan?.actions) ? plan.actions : [];
   const mutationActions = actions.filter((action) => isMutatingAction(action));
   if (!mutationActions.length) {
     return null;
-  }
-
-  const directActions = mutationActions.filter((action) => !WORKFLOW_GATED_MUTATIONS.has(action.type));
-  if (directActions.length) {
-    return {
-      reason: "shell mutating actions must use their direct command channel",
-      reply: renderDirectMutationChannelReply(directActions, plannerContext)
-    };
   }
 
   const summary = plannerContext?.summary ?? {};
@@ -3230,34 +3392,6 @@ function evaluateShellMutationPolicy(plan, plannerContext) {
   }
 
   return null;
-}
-
-function renderDirectMutationChannelReply(actions, plannerContext) {
-  const lines = [
-    "I will not execute state-changing actions from the conversational shell.",
-    "Use the dedicated direct command channel for those changes."
-  ];
-
-  const commands = actions
-    .map((action) => {
-      try {
-        return compileShellAction(action, { json: false }).display;
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-
-  if (commands.length) {
-    lines.push("Direct commands for this plan:");
-    for (const command of commands.slice(0, 8)) {
-      lines.push(`- \`${command}\``);
-    }
-  }
-
-  const projectName = path.basename(plannerContext?.root ?? process.cwd());
-  lines.push(`Current project: ${projectName}.`);
-  return lines.join("\n");
 }
 
 function renderWorkflowMutationGateReply({ activeTickets, inProgressTickets, blockedTicketIds, plannerContext }) {
@@ -3366,6 +3500,10 @@ async function safeGetProjectSummary(root) {
 
 function renderShellHelp(plannerContext) {
   const examples = [
+    "plan",
+    "mutate",
+    "trace on",
+    "trace off",
     "summary",
     "version",
     "sync and show review hotspots",
@@ -4172,13 +4310,15 @@ function renderExecuteTicketResult(action, payload) {
 const SHELL_HELP = `
 Usage:
   ai-workflow shell
-  ai-workflow shell <request...> [--yes] [--plan-only] [--no-ai] [--json]
+  ai-workflow shell <request...> [--yes] [--plan-only] [--no-ai] [--trace] [--json]
 
 Notes:
   - The shell turns natural-language requests into workflow actions.
   - It uses a high-power remote planner (Gemini/OpenAI) if available, falling back to local Ollama.
   - It can now "chat" and answer general project questions if a smart model is configured.
-  - Mutating actions ask for confirmation unless --yes is passed.
+  - The shell starts in plan mode. Use \`mutate\` to switch into mutating mode and \`plan\` to return to read-only mode.
+  - Use \`trace on\` and \`trace off\` to show or hide AI prompts, responses, and selected models.
+  - Mutating actions still respect workflow gating when they target in-progress ticket execution.
 
 Examples:
   - "are we synched?"

@@ -19,6 +19,6 @@ export function isDirectCommandChannel() {
 
 export function assertDirectCommandChannel(operation) {
   if (!isDirectCommandChannel()) {
-    throw new Error(`${operation} must use the direct command channel (current: ${getCommandChannel()}).`);
+    throw new Error(`${operation} must be run from the regular ai-workflow CLI, not the conversational shell.`);
   }
 }
