@@ -66,6 +66,19 @@ export async function runProviderSetupWizard({
     }
 
     if (interactive && rl && promptRemoteProviders) {
+      for (const providerId of REMOTE_PROVIDER_IDS) {
+        const provider = providerState.providers?.[providerId];
+        if (!provider) {
+          continue;
+        }
+        const label = formatRemoteProviderLabel(providerId);
+        if (provider.available) {
+          messages.push(`${label} is already available.`);
+        } else {
+          messages.push(`${label} still needs a valid API key or config.`);
+        }
+      }
+
       const missingRemoteProviders = REMOTE_PROVIDER_IDS.filter((providerId) => {
         const provider = providerState.providers?.[providerId];
         return provider && !provider.available;
@@ -74,13 +87,13 @@ export async function runProviderSetupWizard({
       if (missingRemoteProviders.length) {
         const prompt = `Other AI services to connect now (${missingRemoteProviders.join(", ")}; comma-separated, blank to skip): `;
         const answer = await rl.question(prompt);
-        for (const providerId of parseCommaSeparatedList(answer)) {
-          if (!missingRemoteProviders.includes(providerId)) {
+        for (const selection of parseRemoteProviderSelections(answer)) {
+          if (!missingRemoteProviders.includes(selection.providerId) && !selection.aliasUsed) {
             continue;
           }
-          const code = await connectProviderImpl(providerId, { rl });
+          const code = await connectProviderImpl(selection.providerId, { rl });
           if (code === 0) {
-            connectedProviders.push(providerId);
+            connectedProviders.push(selection.providerId);
           }
         }
       }
@@ -109,6 +122,31 @@ function parseCommaSeparatedList(value) {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function parseRemoteProviderSelections(value) {
+  const selections = new Map();
+  for (const providerId of parseCommaSeparatedList(value)) {
+    const normalized = providerId.toLowerCase();
+    const canonicalId = normalized === "gemini" ? "google" : normalized;
+    const existing = selections.get(canonicalId) ?? { providerId: canonicalId, aliasUsed: false };
+    existing.aliasUsed = existing.aliasUsed || normalized === "gemini";
+    selections.set(canonicalId, existing);
+  }
+  return [...selections.values()];
+}
+
+function formatRemoteProviderLabel(providerId) {
+  switch (providerId) {
+    case "google":
+      return "Gemini (Google)";
+    case "anthropic":
+      return "Anthropic";
+    case "openai":
+      return "OpenAI";
+    default:
+      return providerId;
+  }
 }
 
 function normalizeHostList(hosts) {

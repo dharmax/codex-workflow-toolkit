@@ -38,6 +38,12 @@ export async function buildDoctorReport({ root = process.cwd(), forceRefresh = f
   const globalConfig = globalConfigState.config;
   const ollamaConfig = resolveOllamaConfig({ projectConfig, globalConfig });
   const git = await probeBinary("git", ["--version"]);
+  const ollamaAvailable = enrichedState.providers.ollama.available;
+  const ollamaConfigured = Boolean(
+    ollamaConfig.host
+    || (Array.isArray(ollamaConfig.endpoints) && ollamaConfig.endpoints.length)
+    || enrichedState.providers.ollama.models.length
+  );
 
   const providers = {};
   for (const [id, p] of Object.entries(enrichedState.providers)) {
@@ -62,7 +68,9 @@ export async function buildDoctorReport({ root = process.cwd(), forceRefresh = f
     },
     providers,
     ollama: {
-      installed: enrichedState.providers.ollama.available,
+      installed: ollamaAvailable,
+      configured: ollamaConfigured,
+      status: ollamaAvailable ? "available" : ollamaConfigured ? "configured-unreachable" : "missing",
       host: enrichedState.providers.ollama.host,
       hardwareClass: ollamaConfig.hardwareClass ?? null,
       plannerModel: ollamaConfig.plannerModel ?? null,
@@ -95,6 +103,11 @@ export async function buildDoctorReport({ root = process.cwd(), forceRefresh = f
 }
 
 export function renderDoctorReport(report) {
+  const ollamaStatus = report.ollama.status === "available"
+    ? "available"
+    : report.ollama.status === "configured-unreachable"
+      ? "configured but unreachable"
+      : "missing";
   const lines = [
     `cwd: ${report.cwd}`,
     `platform: ${report.platform}/${report.arch}`,
@@ -119,13 +132,13 @@ export function renderDoctorReport(report) {
     lines.push(`${id}: ${p.available ? "available" : "missing key/config"} (${p.modelCount} models)`);
   }
 
-  lines.push(`ollama: ${report.ollama.installed ? "installed" : "missing"}`);
+  lines.push(`ollama: ${ollamaStatus}`);
 
   if (report.ollama.host) {
     lines.push(`ollama host: ${report.ollama.host}`);
   }
 
-  if (report.ollama.installed) {
+  if (report.ollama.models.length) {
     lines.push("ollama models:");
     for (const m of report.ollama.models) {
       const caps = Object.entries(m.capabilities ?? {})
