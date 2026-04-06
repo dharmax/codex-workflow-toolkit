@@ -525,10 +525,10 @@ test("ask command renders readiness in assistant-first language for plugin-style
   }
 });
 
-test("shell trace uses a text-capable Ollama planner for a multi-phase epic request", async () => {
+test("shell creates a Telegram remote-control epic end to end in mutating mode", async () => {
   const projectRoot = await makeTempDir();
   const preloadPath = path.join(projectRoot, "shell-preload.mjs");
-  const prompt = "i want a new epic: Telegram remote-control. it should be multi-phase. i want you to first creatively think about the long-term vision of it, and then break it into small, easy to achieve steps, each step adding a feature/s .";
+  const prompt = "create epic for Telegram remote-control. it should be multi-phase. first think about the long-term vision, then break it into small, easy to achieve steps, each step adding a feature.";
 
   try {
     await mkdir(path.join(projectRoot, ".ai-workflow"), { recursive: true });
@@ -543,15 +543,24 @@ test("shell trace uses a text-capable Ollama planner for a multi-phase epic requ
       }, null, 2),
       "utf8"
     );
-    await writeFile(
-      path.join(projectRoot, "MISSION.md"),
-      "Telegram remote-control mission",
-      "utf8"
-    );
+    const seedTicket = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "ticket",
+      "create",
+      "--id",
+      "TKT-TELEGRAM-SEED",
+      "--title",
+      "Seed ticket for mutating shell tests",
+      "--lane",
+      "In Progress",
+      "--json"
+    ], { cwd: projectRoot });
+    assert.equal(seedTicket.code, 0, seedTicket.stderr || seedTicket.stdout);
     await writeFile(
       preloadPath,
       [
-        "globalThis.fetch = async (url) => {",
+        "globalThis.fetch = async (url, init) => {",
         "  const text = String(url);",
         "  if (text.endsWith('/api/tags')) {",
         "    return {",
@@ -574,21 +583,90 @@ test("shell trace uses a text-capable Ollama planner for a multi-phase epic requ
         "      }",
         "    };",
         "  }",
-        "  if (text.endsWith('/api/generate') || text.endsWith('/api/chat')) {",
+        "  if (text.includes('generativelanguage.googleapis.com')) {",
         "    return {",
         "      ok: true,",
         "      async json() {",
         "        return {",
-        "          response: JSON.stringify({",
-        "            kind: 'reply',",
-        "            confidence: 0.97,",
-        "            reason: 'The request is a multi-phase product vision question.',",
-        "            strategy: 'First define the remote-control vision, then phase the work into discovery, transport, command routing, safety, and operator UX.',",
-        "            reply: 'Vision: build a resilient Telegram remote-control layer with explicit approval, auditability, and staged rollout. Phases: 1) discovery, 2) command transport, 3) execution controls, 4) safety/observability, 5) operator polish.'",
-        "          })",
+        "          candidates: [{",
+        "            content: {",
+        "              parts: [{",
+        "                text: JSON.stringify({",
+        "                  status: 'complete',",
+        "                  epic: {",
+        "                    id: 'EPIC-TELEGRAM-001',",
+        "                    title: 'Telegram remote-control',",
+        "                    summary: 'Build a Telegram-driven remote-control layer that lets trusted operators inspect status, trigger safe actions, and roll out mutating capabilities in phases with explicit confirmation, traceability, and rollback controls.',",
+        "                    userStories: [",
+        "                      'As an operator, I can pair a Telegram identity with the project so commands are only accepted from trusted senders.',",
+        "                      'As an operator, I can ask for project status and current work from Telegram without leaving the chat.',",
+        "                      'As an operator, I can request mutating actions through staged approvals and dry-runs before anything changes.',",
+        "                      'As an operator, I can see trace output, audit history, and the selected AI model for each command.',",
+        "                      'As an operator, I can gradually enable new control surfaces and disable them quickly if something misbehaves.'",
+        "                    ],",
+        "                    ticketBatches: [",
+        "                      'Phase 1: Telegram identity, pairing, and trust boundaries.',",
+        "                      'Phase 2: Read-only command routing and status responses.',",
+        "                      'Phase 3: Mutating commands with explicit approval, dry-run, and confirmation.',",
+        "                      'Phase 4: Trace logging, audit trail, safety checks, and rollback controls.',",
+        "                      'Phase 5: Operator UX, rollout guardrails, and polish.'",
+        "                    ]",
+        "                  },",
+        "                  tickets: [",
+        "                    { id: 'TKT-TELEGRAM-001', title: 'Pair Telegram identity and trust gate', summary: 'Authorize a Telegram sender, persist the trust binding, and reject unknown chat commands.', domain: 'logic', story: 'As an operator, I can pair a Telegram identity with the project so remote commands are only accepted from trusted senders.' },",
+        "                    { id: 'TKT-TELEGRAM-002', title: 'Route read-only Telegram commands', summary: 'Support status, summary, and current-work queries from Telegram without mutating state.', domain: 'logic', story: 'As an operator, I can ask for project status and current work from Telegram without leaving the chat.' },",
+        "                    { id: 'TKT-TELEGRAM-003', title: 'Gate mutating Telegram commands with approval', summary: 'Require explicit approval, dry-run, and confirmation before a Telegram command changes project state.', domain: 'logic', story: 'As an operator, I can request mutating actions through staged approvals and dry-runs before anything changes.' },",
+        "                    { id: 'TKT-TELEGRAM-004', title: 'Expose traces and audit history for remote actions', summary: 'Show the selected model, the prompt path, and audit records for each Telegram remote-control request.', domain: 'logic', story: 'As an operator, I can see trace output, audit history, and the selected AI model for each command.' },",
+        "                    { id: 'TKT-TELEGRAM-005', title: 'Add rollout controls and kill switch', summary: 'Add feature flags, scope controls, and a fast disable path so remote control can be rolled out safely.', domain: 'logic', story: 'As an operator, I can gradually enable new control surfaces and disable them quickly if something misbehaves.' }",
+        "                  ]",
+        "                })",
+        "              }]",
+        "            }",
+        "          }]",
         "        };",
         "      }",
         "    };",
+        "  }",
+        "  if (text.endsWith('/api/generate') || text.endsWith('/api/chat')) {",
+        "    const payload = JSON.parse(String(init?.body ?? '{}'));",
+        "    if (String(payload.system ?? '').includes('Product Manager') || String(payload.prompt ?? '').includes('User Intent:')) {",
+        "      return {",
+        "        ok: true,",
+        "        async json() {",
+        "          return {",
+        "            response: JSON.stringify({",
+        "              status: 'complete',",
+        "              epic: {",
+        "                id: 'EPIC-TELEGRAM-001',",
+        "                title: 'Telegram remote-control',",
+        "                summary: 'Build a Telegram-driven remote-control layer that lets trusted operators inspect status, trigger safe actions, and roll out mutating capabilities in phases with explicit confirmation, traceability, and rollback controls.',",
+        "                userStories: [",
+        "                  'As an operator, I can pair a Telegram identity with the project so commands are only accepted from trusted senders.',",
+        "                  'As an operator, I can ask for project status and current work from Telegram without leaving the chat.',",
+        "                  'As an operator, I can request mutating actions through staged approvals and dry-runs before anything changes.',",
+        "                  'As an operator, I can see trace output, audit history, and the selected AI model for each command.',",
+        "                  'As an operator, I can gradually enable new control surfaces and disable them quickly if something misbehaves.'",
+        "                ],",
+        "                ticketBatches: [",
+        "                  'Phase 1: Telegram identity, pairing, and trust boundaries.',",
+        "                  'Phase 2: Read-only command routing and status responses.',",
+        "                  'Phase 3: Mutating commands with explicit approval, dry-run, and confirmation.',",
+        "                  'Phase 4: Trace logging, audit trail, safety checks, and rollback controls.',",
+        "                  'Phase 5: Operator UX, rollout guardrails, and polish.'",
+        "                ]",
+        "              },",
+        "              tickets: [",
+        "                { id: 'TKT-TELEGRAM-001', title: 'Pair Telegram identity and trust gate', summary: 'Authorize a Telegram sender, persist the trust binding, and reject unknown chat commands.', domain: 'logic', story: 'As an operator, I can pair a Telegram identity with the project so remote commands are only accepted from trusted senders.' },",
+        "                { id: 'TKT-TELEGRAM-002', title: 'Route read-only Telegram commands', summary: 'Support status, summary, and current-work queries from Telegram without mutating state.', domain: 'logic', story: 'As an operator, I can ask for project status and current work from Telegram without leaving the chat.' },",
+        "                { id: 'TKT-TELEGRAM-003', title: 'Gate mutating Telegram commands with approval', summary: 'Require explicit approval, dry-run, and confirmation before a Telegram command changes project state.', domain: 'logic', story: 'As an operator, I can request mutating actions through staged approvals and dry-runs before anything changes.' },",
+        "                { id: 'TKT-TELEGRAM-004', title: 'Expose traces and audit history for remote actions', summary: 'Show the selected model, the prompt path, and audit records for each Telegram remote-control request.', domain: 'logic', story: 'As an operator, I can see trace output, audit history, and the selected AI model for each command.' },",
+        "                { id: 'TKT-TELEGRAM-005', title: 'Add rollout controls and kill switch', summary: 'Add feature flags, scope controls, and a fast disable path so remote control can be rolled out safely.', domain: 'logic', story: 'As an operator, I can gradually enable new control surfaces and disable them quickly if something misbehaves.' }",
+        "              ]",
+        "            })",
+        "          };",
+        "        }",
+        "      };",
+        "    }",
         "  }",
         "  throw new Error(`Unexpected fetch URL: ${text}`);",
         "};"
@@ -602,16 +680,33 @@ test("shell trace uses a text-capable Ollama planner for a multi-phase epic requ
       path.join(repoRoot, "cli", "ai-workflow.mjs"),
       "shell",
       prompt,
-      "--trace"
+      "--yes"
     ], { cwd: projectRoot });
 
     assert.equal(result.code, 0, result.stderr || result.stdout);
-    assert.match(result.stdout, /\[trace\] planner request -> ollama:qwen2\.5-coder:7b @ http:\/\/127\.0\.0\.1:11434/);
-    assert.doesNotMatch(result.stdout, /moondream:latest/);
-    assert.match(result.stdout, /Current User Request:\n"i want a new epic: Telegram remote-control\./);
-    const humanTail = result.stdout.trim().split(/\nlatency: \d+ms\n/).at(-1) ?? "";
-    assert.match(humanTail, /^Vision: build a resilient Telegram remote-control layer with explicit approval, auditability, and staged rollout\./);
-    assert.match(humanTail, /Phases: 1\) discovery, 2\) command transport, 3\) execution controls, 4\) safety\/observability, 5\) operator polish\./);
+    assert.match(result.stdout, /Feature scoped and added: EPIC-TELEGRAM-001 Telegram remote-control/);
+
+    const epicResult = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "epic",
+      "show",
+      "EPIC-TELEGRAM-001",
+      "--json"
+    ], { cwd: projectRoot });
+
+    assert.equal(epicResult.code, 0, epicResult.stderr || epicResult.stdout);
+    const epic = JSON.parse(epicResult.stdout);
+    assert.equal(epic.title, "Telegram remote-control");
+    assert.equal(epic.userStories.length, 5);
+    assert.equal(epic.ticketBatches.length, 5);
+    assert.equal(epic.linkedTickets.length, 5);
+
+    const epicsText = await readFile(path.join(projectRoot, "epics.md"), "utf8");
+    const kanbanText = await readFile(path.join(projectRoot, "kanban.md"), "utf8");
+    assert.match(epicsText, /EPIC-TELEGRAM-001 Telegram remote-control/);
+    assert.match(kanbanText, /TKT-TELEGRAM-001 Pair Telegram identity and trust gate/);
+    assert.match(kanbanText, /TKT-TELEGRAM-005 Add rollout controls and kill switch/);
   } finally {
     await cleanup(projectRoot);
   }
