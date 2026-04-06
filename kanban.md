@@ -9,15 +9,15 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 
 ## Deep Backlog
 
-- [ ] ART-001 Build a rubric-driven artifact judge codelet
-  - Summary: Implement an AI codelet that scores fuzzy artifacts against an explicit rubric and returns pass, fail, or needs_human_review.
-  - Story: As a maintainer, I can ask the workflow to judge a generated artifact against a rubric and get a structured verdict.
-  - Epic: EPIC-009
-  - Parent: EPIC-009
-  - State: open
 - [ ] ART-002 Integrate judged artifacts into verification summaries
   - Summary: Surface AI artifact judgments in verification and readiness flows without replacing deterministic checks.
   - Story: As a reviewer, I can see AI judgments alongside hard verification so fuzzy outputs are handled explicitly.
+  - Epic: EPIC-009
+  - Parent: EPIC-009
+  - State: open
+- [ ] ART-001 Build a rubric-driven artifact judge codelet
+  - Summary: Implement an AI codelet that scores fuzzy artifacts against an explicit rubric and returns pass, fail, or needs_human_review.
+  - Story: As a maintainer, I can ask the workflow to judge a generated artifact against a rubric and get a structured verdict.
   - Epic: EPIC-009
   - Parent: EPIC-009
   - State: open
@@ -29,7 +29,36 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 ## ToDo
 <!-- canonical alias: ## Todo -->
 
-- No items
+- [ ] TKT-TELEGRAM-001 Pair Telegram identity and trust gate
+  - Summary: Authorize a Telegram sender, persist the trust binding, and reject unknown chat commands.
+  - Story: As an operator, I can pair a Telegram identity with the project so remote commands are only accepted from trusted senders.
+  - Epic: EPIC-010
+  - Parent: EPIC-010
+  - State: open
+- [ ] TKT-TELEGRAM-005 Add rollout controls and kill switch
+  - Summary: Add feature flags, scope controls, and a fast disable path so remote control can be rolled out safely.
+  - Story: As an operator, I can gradually enable new control surfaces and disable them quickly if something misbehaves.
+  - Epic: EPIC-010
+  - Parent: EPIC-010
+  - State: open
+- [ ] TKT-TELEGRAM-003 Gate mutating Telegram commands with approval
+  - Summary: Require explicit approval, dry-run, and confirmation before a Telegram command changes project state.
+  - Story: As an operator, I can request mutating actions through staged approvals and dry-runs before anything changes.
+  - Epic: EPIC-010
+  - Parent: EPIC-010
+  - State: open
+- [ ] TKT-TELEGRAM-004 Expose traces and audit history for remote actions
+  - Summary: Show the selected model, the prompt path, and audit records for each Telegram remote-control request.
+  - Story: As an operator, I can see trace output, audit history, and the selected AI model for each command.
+  - Epic: EPIC-010
+  - Parent: EPIC-010
+  - State: open
+- [ ] TKT-TELEGRAM-002 Route read-only Telegram commands
+  - Summary: Support status, summary, and current-work queries from Telegram without mutating state.
+  - Story: As an operator, I can ask for project status and current work from Telegram without leaving the chat.
+  - Epic: EPIC-010
+  - Parent: EPIC-010
+  - State: open
 
 ## Bugs P1
 
@@ -53,30 +82,30 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 
 ## Done
 
-- [ ] EXE-012 Shared smart-codelet runtime helper and lean-ctx context packing ✅ 2026-04-04 ✅ 2026-04-04 ✅ 2026-04-05
-  - Summary: Introduce a reusable runtime/helper layer that builds structured run context, uses lean-ctx where relevant, and keeps prompt payloads compact.
-  - Epic: EPC-007
-  - Parent: EPC-007
+- [ ] SHELL-001 Local-first shell planner routing ✅ 2026-04-04 ✅ 2026-04-05 ✅ 2026-04-06
+  - Summary: Use the live model-fit matrix for shell planning, cache Ollama discovery across turns, and cover the refresh and routing policy with regression tests.
+  - Epic: EPC-008
+  - Parent: EPC-008
   - State: archived
-- [ ] EXE-011 Registry-driven smart codelet resolution and cache ✅ 2026-04-04 ✅ 2026-04-04 ✅ 2026-04-05
-  - Summary: Move smart-codelet identity and lookup into the core registry path, cache codelet metadata in-process, and remove the hard-coded catalog from the runner.
-  - Epic: EPC-007
-  - Parent: EPC-007
-  - State: archived
-- [ ] EXE-014 Tests and projection updates for smart-codelet runtime split ✅ 2026-04-04 ✅ 2026-04-04 ✅ 2026-04-05
-  - Summary: Add focused tests for registry caching, helper-assisted execution, and workflow projection updates so the runtime split stays stable.
-  - Epic: EPC-007
-  - Parent: EPC-007
-  - State: archived
-- [ ] EXE-013 JS-to-JS execution path and runner cleanup ✅ 2026-04-04 ✅ 2026-04-04 ✅ 2026-04-05
+- [ ] EXE-013 JS-to-JS execution path and runner cleanup ✅ 2026-04-04 ✅ 2026-04-04 ✅ 2026-04-05 ✅ 2026-04-06
   - Summary: Shift internal smart-codelet execution to in-process service calls, remove hard-coded branching from the runner, and clean up Codex-era naming and wrappers.
   - Epic: EPC-007
   - Parent: EPC-007
   - State: archived
-- [ ] SHELL-001 Local-first shell planner routing ✅ 2026-04-04 ✅ 2026-04-05
-  - Summary: Use the live model-fit matrix for shell planning, cache Ollama discovery across turns, and cover the refresh and routing policy with regression tests.
-  - Epic: EPC-008
-  - Parent: EPC-008
+- [ ] EXE-014 Tests and projection updates for smart-codelet runtime split ✅ 2026-04-04 ✅ 2026-04-04 ✅ 2026-04-05 ✅ 2026-04-06
+  - Summary: Add focused tests for registry caching, helper-assisted execution, and workflow projection updates so the runtime split stays stable.
+  - Epic: EPC-007
+  - Parent: EPC-007
+  - State: archived
+- [ ] EXE-011 Registry-driven smart codelet resolution and cache ✅ 2026-04-04 ✅ 2026-04-04 ✅ 2026-04-05 ✅ 2026-04-06
+  - Summary: Move smart-codelet identity and lookup into the core registry path, cache codelet metadata in-process, and remove the hard-coded catalog from the runner.
+  - Epic: EPC-007
+  - Parent: EPC-007
+  - State: archived
+- [ ] EXE-012 Shared smart-codelet runtime helper and lean-ctx context packing ✅ 2026-04-04 ✅ 2026-04-04 ✅ 2026-04-05 ✅ 2026-04-06
+  - Summary: Introduce a reusable runtime/helper layer that builds structured run context, uses lean-ctx where relevant, and keeps prompt payloads compact.
+  - Epic: EPC-007
+  - Parent: EPC-007
   - State: archived
 
 %% kanban:settings
