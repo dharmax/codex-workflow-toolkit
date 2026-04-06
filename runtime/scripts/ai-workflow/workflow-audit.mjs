@@ -3,7 +3,9 @@
 import path from "node:path";
 import { parseArgs, printAndExit } from "./lib/cli.mjs";
 import { fileExistsRelative, runGuidelineAudit } from "./lib/audit-utils.mjs";
+import { DEFAULT_DOGFOOD_REPORT_PATH, readDogfoodReport } from "./lib/dogfood-utils.mjs";
 import { readText } from "./lib/fs-utils.mjs";
+import { collectOperatorSurfaceState, compareSurfaceHashes } from "./lib/operator-surfaces.mjs";
 import { parseKanban } from "./lib/kanban-utils.mjs";
 
 const HELP = `Usage:
@@ -141,6 +143,50 @@ for (const relativePath of activeDocs) {
         message: `unknown pnpm script -> ${scriptName}`
       }));
     }
+  }
+}
+
+const dogfoodReport = await readDogfoodReport(root);
+const operatorSurfaces = await collectOperatorSurfaceState(root);
+
+for (const [surfaceId, snapshot] of Object.entries(operatorSurfaces)) {
+  if (!snapshot.fileCount) {
+    continue;
+  }
+
+  if (!dogfoodReport) {
+    findings.push(createFinding({
+      category: "dogfood",
+      file: DEFAULT_DOGFOOD_REPORT_PATH,
+      message: `missing dogfood report for operator surface -> ${surfaceId}. Run node scripts/ai-workflow/dogfood.mjs`
+    }));
+    continue;
+  }
+
+  const reportedSurface = dogfoodReport.surfaces?.[surfaceId];
+  if (!reportedSurface) {
+    findings.push(createFinding({
+      category: "dogfood",
+      file: DEFAULT_DOGFOOD_REPORT_PATH,
+      message: `dogfood report missing operator surface -> ${surfaceId}. Run node scripts/ai-workflow/dogfood.mjs --surface ${surfaceId}`
+    }));
+    continue;
+  }
+
+  if (reportedSurface.status !== "pass") {
+    findings.push(createFinding({
+      category: "dogfood",
+      file: DEFAULT_DOGFOOD_REPORT_PATH,
+      message: `dogfood report failed for operator surface -> ${surfaceId}`
+    }));
+  }
+
+  if (!compareSurfaceHashes(reportedSurface, snapshot)) {
+    findings.push(createFinding({
+      category: "dogfood",
+      file: DEFAULT_DOGFOOD_REPORT_PATH,
+      message: `dogfood report is stale for operator surface -> ${surfaceId}. Re-run node scripts/ai-workflow/dogfood.mjs`
+    }));
   }
 }
 

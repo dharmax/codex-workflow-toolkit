@@ -35,7 +35,10 @@ for (const fixture of FIXTURE_MATRIX) {
 
     try {
       await copyFixture(path.join(fixturesRoot, fixture.fixturePath), targetRoot);
-      const initResult = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
+      const initArgs = fixture.scenario === "legacy-kanban"
+        ? ["scripts/init-project.mjs", "--target", targetRoot, "--no-sync"]
+        : ["scripts/init-project.mjs", "--target", targetRoot];
+      const initResult = await runNode(initArgs);
       assert.equal(initResult.code, 0, initResult.stderr || initResult.stdout);
 
       await assertWorkflowInstallFromRepo(targetRoot);
@@ -92,6 +95,12 @@ for (const fixture of FIXTURE_MATRIX) {
         const archiveText = await readFile(path.join(targetRoot, "kanban-archive.md"), "utf8");
         assert.match(archiveText, /TKT-010 Legacy ticket/);
 
+        const dogfoodResult = await runNode(
+          ["scripts/ai-workflow/dogfood.mjs", "--surface", "workflow,init", "--profile", "bootstrap"],
+          { cwd: targetRoot }
+        );
+        assert.equal(dogfoodResult.code, 0, dogfoodResult.stderr || dogfoodResult.stdout);
+
         const passingAudit = await runNode(["scripts/ai-workflow/workflow-audit.mjs"], { cwd: targetRoot });
         assert.equal(passingAudit.code, 0, passingAudit.stderr || passingAudit.stdout);
         return;
@@ -137,6 +146,7 @@ async function assertWorkflowInstallFromRepo(cwd) {
     "  'workflow:guidance': 'node scripts/ai-workflow/guidance-summary.mjs',",
     "  'workflow:review': 'node scripts/ai-workflow/review-summary.mjs',",
     "  'workflow:verify': 'node scripts/ai-workflow/verification-summary.mjs',",
+    "  'workflow:dogfood': 'node scripts/ai-workflow/dogfood.mjs',",
     "  'workflow:guideline-audit': 'node scripts/ai-workflow/guideline-audit.mjs',",
     "  'workflow:audit': 'node scripts/ai-workflow/workflow-audit.mjs'",
     "};",

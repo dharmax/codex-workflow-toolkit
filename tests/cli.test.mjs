@@ -145,7 +145,7 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     assert.equal(firstRun.code, 0);
     assert.match(firstRun.stdout, /Initial sync: completed/);
     assert.match(firstRun.stdout, new RegExp(`Installed: ${await countInstallableFiles()}`));
-    assert.match(firstRun.stdout, /Package scripts installed: 7/);
+    assert.match(firstRun.stdout, /Package scripts installed: 8/);
 
     const agents = await readFile(path.join(targetRoot, "AGENTS.md"), "utf8");
     assert.match(agents, /AI Agent Protocol: Autonomous Engineering OS/);
@@ -153,9 +153,11 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
     const protocolFile = await readFile(path.join(targetRoot, "execution-protocol.md"), "utf8");
     assert.match(protocolFile, /Required Order/);
     const packageJson = JSON.parse(await readFile(path.join(targetRoot, "package.json"), "utf8"));
+    assert.equal(packageJson.scripts["workflow:dogfood"], "node scripts/ai-workflow/dogfood.mjs");
     assert.equal(packageJson.scripts["workflow:audit"], "node scripts/ai-workflow/workflow-audit.mjs");
     assert.equal(packageJson.scripts["workflow:guideline-audit"], "node scripts/ai-workflow/guideline-audit.mjs");
     await access(path.join(targetRoot, ".ai-workflow", "state", "workflow.db"));
+    await access(path.join(targetRoot, ".ai-workflow", "generated", "dogfood-report.json"));
 
     const ciWorkflow = await readFile(
       path.join(targetRoot, ".github", "workflows", "ai-workflow-audit.yml"),
@@ -168,8 +170,9 @@ test("installer writes files, installs CI scaffold, makes scripts executable, an
 
     const secondRun = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
     assert.equal(secondRun.code, 0);
-    assert.match(secondRun.stdout, new RegExp(`Identical: ${await countInstallableFiles()}`));
-    assert.match(secondRun.stdout, /Package scripts identical: 7/);
+    assert.match(secondRun.stdout, new RegExp(`Identical: ${(await countInstallableFiles()) - 2}`));
+    assert.match(secondRun.stdout, /Skipped existing: 2/);
+    assert.match(secondRun.stdout, /Package scripts identical: 8/);
   } finally {
     await cleanup(targetRoot);
   }
@@ -1175,11 +1178,12 @@ test("generated helper scripts work against initialized project state", async ()
     const initResult = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
     assert.equal(initResult.code, 0);
     assert.match(initResult.stdout, /package\.json found/);
-    assert.match(initResult.stdout, /Package scripts installed: 7/);
+    assert.match(initResult.stdout, /Package scripts installed: 8/);
 
     const workflowAuditInitial = await runNode(["scripts/ai-workflow/workflow-audit.mjs"], { cwd: targetRoot });
     assert.equal(workflowAuditInitial.code, 0);
     assert.match(workflowAuditInitial.stdout, /workflow-audit: OK/);
+    await access(path.join(targetRoot, ".ai-workflow", "generated", "dogfood-report.json"));
 
     const ticketResult = await runNode(
       ["scripts/ai-workflow/kanban-ticket.mjs", "--id", "TKT-001"],
@@ -1268,6 +1272,51 @@ test("installer does not overwrite conflicting workflow package scripts without 
 
     const packageJsonOverwritten = JSON.parse(await readFile(path.join(targetRoot, "package.json"), "utf8"));
     assert.equal(packageJsonOverwritten.scripts["workflow:audit"], "node scripts/ai-workflow/workflow-audit.mjs");
+  } finally {
+    await cleanup(targetRoot);
+  }
+});
+
+test("dogfood report is regenerated through the runtime script and audit fails when the report is missing or stale", async () => {
+  const targetRoot = await makeTempDir();
+
+  try {
+    await writeFile(path.join(targetRoot, "package.json"), "{\n  \"name\": \"fixture\"\n}\n");
+    const initResult = await runNode(["scripts/init-project.mjs", "--target", targetRoot]);
+    assert.equal(initResult.code, 0, initResult.stderr || initResult.stdout);
+
+    const reportPath = path.join(targetRoot, ".ai-workflow", "generated", "dogfood-report.json");
+    const initialReport = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(initialReport.profile, "bootstrap");
+    assert.equal(initialReport.surfaces.shell.status, "pass");
+    assert.equal(initialReport.surfaces.init.status, "pass");
+
+    await rm(reportPath, { force: true });
+    const missingAudit = await runNode(["scripts/ai-workflow/workflow-audit.mjs", "--json"], { cwd: targetRoot });
+    assert.equal(missingAudit.code, 1);
+    const missingSummary = JSON.parse(missingAudit.stdout);
+    assert.equal(
+      missingSummary.findings.some((finding) => String(finding.message).includes("missing dogfood report")),
+      true
+    );
+
+    const dogfoodResult = await runNode(
+      ["scripts/ai-workflow/dogfood.mjs", "--surface", "shell,provider,workflow,init", "--profile", "bootstrap", "--json"],
+      { cwd: targetRoot }
+    );
+    assert.equal(dogfoodResult.code, 0, dogfoodResult.stderr || dogfoodResult.stdout);
+
+    const scriptPath = path.join(targetRoot, "scripts", "ai-workflow", "workflow-audit.mjs");
+    const currentAuditScript = await readFile(scriptPath, "utf8");
+    await writeFile(scriptPath, `${currentAuditScript}\n// stale dogfood check\n`, "utf8");
+
+    const staleAudit = await runNode(["scripts/ai-workflow/workflow-audit.mjs", "--json"], { cwd: targetRoot });
+    assert.equal(staleAudit.code, 1);
+    const staleSummary = JSON.parse(staleAudit.stdout);
+    assert.equal(
+      staleSummary.findings.some((finding) => String(finding.message).includes("dogfood report is stale")),
+      true
+    );
   } finally {
     await cleanup(targetRoot);
   }

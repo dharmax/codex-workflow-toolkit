@@ -91,8 +91,11 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Add integration or E2E coverage only where user-visible flows or system boundaries require it.
 - No placeholder tests: every test should be capable of catching a real bug.
 - When fixing a bug, add the test that would have caught that bug.
+- Operator-surface changes should be dogfooded through `ai-workflow` itself before closure, not only through internal function tests.
+- Operator-surface changes are not done until `ai-workflow dogfood` (or `node scripts/ai-workflow/dogfood.mjs`) and `workflow-audit` both pass.
 - Keep verification layered:
   - workflow/guidance/kanban contract changes should prove themselves through `workflow-audit`
+  - operator-surface changes should prove themselves through `workflow:dogfood` plus `workflow-audit`
   - small tickets should default to quick but meaningful unit or module tests
   - related batches or larger tickets should add E2E, including visual proof when UI behavior changed
   - every few batches should run super-E2E, simulation, or emulator-backed flows when the project supports them
@@ -122,6 +125,7 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - If a guidance file keeps growing with old notes, extract durable rules and move the rest into archives or ticket artifacts.
 - File boundaries should stay honest. If a responsibility header is hard to keep concise, the file boundary is probably wrong.
 - If the same review guidance keeps recurring, move it into an audit rule instead of paying that review cost repeatedly.
+- If a shell, provider, workflow, or init path changed, refresh the dogfood report before claiming the surface still works.
 
 ## Audit Extensions
 

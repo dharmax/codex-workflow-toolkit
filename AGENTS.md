@@ -14,6 +14,7 @@ If the ai-workflow tool is unavailable, follow the same process with `scripts/ai
 - Recommend `/new` when a compact handoff exists.
 - Treat `/clear` as an operator-controlled action, not a guaranteed tool capability.
 - Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer.
+- Operator-surface changes are not done until `ai-workflow dogfood` (or `node scripts/ai-workflow/dogfood.mjs`) and `workflow-audit` both pass.
 - If `ai-workflow` fails, stop, identify root cause, and either fix it or report the blocker before continuing.
 - If you discover a bug while working on something else, stop and tell the operator unless they explicitly asked for full-batch triage.
 - Prefer the cheapest capable model route when the tool can use it; if it is unavailable, say so instead of silently widening the fallback.

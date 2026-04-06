@@ -55,6 +55,7 @@ const HELP = `Usage:
   ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]
   ai-workflow ask [request...] [--mode <default|tool-dev>] [--root <path>] [--evidence-root <path>] [--json]
   ai-workflow sync [--write-projections] [--json]
+  ai-workflow dogfood [--surface <id[,id...]>] [--profile <bootstrap|full>] [--json]
   ai-workflow reprofile [--json]
   ai-workflow list [--json]
   ai-workflow info <codelet>
@@ -138,6 +139,8 @@ export async function main(argv) {
       return handleAsk(rest);
     case "sync":
       return handleSync(rest);
+    case "dogfood":
+      return handleDogfood(rest);
     case "reprofile":
       await runDoctor({ root: process.cwd(), json: rest.includes("--json"), forceRefresh: true });
       return 0;
@@ -261,6 +264,13 @@ async function handleSync(rest) {
 async function handleKanban(rest) {
   return runNodeScript(
     path.resolve(toolkitRoot, "runtime", "scripts", "ai-workflow", "kanban.mjs"),
+    rest
+  );
+}
+
+async function handleDogfood(rest) {
+  return runNodeScript(
+    path.resolve(toolkitRoot, "runtime", "scripts", "ai-workflow", "dogfood.mjs"),
     rest
   );
 }

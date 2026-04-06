@@ -69,6 +69,12 @@ If a rule's failure text should be identical to the pattern text, omit `message`
       "include": ["AGENTS.md", "execution-protocol.md", "project-guidelines.md", "README.md", "docs/MANUAL.md", "knowledge.md", "templates/AGENTS.md", "templates/execution-protocol.md", "templates/project-guidelines.md", "templates/knowledge.md"],
       "extensions": [".md"],
       "pattern": "Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer."
+    },
+    {
+      "id": "require-dogfood-before-closure",
+      "include": ["AGENTS.md", "execution-protocol.md", "project-guidelines.md", "knowledge.md", "templates/AGENTS.md", "templates/execution-protocol.md", "templates/project-guidelines.md", "templates/knowledge.md"],
+      "extensions": [".md"],
+      "pattern": "Operator-surface changes are not done until `ai-workflow dogfood` \\(or `node scripts/ai-workflow/dogfood\\.mjs`\\) and `workflow-audit` both pass\\."
     }
   ],
   "forbiddenImports": [

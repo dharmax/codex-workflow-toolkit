@@ -9,6 +9,7 @@ import { syncProject } from "../core/services/sync.mjs";
 import { onboardProjectBrief } from "../core/services/orchestrator.mjs";
 import { assertDirectCommandChannel } from "../core/lib/command-channel.mjs";
 import { withWorkspaceMutation } from "../core/lib/workspace-mutation.mjs";
+import { runDogfood } from "../runtime/scripts/ai-workflow/lib/dogfood-utils.mjs";
 
 const HELP = `Usage:
   node scripts/init-project.mjs --target /path/to/project
@@ -31,6 +32,7 @@ const WORKFLOW_PACKAGE_SCRIPTS = {
   "workflow:guidance": "node scripts/ai-workflow/guidance-summary.mjs",
   "workflow:review": "node scripts/ai-workflow/review-summary.mjs",
   "workflow:verify": "node scripts/ai-workflow/verification-summary.mjs",
+  "workflow:dogfood": "node scripts/ai-workflow/dogfood.mjs",
   "workflow:guideline-audit": "node scripts/ai-workflow/guideline-audit.mjs",
   "workflow:audit": "node scripts/ai-workflow/workflow-audit.mjs"
 };
@@ -188,6 +190,14 @@ if (dryRun) {
 
     if (runInitialSync) {
       syncResult = await syncProject({ projectRoot: targetRoot });
+      await runDogfood({
+        root: targetRoot,
+        surfaces: ["shell", "provider", "workflow", "init"],
+        profile: "bootstrap",
+        toolkitRoot: repoRoot,
+        timeoutMs: 20000,
+        writeReport: true
+      });
     }
 
     return { syncResult, briefResult };

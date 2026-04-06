@@ -14,15 +14,17 @@ Keep execution disciplined, test-backed, and easy to hand off.
 6. State the burst shape: target family, intended outcome, validation plan.
 7. Make the smallest coherent burst that solves the ticket honestly.
 8. Validate at the real risk level of the change.
-9. Update kanban and DB together in the same command burst, then guidance docs if durable contracts changed, and archive stale done cards when needed.
-10. If the thread is getting heavy, create a compact handoff artifact before continuing.
-11. If the work adds or changes smart codelets or dev-mode observer behavior, document the candidate codelets and new recurring patterns in the workflow DB as part of the same burst.
-12. The shell must refuse mutating project work unless exactly one ticket is already in `In Progress`; if the board is not ready, stop and move the ticket first. State-changing actions that belong to a dedicated CLI command should be redirected to that command instead of being executed from shell chat.
-13. If the work begins from a messy project description, run the brief-onboarding flow first (`ai-workflow init --brief <file>` or `ai-workflow onboard <file>`), then generate epics from the stabilized brief.
+9. For shell, provider, workflow, or init changes, run `ai-workflow dogfood` (or `node scripts/ai-workflow/dogfood.mjs`) before closing the burst.
+10. Update kanban and DB together in the same command burst, then guidance docs if durable contracts changed, and archive stale done cards when needed.
+11. If the thread is getting heavy, create a compact handoff artifact before continuing.
+12. If the work adds or changes smart codelets or dev-mode observer behavior, document the candidate codelets and new recurring patterns in the workflow DB as part of the same burst.
+13. The shell must refuse mutating project work unless exactly one ticket is already in `In Progress`; if the board is not ready, stop and move the ticket first. State-changing actions that belong to a dedicated CLI command should be redirected to that command instead of being executed from shell chat.
+14. If the work begins from a messy project description, run the brief-onboarding flow first (`ai-workflow init --brief <file>` or `ai-workflow onboard <file>`), then generate epics from the stabilized brief.
 
 ## Workflow-First Context
 
 - Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer.
+- Operator-surface changes are not done until `ai-workflow dogfood` (or `node scripts/ai-workflow/dogfood.mjs`) and `workflow-audit` both pass.
 - Keep `ai-workflow sync` as the first step before major context extraction so the DB and projections are current before deeper inspection.
 
 ## Ticket Ownership
@@ -84,6 +86,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
   - special flows: add special tests for the exact mechanism or path that carries unique risk
 - Default validation stack:
   - workflow/docs/kanban changes: `workflow-audit`
+  - operator-surface changes: `workflow:dogfood` then `workflow-audit`
   - small source changes: targeted checks plus typecheck when applicable
   - related batches and larger tickets: targeted integration or E2E
   - accumulated regression confidence: super-E2E or simulation layer when available
