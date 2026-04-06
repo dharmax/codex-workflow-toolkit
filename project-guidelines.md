@@ -91,6 +91,8 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Add integration or E2E coverage only where user-visible flows or system boundaries require it.
 - No placeholder tests: every test should be capable of catching a real bug.
 - When fixing a bug, add the test that would have caught that bug.
+- For provider, shell, routing, setup, and fallback changes, add at least one test at the actual entrypoint and one test for the degraded path. Do not count helper-only or happy-path-only coverage as sufficient.
+- When asserting Ollama behavior, tests must keep `configured`, `installed`, and `available` separate so a broken probe cannot hide behind a passing registry fallback.
 - Keep verification layered:
   - workflow/guidance/kanban contract changes should prove themselves through `workflow-audit`
   - small tickets should default to quick but meaningful unit or module tests
@@ -122,6 +124,25 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - If a guidance file keeps growing with old notes, extract durable rules and move the rest into archives or ticket artifacts.
 - File boundaries should stay honest. If a responsibility header is hard to keep concise, the file boundary is probably wrong.
 - If the same review guidance keeps recurring, move it into an audit rule instead of paying that review cost repeatedly.
+
+```ai-workflow-audit
+{
+  "requiredPatterns": [
+    {
+      "id": "critical-path-test-coverage",
+      "include": ["project-guidelines.md"],
+      "extensions": [".md"],
+      "pattern": "For provider, shell, routing, setup, and fallback changes, add at least one test at the actual entrypoint and one test for the degraded path."
+    },
+    {
+      "id": "ollama-state-split",
+      "include": ["project-guidelines.md"],
+      "extensions": [".md"],
+      "pattern": "When asserting Ollama behavior, tests must keep `configured`, `installed`, and `available` separate so a broken probe cannot hide behind a passing registry fallback."
+    }
+  ]
+}
+```
 
 ## Audit Extensions
 

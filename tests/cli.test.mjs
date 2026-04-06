@@ -580,43 +580,62 @@ test("ask command routes current-work questions without the tutorial server wrap
   }
 });
 
-test("non-interactive shell answers provider status directly without prompting for Ollama hardware", async () => {
-  const child = spawn(process.execPath, [
-    path.join(repoRoot, "cli", "ai-workflow.mjs"),
-    "shell",
-    "--no-ai"
-  ], {
-    cwd: repoRoot,
-    stdio: ["pipe", "pipe", "pipe"]
-  });
+test("non-interactive shell reports configured Ollama registry without prompting for Ollama hardware", async () => {
+  const targetRoot = await createShellFixtureProject();
+  try {
+    await mkdir(path.join(targetRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(path.join(targetRoot, ".ai-workflow", "config.json"), JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://127.0.0.1:65535",
+          models: [
+            { id: "hermes3:8b" },
+            { id: "qwen2.5-coder:7b" }
+          ]
+        }
+      }
+    }, null, 2), "utf8");
 
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk.toString();
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk.toString();
-  });
-
-  child.stdin.write("what ai providers are you connected to right now?\n");
-  child.stdin.write("exit\n");
-  child.stdin.end();
-
-  const code = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      reject(new Error(`shell timeout\nstdout: ${stdout}\nstderr: ${stderr}`));
-    }, 10000);
-    child.on("exit", (exitCode) => {
-      clearTimeout(timeout);
-      resolve(exitCode ?? 0);
+    const child = spawn(process.execPath, [
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "--no-ai"
+    ], {
+      cwd: targetRoot,
+      stdio: ["pipe", "pipe", "pipe"]
     });
-  });
 
-  assert.equal(code, 0, stderr || stdout);
-  assert.doesNotMatch(stdout, /Configure Ollama hardware now\?/);
-  assert.match(stdout, /AI providers:/);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.stdin.write("what ai providers are you connected to right now?\n");
+    child.stdin.write("exit\n");
+    child.stdin.end();
+
+    const code = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        child.kill("SIGTERM");
+        reject(new Error(`shell timeout\nstdout: ${stdout}\nstderr: ${stderr}`));
+      }, 10000);
+      child.on("exit", (exitCode) => {
+        clearTimeout(timeout);
+        resolve(exitCode ?? 0);
+      });
+    });
+
+    assert.equal(code, 0, stderr || stdout);
+    assert.doesNotMatch(stdout, /Configure Ollama hardware now\?/);
+    assert.match(stdout, /AI providers:/);
+    assert.match(stdout, /- ollama: unavailable, host http:\/\/127\.0\.0\.1:65535, 2 models/);
+  } finally {
+    await cleanup(targetRoot);
+  }
 });
 
 test("non-interactive shell handles version directly", async () => {

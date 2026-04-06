@@ -75,6 +75,8 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - Reliability is not negotiable; efficiency chooses the smallest sufficient proof, not weaker proof.
 - Prefer deterministic local extraction, changed-file summaries, and verification helpers over repeated model reasoning for bounded low-risk tasks.
 - Prefer targeted validation before broad sweeps.
+- For provider, shell, routing, setup, and fallback changes, require one test at the real user-facing entrypoint and one test for the degraded path. Helper-only coverage is not enough.
+- For Ollama-related assertions, cover the split between `configured`, `installed`, and `available` so a failed probe cannot be mistaken for a healthy setup.
 - Default validation cadence:
   - small ticket: quick but meaningful unit or module tests first
   - related batch or one larger ticket: E2E, including visual checks when UI is part of the change
@@ -90,7 +92,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 - Define a stop condition before broad reruns.
 - If a full rerun isolates one failing artifact, stop the sweep and switch to focused reproduction.
 - End long verification work in one truthful state only: green with proof, bounded checkpoint, or explicit blocker.
-- If workflow docs or project rules changed, run `node scripts/ai-workflow/workflow-audit.mjs`.
+- If workflow docs or project rules changed, run `node runtime/scripts/ai-workflow/workflow-audit.mjs`.
 
 ## Failure Handling
 

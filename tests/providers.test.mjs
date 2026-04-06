@@ -664,6 +664,17 @@ test("runProviderSetupWizard explains configured Ollama models when the host doe
     assert.match(text, /Ollama at http:\/\/lotus:11434 did not respond during discovery\./);
     assert.match(text, /Using the configured model registry from config for routing\./);
     assert.doesNotMatch(text, /No Ollama endpoint is currently reachable\./);
+
+    const ollama = result.providerState.providers.ollama;
+    assert.equal(ollama.host, "http://lotus:11434");
+    assert.equal(ollama.configured, true);
+    assert.equal(ollama.installed, false);
+    assert.equal(ollama.available, false);
+    assert.equal(ollama.models.length, 2);
+    assert.deepEqual(ollama.models.map((model) => model.id), ["hermes3:8b", "qwen2.5-coder:7b"]);
+    assert.match(ollama.details, /"hostCount":1/);
+    assert.match(ollama.details, /"installedHostCount":0/);
+    assert.match(ollama.details, /"modelCount":2/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalHome === undefined) {

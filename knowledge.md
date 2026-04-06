@@ -39,6 +39,7 @@ Record durable facts that reduce future context cost. Do not mirror transient ti
 - Smart codelets are a first-class built-in surface. The tool should route them through the AI router. Prefer the cheapest capable model route when the tool can use it; if it is unavailable, say so instead of silently widening the fallback. Auto-document new candidate codelets or recurring problems in dev-mode observer flows.
 - Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer.
 - Shell planning should use the live model-fit matrix plus cached web evidence and explicit refresh controls; `providers.ollama.plannerModel` is a manual override, not the default policy.
+- Critical provider, shell, routing, and setup changes must be tested at the real user entrypoint plus the degraded/fallback path. Happy-path helper tests are not enough, especially for Ollama, where configured, installed, and available must stay distinct.
 
 ## Decisions
 
