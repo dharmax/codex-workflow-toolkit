@@ -469,6 +469,164 @@ test("runProviderSetupWizard registers Ollama endpoints and remote provider conn
   }
 });
 
+test("runProviderSetupWizard accepts gemini as an alias for google", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "providers-setup-gemini-"));
+  const tempHome = await mkdtemp(path.join(os.tmpdir(), "providers-setup-gemini-home-"));
+  const originalFetch = globalThis.fetch;
+  const originalHome = process.env.HOME;
+  const originalOllamaHost = process.env.OLLAMA_HOST;
+  const originalOpenAIKey = process.env.OPENAI_API_KEY;
+  const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+  const originalGoogleKey = process.env.GOOGLE_API_KEY;
+  const prompts = [];
+  const connections = [];
+  process.env.HOME = tempHome;
+  process.env.OLLAMA_HOST = "http://127.0.0.1:11434";
+  delete process.env.OPENAI_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.GOOGLE_API_KEY;
+  globalThis.fetch = async (url) => {
+    if (url === "http://127.0.0.1:11434/api/tags") {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "llama3.2:3b" }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  const rl = {
+    async question(prompt) {
+      prompts.push(prompt);
+      if (prompt.startsWith("Other AI services to connect now")) {
+        return "gemini";
+      }
+      return "";
+    }
+  };
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+
+    const result = await runProviderSetupWizard({
+      root,
+      scope: "project",
+      interactive: true,
+      rl,
+      connectProviderImpl: async (providerId) => {
+        connections.push(providerId);
+        return 0;
+      }
+    });
+
+    assert.deepEqual(connections, ["google"]);
+    assert.deepEqual(result.connectedProviders, ["google"]);
+    assert.match(result.messages.join("\n"), /Gemini \(Google\) still needs a valid API key or config\./);
+    assert.match(prompts.join("\n"), /Other AI services to connect now/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalOllamaHost === undefined) {
+      delete process.env.OLLAMA_HOST;
+    } else {
+      process.env.OLLAMA_HOST = originalOllamaHost;
+    }
+    if (originalOpenAIKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalOpenAIKey;
+    }
+    if (originalAnthropicKey === undefined) {
+      delete process.env.ANTHROPIC_API_KEY;
+    } else {
+      process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+    }
+    if (originalGoogleKey === undefined) {
+      delete process.env.GOOGLE_API_KEY;
+    } else {
+      process.env.GOOGLE_API_KEY = originalGoogleKey;
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("runProviderSetupWizard reports Gemini availability when Google is already configured", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "providers-setup-google-ready-"));
+  const tempHome = await mkdtemp(path.join(os.tmpdir(), "providers-setup-google-ready-home-"));
+  const originalFetch = globalThis.fetch;
+  const originalHome = process.env.HOME;
+  const originalOllamaHost = process.env.OLLAMA_HOST;
+  const originalGoogleKey = process.env.GOOGLE_API_KEY;
+  process.env.HOME = tempHome;
+  process.env.OLLAMA_HOST = "http://127.0.0.1:11434";
+  process.env.GOOGLE_API_KEY = "g-key";
+  globalThis.fetch = async (url) => {
+    if (url === "http://127.0.0.1:11434/api/tags") {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "llama3.2:3b" }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+
+    const result = await runProviderSetupWizard({
+      root,
+      scope: "project",
+      interactive: true,
+      rl: {
+        async question() {
+          return "";
+        }
+      },
+      promptRemoteProviders: true,
+      connectProviderImpl: async () => 0
+    });
+
+    assert.match(result.messages.join("\n"), /Gemini \(Google\) is already available\./);
+    assert.doesNotMatch(result.messages.join("\n"), /Gemini \(Google\) still needs a valid API key or config/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalOllamaHost === undefined) {
+      delete process.env.OLLAMA_HOST;
+    } else {
+      process.env.OLLAMA_HOST = originalOllamaHost;
+    }
+    if (originalGoogleKey === undefined) {
+      delete process.env.GOOGLE_API_KEY;
+    } else {
+      process.env.GOOGLE_API_KEY = originalGoogleKey;
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
 test("generateWithAnthropic sends a direct API request", async () => {
   const originalFetch = globalThis.fetch;
   let captured = null;

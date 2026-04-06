@@ -212,6 +212,13 @@ test("version reports the installed package version and toolkit root", async () 
   assert.equal(payload.toolkitRoot, repoRoot);
 });
 
+test("top-level --version reports the installed package version and toolkit root", async () => {
+  const result = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "--version"], { cwd: repoRoot });
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /@dharmax\/ai-workflow 0\.1\.0/);
+  assert.match(result.stdout, new RegExp(repoRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
 test("web tutorial server serves tutorial html and mode-aware tutorial api", async () => {
   const child = spawn(process.execPath, [
     path.join(repoRoot, "cli", "ai-workflow.mjs"),

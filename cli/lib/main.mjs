@@ -43,6 +43,7 @@ const HELP = `Usage:
   ai-workflow install [--project <path>]
   ai-workflow doctor [--json] [--refresh-models]
   ai-workflow version [--json]
+  ai-workflow --version
   ai-workflow audit architecture [--json]
   ai-workflow kanban <new|move|next|archive|migrate> [...]
   ai-workflow set-ollama-hw [options]
@@ -97,6 +98,10 @@ Notes:
 export async function main(argv) {
   if (!argv.length || argv[0] === "--help" || argv[0] === "-h") {
     printAndExit(HELP);
+  }
+
+  if (argv[0] === "--version" || argv[0] === "-v") {
+    return handleVersion([]);
   }
 
   const [command, ...rest] = argv;
