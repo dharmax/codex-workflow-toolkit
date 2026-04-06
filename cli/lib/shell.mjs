@@ -212,11 +212,17 @@ export async function resolveShellPlanners(root = process.cwd(), { providerState
   }
 
   if (route.recommended) {
-    planners.push(mapRouteCandidateToPlanner(route.recommended, providers));
+    const mapped = mapRouteCandidateToPlanner(route.recommended, providers);
+    if (isEligibleShellPlanner(mapped, providers)) {
+      planners.push(mapped);
+    }
   }
 
   for (const candidate of route.fallbackChain) {
-    planners.push(mapRouteCandidateToPlanner(candidate, providers));
+    const mapped = mapRouteCandidateToPlanner(candidate, providers);
+    if (isEligibleShellPlanner(mapped, providers)) {
+      planners.push(mapped);
+    }
   }
 
   const deduped = [];
@@ -251,6 +257,15 @@ function mapRouteCandidateToPlanner(candidate, providers) {
     needsHardwareHint: provider.local && !provider.hardwareClass && !provider.maxModelSizeB && !provider.plannerMaxQuality,
     reason: candidate.reason
   };
+}
+
+function isEligibleShellPlanner(planner, providers) {
+  if (!planner?.providerId || planner.providerId !== "ollama") {
+    return true;
+  }
+  const models = Array.isArray(providers?.ollama?.models) ? providers.ollama.models : [];
+  const model = models.find((item) => item.id === planner.modelId || item.name === planner.modelId);
+  return isTextCapableShellPlannerModel(model);
 }
 
 export async function planShellRequest(inputText, options) {
@@ -328,8 +343,9 @@ async function planSingleRequest(inputText, options) {
 
   const errors = [];
   for (const planner of options.planners.planners) {
+    const plannerKey = `${planner.providerId}:${planner.modelId}`;
     // Skip providers that have already failed in this session
-    if (options.blacklist?.has(planner.providerId)) {
+    if (options.blacklist?.has(planner.providerId) || options.plannerBlacklist?.has(plannerKey)) {
       continue;
     }
 
@@ -348,6 +364,8 @@ async function planSingleRequest(inputText, options) {
           output.write(`${renderPlannerFailure(planner, error)}\n`);
         }
       }
+      options.plannerBlacklist ??= new Set();
+      options.plannerBlacklist.add(plannerKey);
       errors.push(`${planner.providerId}: ${error.message ?? String(error)}`);
     }
   }
@@ -2129,6 +2147,13 @@ export function handleShellCommand(line, options) {
     return null;
   }
 
+  if (normalized === "doctor help" || normalized === "help doctor") {
+    if (!options.json) {
+      output.write(`${renderShellCommandHelp("doctor")}\n`);
+    }
+    return { handled: true };
+  }
+
   if (normalized === "plan") {
     setShellMode(options, "plan", { announce: true });
     return { handled: true };
@@ -3251,6 +3276,17 @@ function renderPlannerFailure(planner, error) {
   return `${parts.join(": ")}. Switching to fallback...`;
 }
 
+function renderShellCommandHelp(command) {
+  if (command === "doctor") {
+    return [
+      "doctor: run local diagnostics and provider visibility checks.",
+      "Usage: `doctor`",
+      "CLI equivalent: `ai-workflow doctor`"
+    ].join("\n");
+  }
+  return renderShellHelp({ toolkitCodelets: [] });
+}
+
 function buildActionCatalog(plannerContext) {
   const lines = [
     "- project_summary: show overall project status, file/symbol counts, and recent friction",
@@ -3575,6 +3611,9 @@ function buildContextualShellReply(inputText, plannerContext) {
   const asksInProgress = /\b(in progress|in-progress)\b/.test(normalized);
   const asksModules = /\b(modules|areas|major parts|subsystems)\b/.test(normalized);
   const asksClaims = /\bwhat does claims mean|what do claims mean|what are claims\b/.test(normalized);
+  const asksEpic = /^(?:epic|epics)\??$/i.test(normalized);
+  const asksEpicWithoutTopic = /^(?:(?:can|could|would)\s+you\s+|please\s+)?(?:write|create|make|draft)\s+(?:me\s+)?(?:an?|a\s+new)\s+(?:feature|epic|big task)\??$/i.test(text);
+  const asksDoctorHelp = /^(?:doctor help|help doctor)$/i.test(text);
   const asksSetupOpenAiOllama = /\b(set this up|setting this up|set up|setup|configure)\b/.test(normalized) && /\bopenai\b/.test(normalized) && /\bollama\b/.test(normalized);
   const asksGeminiTroubleshooting = /\bgemini\b/.test(normalized) && /\b(broken|failing|blocked|wrong|problem|issue|investigate)\b/.test(normalized);
 
@@ -3679,6 +3718,34 @@ function buildContextualShellReply(inputText, plannerContext) {
 
   if (asksClaims) {
     return replyPlan("Claims are extracted relationships and facts in the workflow DB, such as imports, calls, ownership, and ticket-linked evidence.", 0.9, "Explained built-in terminology.");
+  }
+
+  if (asksDoctorHelp) {
+    return replyPlan(renderShellCommandHelp("doctor"), 0.99, "Local doctor help reply.");
+  }
+
+  if (asksEpic) {
+    const epicLine = String(plannerContext?.smartStatus ?? "").match(/^Epic:\s+(.+)$/m)?.[1]?.trim() ?? "";
+    if (epicLine && !/^None\b/i.test(epicLine)) {
+      return replyPlan([
+        `Current epic: ${epicLine}.`,
+        "For the full list, run `ai-workflow project epic list`.",
+        "To create a new one, say `create epic for ...`."
+      ].join("\n"), 0.93, "Answered from smart project status.");
+    }
+    return replyPlan([
+      "There is no active epic yet.",
+      "For the full list, run `ai-workflow project epic list`.",
+      "To create a new one, say `create epic for ...`."
+    ].join("\n"), 0.9, "No active epic in smart status.");
+  }
+
+  if (asksEpicWithoutTopic) {
+    return replyPlan([
+      "Yes.",
+      "Give me the epic topic, or say `create epic for <topic>`.",
+      "Example: `create epic for Telegram remote-control`."
+    ].join("\n"), 0.98, "Epic ideation request is missing a topic.");
   }
 
   if (asksGreeting || ["how are you", "tell me a joke"].includes(normalized) || /\bhow(?:'s| is) it going\b/.test(normalized) || /\bready to help\b/.test(normalized)) {
@@ -4099,7 +4166,10 @@ export function chooseShellPlannerModel(ollamaProvider) {
       ? sizeFiltered
       : models;
   const textCapablePool = pool.filter((model) => isTextCapableShellPlannerModel(model));
-  const selectionPool = textCapablePool.length ? textCapablePool : pool;
+  if (!textCapablePool.length) {
+    throw new Error("No text-capable Ollama models available for shell planning.");
+  }
+  const selectionPool = textCapablePool;
 
   selectionPool.sort((left, right) =>
     (right.fitScore ?? -1) - (left.fitScore ?? -1)
@@ -4113,11 +4183,7 @@ export function chooseShellPlannerModel(ollamaProvider) {
   const selected = selectionPool[0];
   const needsHardwareHint = !ollamaProvider.hardwareClass && !ollamaProvider.maxModelSizeB && !ollamaProvider.plannerMaxQuality;
   const reasonParts = [];
-  if (textCapablePool.length) {
-    reasonParts.push("text-capable planner pool");
-  } else if (pool.length) {
-    reasonParts.push("no text-capable models discovered; falling back to all local models");
-  }
+  reasonParts.push("text-capable planner pool");
   if (needsHardwareHint) {
     reasonParts.push("hardware unknown; defaulting to a smaller planner model");
   } else if (ollamaProvider.hardwareClass) {

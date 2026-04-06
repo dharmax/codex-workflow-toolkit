@@ -175,6 +175,50 @@ test("resolveShellPlanners prefers a text-capable Ollama model over a vision-onl
   }
 });
 
+test("resolveShellPlanners drops vision-only local planners and falls back to remote candidates", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-remote-fallback-" + Math.random().toString(36).slice(2));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "moondream:latest", size: 2 * 1024 ** 3 }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  await fs.mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".ai-workflow", "config.json"),
+    JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://127.0.0.1:11434"
+        },
+        openai: {
+          apiKey: "openai-key"
+        }
+      }
+    }, null, 2)
+  );
+
+  try {
+    const planners = await resolveShellPlanners(root);
+    assert.notEqual(planners.planners[0]?.providerId, "ollama");
+    assert.notEqual(planners.planners[0]?.modelId, "moondream:latest");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("resolveShellPlanners uses the live model-fit matrix to prefer gemma4 for shell planning", async () => {
   const root = path.resolve("/tmp/ai-workflow-shell-gemma4-" + Math.random().toString(36).slice(2));
   const originalFetch = globalThis.fetch;
@@ -217,6 +261,31 @@ test("resolveShellPlanners uses the live model-fit matrix to prefer gemma4 for s
     globalThis.fetch = originalFetch;
     await fs.rm(root, { recursive: true, force: true });
   }
+});
+
+test("planShellRequestHeuristically answers doctor help locally", () => {
+  const plan = planShellRequestHeuristically("doctor help", {
+    toolkitCodelets: [],
+    summary: {},
+    providerState: {}
+  });
+
+  assert.equal(plan.kind, "reply");
+  assert.match(plan.reply, /doctor: run local diagnostics/i);
+  assert.match(plan.reply, /Usage: `doctor`/);
+});
+
+test("planShellRequestHeuristically asks for a topic on incomplete epic requests", () => {
+  const plan = planShellRequestHeuristically("can you write an epic?", {
+    toolkitCodelets: [],
+    summary: {},
+    providerState: {},
+    smartStatus: "Epic: None"
+  });
+
+  assert.equal(plan.kind, "reply");
+  assert.match(plan.reply, /Give me the epic topic/i);
+  assert.match(plan.reply, /create epic for <topic>/i);
 });
 
 test("planShellRequestWithAgent uses operator-first prompt design and interaction memory", async (t) => {
@@ -491,7 +560,7 @@ test("planShellRequest falls back to the next AI planner when the first one retu
     })
   });
 
-  const plan = await planShellRequest("orchestrate the telemetry lattice", {
+  const options = {
     root: "/tmp",
     plannerContext: { summary: {}, toolkitCodelets: [], projectCodelets: [] },
     history: [],
@@ -502,13 +571,16 @@ test("planShellRequest falls back to the next AI planner when the first one retu
       ],
       heuristic: { mode: "heuristic", reason: "fallback" }
     }
-  });
+  };
+
+  const plan = await planShellRequest("orchestrate the telemetry lattice", options);
 
   assert.equal(plan.kind, "plan");
   assert.equal(plan.planner.providerId, "mock-good-shell-planner");
   assert.deepEqual(plan.actions, [
     { type: "provider_status" }
   ]);
+  assert.equal(options.plannerBlacklist?.has("mock-bad-shell-planner:brain-v1"), true);
 });
 
 test("planShellRequestWithAgent multi-turn grounding scenario", async (t) => {

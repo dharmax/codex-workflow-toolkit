@@ -739,6 +739,175 @@ test("ask command handles combined project status and beta readiness questions",
   }
 });
 
+test("shell handles a bare epic question locally without calling the AI planner", async () => {
+  const projectRoot = await makeTempDir();
+  const preloadPath = path.join(projectRoot, "shell-preload.mjs");
+
+  try {
+    await mkdir(path.join(projectRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          ollama: {
+            host: "http://127.0.0.1:11434"
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      preloadPath,
+      [
+        "globalThis.fetch = async (url) => {",
+        "  const text = String(url);",
+        "  if (text.endsWith('/api/tags')) {",
+        "    return {",
+        "      ok: true,",
+        "      async json() {",
+        "        return { models: [{ name: 'qwen2.5-coder:7b', size: 7 * 1024 ** 3 }] };",
+        "      }",
+        "    };",
+        "  }",
+        "  if (text.endsWith('/api/generate') || text.endsWith('/api/chat') || text.includes('generativelanguage.googleapis.com') || text.includes('api.openai.com')) {",
+        "    throw new Error(`Unexpected AI call: ${text}`);",
+        "  }",
+        "  throw new Error(`Unexpected fetch URL: ${text}`);",
+        "};"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await runNode([
+      "--import",
+      preloadPath,
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "epic?",
+      "--no-ai"
+    ], { cwd: projectRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /There is no active epic yet\./);
+    assert.match(result.stdout, /ai-workflow project epic list/);
+    assert.doesNotMatch(result.stdout, /Unexpected AI call/);
+  } finally {
+    await cleanup(projectRoot);
+  }
+});
+
+test("shell handles an incomplete epic request locally without calling the AI planner", async () => {
+  const projectRoot = await makeTempDir();
+  const preloadPath = path.join(projectRoot, "shell-preload.mjs");
+
+  try {
+    await mkdir(path.join(projectRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          ollama: {
+            host: "http://127.0.0.1:11434"
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      preloadPath,
+      [
+        "globalThis.fetch = async (url) => {",
+        "  const text = String(url);",
+        "  if (text.endsWith('/api/tags')) {",
+        "    return {",
+        "      ok: true,",
+        "      async json() {",
+        "        return { models: [{ name: 'qwen2.5-coder:7b', size: 7 * 1024 ** 3 }] };",
+        "      }",
+        "    };",
+        "  }",
+        "  if (text.endsWith('/api/generate') || text.endsWith('/api/chat') || text.includes('generativelanguage.googleapis.com') || text.includes('api.openai.com')) {",
+        "    throw new Error(`Unexpected AI call: ${text}`);",
+        "  }",
+        "  throw new Error(`Unexpected fetch URL: ${text}`);",
+        "};"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await runNode([
+      "--import",
+      preloadPath,
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "can you write an epic?"
+    ], { cwd: projectRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Give me the epic topic/i);
+    assert.match(result.stdout, /create epic for <topic>/i);
+    assert.doesNotMatch(result.stdout, /Unexpected AI call/);
+  } finally {
+    await cleanup(projectRoot);
+  }
+});
+
+test("shell handles doctor help locally without calling the AI planner", async () => {
+  const projectRoot = await makeTempDir();
+  const preloadPath = path.join(projectRoot, "shell-preload.mjs");
+
+  try {
+    await mkdir(path.join(projectRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          ollama: {
+            host: "http://127.0.0.1:11434"
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      preloadPath,
+      [
+        "globalThis.fetch = async (url) => {",
+        "  const text = String(url);",
+        "  if (text.endsWith('/api/tags')) {",
+        "    return {",
+        "      ok: true,",
+        "      async json() {",
+        "        return { models: [{ name: 'qwen2.5-coder:7b', size: 7 * 1024 ** 3 }] };",
+        "      }",
+        "    };",
+        "  }",
+        "  if (text.endsWith('/api/generate') || text.endsWith('/api/chat') || text.includes('generativelanguage.googleapis.com') || text.includes('api.openai.com')) {",
+        "    throw new Error(`Unexpected AI call: ${text}`);",
+        "  }",
+        "  throw new Error(`Unexpected fetch URL: ${text}`);",
+        "};"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = await runNode([
+      "--import",
+      preloadPath,
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "doctor help"
+    ], { cwd: projectRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /doctor: run local diagnostics/i);
+    assert.match(result.stdout, /Usage: `doctor`/);
+    assert.doesNotMatch(result.stdout, /Unexpected AI call/);
+  } finally {
+    await cleanup(projectRoot);
+  }
+});
+
 test("ask command routes current-work questions without the tutorial server wrapper", async () => {
   const evidenceRoot = await createShellFixtureProject();
   const sync = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: evidenceRoot });
