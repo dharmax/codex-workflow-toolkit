@@ -90,6 +90,61 @@ test("routeTask picks up a configured remote Ollama host", async () => {
   }
 });
 
+test("routeTask keeps shell planning on a text-capable Ollama model instead of a vision-only model", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-shell-planner-route-"));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "moondream:latest", size: 2 * 1024 ** 3 },
+              { name: "qwen2.5-coder:7b", size: 7 * 1024 ** 3 }
+            ]
+          };
+        }
+      };
+    }
+    if (String(url).includes("duckduckgo")) {
+      return {
+        ok: true,
+        async text() {
+          return "<html><body></body></html>";
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  try {
+    await mkdir(path.join(targetRoot, ".ai-workflow"), { recursive: true });
+    await writeFile(
+      path.join(targetRoot, ".ai-workflow", "config.json"),
+      JSON.stringify({
+        providers: {
+          ollama: {
+            host: "http://127.0.0.1:11434"
+          }
+        }
+      }, null, 2),
+      "utf8"
+    );
+
+    const route = await routeTask({
+      root: targetRoot,
+      taskClass: "shell-planning"
+    });
+
+    assert.equal(route.recommended?.providerId, "ollama");
+    assert.notEqual(route.recommended?.modelId, "moondream:latest");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("routeTask prefers the remote provider with remaining free quota", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-route-quota-"));
 

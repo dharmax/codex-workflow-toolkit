@@ -384,7 +384,7 @@ test("planShellRequest prefers the AI graph planner for semantic paraphrases of 
   assert.match(seen[0], /Current User Request:/);
 });
 
-test("planShellRequestWithAgent handles plan with missing actions gracefully", async (t) => {
+test("planShellRequestWithAgent rejects malformed plan payloads", async (t) => {
   registerProvider("mock-broken-plan", {
     local: false,
     available: true,
@@ -407,9 +407,65 @@ test("planShellRequestWithAgent handles plan with missing actions gracefully", a
     history: []
   };
 
-  const result = await planShellRequestWithAgent("some request", options);
-  assert.equal(result.kind, "reply");
-  assert.match(result.reply, /I understood your strategy/);
+  await assert.rejects(
+    () => planShellRequestWithAgent("some request", options),
+    /shell planner produced no actions/
+  );
+});
+
+test("planShellRequest falls back to the next AI planner when the first one returns malformed JSON", async () => {
+  registerProvider("mock-bad-shell-planner", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async () => ({
+      response: JSON.stringify({
+        kind: "plan",
+        confidence: 0.8,
+        reason: "Thinking...",
+        strategy: { step: "parse prompt", phase: "oops" },
+        actions: [
+          { type: "definitely_not_a_command" }
+        ]
+      })
+    })
+  });
+
+  registerProvider("mock-good-shell-planner", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async () => ({
+      response: JSON.stringify({
+        kind: "plan",
+        confidence: 0.94,
+        reason: "Plan the request directly.",
+        strategy: "Ask the user to clarify the epic scope.",
+        actions: [
+          { type: "provider_status" }
+        ]
+      })
+    })
+  });
+
+  const plan = await planShellRequest("orchestrate the telemetry lattice", {
+    root: "/tmp",
+    plannerContext: { summary: {}, toolkitCodelets: [], projectCodelets: [] },
+    history: [],
+    planners: {
+      planners: [
+        { providerId: "mock-bad-shell-planner", modelId: "brain-v1" },
+        { providerId: "mock-good-shell-planner", modelId: "brain-v1" }
+      ],
+      heuristic: { mode: "heuristic", reason: "fallback" }
+    }
+  });
+
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.planner.providerId, "mock-good-shell-planner");
+  assert.deepEqual(plan.actions, [
+    { type: "provider_status" }
+  ]);
 });
 
 test("planShellRequestWithAgent multi-turn grounding scenario", async (t) => {

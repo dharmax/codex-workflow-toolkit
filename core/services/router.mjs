@@ -55,8 +55,8 @@ export async function routeTask({
 
       // 0-5 competency score (Data-driven inference)
       const competency = model.capabilities?.[capability] ?? inferCompetency(model, capability, knowledge.inferenceHeuristics);
-      
-      if ((!shellPlanningLocal && competency < 2) || (!shellPlanningLocal && competency < 3 && QUALITY_ORDER[minimumQuality] > QUALITY_ORDER.low)) {
+
+      if (competency < 2 || (!shellPlanningLocal && competency < 3 && QUALITY_ORDER[minimumQuality] > QUALITY_ORDER.low)) {
         continue;
       }
 

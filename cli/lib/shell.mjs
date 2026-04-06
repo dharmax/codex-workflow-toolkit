@@ -1087,27 +1087,12 @@ export async function planShellRequestWithAgent(inputText, options) {
     try {
       parsed = JSON.parse(cleanJson);
     } catch {
-      return replyPlan(completion.response, 0.5, "Model returned non-JSON text; treating as reply.");
+      throw new Error("planner returned non-JSON text");
     }
 
-    try {
-      return validateShellPlan(parsed, options.plannerContext);
-    } catch (validationError) {
-      // If the model gave a strategy but failed action mapping, salvage the strategy
-      if (parsed && typeof parsed === "object" && parsed.strategy) {
-        return {
-          ...replyPlan(
-            `I understood your strategy: "${parsed.strategy}", but I couldn't map it to CLI actions. Try being more specific or using a different command.`,
-            0.4,
-            `Validation failed: ${validationError.message}`
-          ),
-          strategy: String(parsed.strategy)
-        };
-      }
-      throw validationError;
-    }
+    return validateShellPlan(parsed, options.plannerContext);
   } catch (error) {
-    return replyPlan(completion.response, 0.4, `Structural error: ${error.message}`);
+    throw error;
   }
 }
 
@@ -1154,11 +1139,12 @@ export function validateShellPlan(plan, plannerContext) {
   if (!plan || typeof plan !== "object") {
     throw new Error("shell planner returned non-object");
   }
+  const strategy = typeof plan.strategy === "string" ? plan.strategy.trim() : null;
 
   if (plan.kind === "reply") {
     return {
       ...replyPlan(String(plan.reply ?? "I need a clearer request."), Number(plan.confidence ?? 0.5), String(plan.reason ?? "Planner reply.")),
-      strategy: plan.strategy ? String(plan.strategy) : null,
+      strategy,
       graph: buildActionGraph([])
     };
   }
@@ -1169,7 +1155,7 @@ export function validateShellPlan(plan, plannerContext) {
       actions: [],
       confidence: Number(plan.confidence ?? 1),
       reason: String(plan.reason ?? "Planner exit."),
-      strategy: plan.strategy ? String(plan.strategy) : null,
+      strategy,
       graph: buildActionGraph([])
     };
   }
@@ -1195,7 +1181,7 @@ export function validateShellPlan(plan, plannerContext) {
     graph: graph ?? buildActionGraph(actions),
     confidence: Number(plan.confidence ?? 0.7),
     reason: String(plan.reason ?? "Planner produced a valid action plan."),
-    strategy: plan.strategy ? String(plan.strategy) : null
+    strategy
   };
 }
 
