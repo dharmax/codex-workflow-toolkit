@@ -1005,6 +1005,72 @@ test("runShellTurn executes mutating shell actions in mutating mode", async () =
   }
 });
 
+test("runShellTurn can set up Ollama without hitting the missing provider_connect handler", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-ollama-setup-" + Math.random().toString(36).slice(2));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "hermes3:8b", size: 4.3 * 1024 ** 3 }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL in shell test: ${url}`);
+  };
+
+  await fs.mkdir(root, { recursive: true });
+  await fs.mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".ai-workflow", "config.json"),
+    JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://lotus:11434"
+        }
+      }
+    }, null, 2)
+  );
+
+  try {
+    const result = await runShellTurn("setup ollama", {
+      root,
+      json: false,
+      yes: true,
+      noAi: true,
+      planOnly: false,
+      shellMode: "mutate",
+      plannerContext: {
+        ...plannerContext,
+        summary: {
+          ...plannerContext.summary,
+          activeTickets: [
+            { id: "BUG-OVERLAY-01", title: "Restore global overlay handling", lane: "In Progress" }
+          ]
+        }
+      },
+      planners: {
+        planners: [],
+        heuristic: { mode: "heuristic", reason: "fallback" }
+      },
+      history: []
+    });
+
+    assert.equal(result.plan.kind, "plan");
+    assert.equal(result.executed.length, 1);
+    assert.equal(result.executed[0].ok, true);
+    assert.match(result.executed[0].stdout, /Ollama/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("runShellTurn executes branch/assert/replan nodes and exposes continuation state", async () => {
   const root = path.resolve("/tmp/ai-workflow-shell-graph-" + Math.random().toString(36).slice(2));
   await fs.mkdir(root, { recursive: true });

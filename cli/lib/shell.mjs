@@ -19,6 +19,7 @@ import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, 
 import { buildDoctorReport, renderDoctorReport } from "./doctor.mjs";
 import { configureOllamaHardware } from "./ollama-hw.mjs";
 import { runProviderSetupWizard } from "./provider-setup.mjs";
+import { handleProviderConnect } from "./provider-connect.mjs";
 import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 
 const STREAMED_STDIO = "__STREAMED_STDIO__";
@@ -2349,7 +2350,20 @@ async function runShellActionDirect(action, options) {
       await runDoctor({ root: options.root, json: options.json });
       return "";
     case "provider_connect":
-      return await withWorkspaceMutation(options.root, `shell provider_connect ${action.providerId}`, async () => handleProviderConnect(action.providerId, { rl: options.rl }).then(code => code === 0 ? "Connected.\n" : "Connection failed.\n"));
+      return await withWorkspaceMutation(options.root, `shell provider_connect ${action.providerId}`, async () => {
+        if (String(action.providerId ?? "").toLowerCase() === "ollama") {
+          const setup = await runProviderSetupWizard({
+            root: options.root,
+            scope: "global",
+            interactive: Boolean(options.rl),
+            rl: options.rl ?? null,
+            promptRemoteProviders: false
+          });
+          return `${renderProviderSetupMessages(setup)}\n`;
+        }
+
+        return handleProviderConnect(action.providerId, { rl: options.rl, root: options.root }).then((code) => code === 0 ? "Connected.\n" : "Connection failed.\n");
+      });
     case "set_ollama_hw": {
       const result = await withWorkspaceMutation(options.root, "shell set_ollama_hw", async () => configureOllamaHardware({
         root: options.root,
@@ -3533,6 +3547,17 @@ function renderConfiguredOllamaHardware(result) {
     lines.push(`Planner model: ${result.applied.plannerModel}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function renderProviderSetupMessages(result) {
+  const lines = [...(result.messages ?? [])];
+  if (result.connectedProviders?.length) {
+    lines.push(`Connected providers: ${result.connectedProviders.join(", ")}.`);
+  }
+  if (result.registeredEndpoints?.length) {
+    lines.push(`Registered Ollama endpoints: ${result.registeredEndpoints.join(", ")}.`);
+  }
+  return lines.length ? lines.join("\n") : "Provider setup completed.";
 }
 
 function buildContextualShellReply(inputText, plannerContext) {

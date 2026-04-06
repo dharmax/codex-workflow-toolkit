@@ -876,7 +876,24 @@ async function handleProvider(rest) {
   }
   if (subcommand === "connect") {
     assertDirectCommandChannel("ai-workflow provider connect");
-    return withWorkspaceMutation(process.cwd(), "provider connect", async () => handleProviderConnect(providerId));
+    return withWorkspaceMutation(process.cwd(), "provider connect", async () => {
+      const args = parseArgs(extras);
+      if (String(providerId ?? "").toLowerCase() === "ollama") {
+        const result = await runProviderSetupWizard({
+          root: process.cwd(),
+          scope: args.global ? "global" : "project",
+          interactive: process.stdin.isTTY && process.stdout.isTTY,
+          promptRemoteProviders: false
+        });
+        if (!args.json) {
+          process.stdout.write(`${(result.messages ?? []).join("\n")}\n`);
+        } else {
+          process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        }
+        return 0;
+      }
+      return handleProviderConnect(providerId);
+    });
   }
   if (subcommand === "quota") {
     const [action, target] = [providerId, extras[0]];
