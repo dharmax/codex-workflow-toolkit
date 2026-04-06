@@ -106,7 +106,7 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
 
     let projections = null;
     if (writeProjections) {
-      projections = await writeProjectProjections(store, { projectRoot });
+      projections = await writeProjectProjections(store, { projectRoot, reconcileLegacy: false });
     }
 
     const finalFingerprint = await computeProjectFingerprint({ projectRoot, store, snapshot });

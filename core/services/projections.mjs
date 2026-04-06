@@ -273,7 +273,14 @@ export function renderEpicsProjection(store) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-export async function writeProjectProjections(store, { projectRoot }) {
+export async function writeProjectProjections(store, { projectRoot, reconcileLegacy = true } = {}) {
+  // Preserve manual projection edits by reconciling them back into the DB
+  // before ad hoc projection rewrites. The main sync path already imports
+  // projections earlier and may have computed fresher DB state afterward.
+  if (reconcileLegacy) {
+    await importLegacyProjections(store, { projectRoot });
+  }
+
   const kanban = renderKanbanProjection(store);
   const epics = renderEpicsProjection(store);
   const mission = store.getMeta("mission");

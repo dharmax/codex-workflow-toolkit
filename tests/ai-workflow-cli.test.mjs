@@ -534,6 +534,157 @@ test("ai-workflow project ticket create preserves an existing epic narrative", {
   }
 });
 
+test("ai-workflow sync reimports a manual epic edit after generated projections already exist", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-epic-reimport-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "kanban.md"), "# Kanban\n\n## ToDo\n\n- No items\n", "utf8");
+
+    const initialSync = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "sync",
+      "--write-projections",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(initialSync.code, 0, initialSync.stderr || initialSync.stdout);
+
+    await writeFile(path.join(targetRoot, "epics.md"), [
+      "# Epics",
+      "",
+      "_Generated from the workflow DB._",
+      "",
+      "## EPIC-RESTORE-001 Restore manually edited epics",
+      "",
+      "### Goal",
+      "",
+      "Preserve manual epic edits by importing them before projection rewrites.",
+      "",
+      "### Status",
+      "",
+      "- [ ] Active",
+      "<!-- status: open -->",
+      "",
+      "### User stories",
+      "#### Story 1",
+      "",
+      "**As a maintainer**, I can edit epics.md directly and have sync preserve the narrative instead of deleting it.",
+      "",
+      "### Ticket batches",
+      "- Reconcile projection drift before rewrite.",
+      "",
+      "### Kanban tickets",
+      "- none linked yet",
+      ""
+    ].join("\n"), "utf8");
+
+    const resync = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "sync",
+      "--write-projections",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(resync.code, 0, resync.stderr || resync.stdout);
+    const resyncPayload = JSON.parse(resync.stdout);
+    assert.equal(resyncPayload.importSummary.importedEpics, 1);
+
+    const epicShow = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "epic",
+      "show",
+      "EPIC-RESTORE-001",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(epicShow.code, 0, epicShow.stderr || epicShow.stdout);
+    const epic = JSON.parse(epicShow.stdout);
+    assert.equal(epic.title, "Restore manually edited epics");
+    assert.match(epic.summary, /preserve manual epic edits/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("ai-workflow project ticket create imports a file-only epic before rewriting projections", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-ticket-import-epic-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "kanban.md"), "# Kanban\n\n## ToDo\n\n- No items\n", "utf8");
+
+    const initialSync = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "sync",
+      "--write-projections",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(initialSync.code, 0, initialSync.stderr || initialSync.stdout);
+
+    await writeFile(path.join(targetRoot, "epics.md"), [
+      "# Epics",
+      "",
+      "_Generated from the workflow DB._",
+      "",
+      "## EPIC-RESTORE-002 Preserve file-only epic narrative",
+      "",
+      "### Goal",
+      "",
+      "Keep the original epic title and summary even if the DB has not imported the edit yet.",
+      "",
+      "### User stories",
+      "",
+      "#### Story 1",
+      "",
+      "**As a maintainer**, I can create a linked ticket without flattening a manual epic edit into a stub ID-only epic.",
+      "",
+      "### Ticket batches",
+      "",
+      "- Import projection edits before write.",
+      "",
+      "### Kanban tickets",
+      "",
+      "- none linked yet",
+      ""
+    ].join("\n"), "utf8");
+
+    const createResult = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "ticket",
+      "create",
+      "--id",
+      "EXE-RESTORE-002",
+      "--title",
+      "Preserve file-only epic narrative",
+      "--lane",
+      "Done",
+      "--epic",
+      "EPIC-RESTORE-002",
+      "--summary",
+      "Create a linked ticket without wiping the manual epic."
+    ], { cwd: targetRoot });
+    assert.equal(createResult.code, 0, createResult.stderr || createResult.stdout);
+
+    const epicShow = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "epic",
+      "show",
+      "EPIC-RESTORE-002",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(epicShow.code, 0, epicShow.stderr || epicShow.stdout);
+    const epic = JSON.parse(epicShow.stdout);
+    assert.equal(epic.title, "Preserve file-only epic narrative");
+    assert.match(epic.summary, /keep the original epic title and summary/i);
+    assert.equal(epic.userStories.length, 1);
+
+    const epicsMarkdown = await readFile(path.join(targetRoot, "epics.md"), "utf8");
+    assert.match(epicsMarkdown, /EPIC-RESTORE-002 Preserve file-only epic narrative/);
+    assert.match(epicsMarkdown, /Import projection edits before write\./);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("ai-workflow project ticket create defaults BUG tickets into Bugs P2/P3", { concurrency: false }, async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-ticket-bug-lane-"));
 
