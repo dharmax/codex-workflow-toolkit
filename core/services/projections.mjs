@@ -451,12 +451,23 @@ export async function importLegacyProjections(store, { projectRoot }) {
   };
 }
 
-export function buildTicketEntity({ id, title, lane = "Todo", state = "open", epicId = null, summary = "", userStory = null }) {
+export function inferTicketLane({ id, title, lane = null }) {
+  if (lane != null && String(lane).trim()) {
+    return String(lane).trim();
+  }
+  const combined = `${id ?? ""} ${title ?? ""}`.toUpperCase();
+  if (/\bBUG\b/.test(combined) || String(id ?? "").toUpperCase().startsWith("BUG-")) {
+    return "Bugs P2/P3";
+  }
+  return "Todo";
+}
+
+export function buildTicketEntity({ id, title, lane = null, state = "open", epicId = null, summary = "", userStory = null }) {
   return {
     id,
     entityType: "ticket",
     title,
-    lane,
+    lane: inferTicketLane({ id, title, lane }),
     state,
     confidence: 1,
     provenance: "manual",

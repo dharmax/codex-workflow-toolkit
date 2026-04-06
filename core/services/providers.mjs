@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { openWorkflowStore } from "../db/sqlite-store.mjs";
-import { getGlobalConfigPath, getProjectConfigPath, readConfig, readConfigSafe, writeConfigValue } from "../../cli/lib/config-store.mjs";
+import { getGlobalConfigPath, getProjectConfigPath, readConfig, readConfigSafe, updateConfig, writeConfigValue } from "../../cli/lib/config-store.mjs";
 import { loadKnowledge } from "./knowledge.mjs";
 import { leanCtxInstallHint, probeLeanCtx } from "./lean-ctx.mjs";
 import { sha1 } from "../lib/hash.mjs";
@@ -255,7 +255,7 @@ export function resolveOllamaConfig({ projectConfig = {}, globalConfig = {} } = 
   };
 }
 
-export async function generateWithOllama({ model, prompt, system = "", host, format = null, contentParts = null } = {}) {
+export async function generateWithOllama({ model, prompt, system = "", host, format = null, contentParts = null, signal = null, generationOptions = null } = {}) {
   if (!model) {
     throw new Error("model is required");
   }
@@ -275,13 +275,15 @@ export async function generateWithOllama({ model, prompt, system = "", host, for
       headers: {
         "content-type": "application/json"
       },
+      signal,
       body: JSON.stringify({
         model,
         messages: buildOllamaMessages({ prompt, system, contentParts }),
         stream: false,
         format,
         options: {
-          temperature: 0.1
+          temperature: 0.1,
+          ...(generationOptions ?? {})
         }
       })
     });
@@ -306,6 +308,7 @@ export async function generateWithOllama({ model, prompt, system = "", host, for
     headers: {
       "content-type": "application/json"
     },
+    signal,
     body: JSON.stringify({
       model,
       prompt: promptText,
@@ -313,7 +316,8 @@ export async function generateWithOllama({ model, prompt, system = "", host, for
       stream: false,
       format,
       options: {
-        temperature: 0.1
+        temperature: 0.1,
+        ...(generationOptions ?? {})
       }
     })
   });
@@ -332,7 +336,7 @@ export async function generateWithOllama({ model, prompt, system = "", host, for
   };
 }
 
-export async function generateWithGemini({ model, prompt, system = "", apiKey, contentParts = null } = {}) {
+export async function generateWithGemini({ model, prompt, system = "", apiKey, contentParts = null, signal = null } = {}) {
   const key = apiKey ?? process.env.GOOGLE_API_KEY;
   if (!key) {
     throw new Error("Gemini API key is required (GOOGLE_API_KEY or config)");
@@ -344,6 +348,7 @@ export async function generateWithGemini({ model, prompt, system = "", apiKey, c
     headers: {
       "content-type": "application/json"
     },
+    signal,
     body: JSON.stringify({
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
       contents: [{ parts: buildGeminiParts({ prompt, contentParts }) }],
@@ -369,7 +374,7 @@ export async function generateWithGemini({ model, prompt, system = "", apiKey, c
   };
 }
 
-export async function generateWithOpenAI({ model, prompt, system = "", apiKey, baseUrl, contentParts = null } = {}) {
+export async function generateWithOpenAI({ model, prompt, system = "", apiKey, baseUrl, contentParts = null, signal = null } = {}) {
   const key = apiKey ?? process.env.OPENAI_API_KEY;
   if (!key) {
     throw new Error("OpenAI API key is required (OPENAI_API_KEY or config)");
@@ -382,6 +387,7 @@ export async function generateWithOpenAI({ model, prompt, system = "", apiKey, b
       "content-type": "application/json",
       authorization: `Bearer ${key}`
     },
+    signal,
     body: JSON.stringify({
       model,
       messages: [
@@ -407,7 +413,7 @@ export async function generateWithOpenAI({ model, prompt, system = "", apiKey, b
   };
 }
 
-export async function generateWithAnthropic({ model, prompt, system = "", apiKey, baseUrl, contentParts = null } = {}) {
+export async function generateWithAnthropic({ model, prompt, system = "", apiKey, baseUrl, contentParts = null, signal = null } = {}) {
   const key = apiKey ?? process.env.ANTHROPIC_API_KEY;
   if (!key) {
     throw new Error("Anthropic API key is required (ANTHROPIC_API_KEY or config)");
@@ -421,6 +427,7 @@ export async function generateWithAnthropic({ model, prompt, system = "", apiKey
       "x-api-key": key,
       "anthropic-version": "2023-06-01"
     },
+    signal,
     body: JSON.stringify({
       model,
       system: system || undefined,
@@ -456,21 +463,30 @@ export function registerProvider(providerId, implementation) {
   CUSTOM_PROVIDERS.set(providerId, implementation);
 }
 
-export async function generateCompletion({ providerId, modelId, prompt, system, config = {}, contentParts = null } = {}) {
+export async function generateCompletion({ providerId, modelId, prompt, system, config = {}, contentParts = null, signal = null } = {}) {
   const custom = CUSTOM_PROVIDERS.get(providerId);
   if (custom) {
-    return custom.generate({ modelId, prompt, system, config, contentParts });
+    return custom.generate({ modelId, prompt, system, config, contentParts, signal });
   }
 
   switch (providerId) {
     case "ollama":
-      return generateWithOllama({ model: modelId, prompt, system, host: config.host, format: config.format, contentParts });
+      return generateWithOllama({
+        model: modelId,
+        prompt,
+        system,
+        host: config.host,
+        format: config.format,
+        contentParts,
+        signal,
+        generationOptions: config.generationOptions ?? null
+      });
     case "google":
-      return generateWithGemini({ model: modelId, prompt, system, apiKey: config.apiKey, contentParts });
+      return generateWithGemini({ model: modelId, prompt, system, apiKey: config.apiKey, contentParts, signal });
     case "openai":
-      return generateWithOpenAI({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl, contentParts });
+      return generateWithOpenAI({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl, contentParts, signal });
     case "anthropic":
-      return generateWithAnthropic({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl, contentParts });
+      return generateWithAnthropic({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl, contentParts, signal });
     default:
       throw new Error(`Unsupported provider for completion: ${providerId}`);
   }
@@ -625,6 +641,10 @@ export async function refreshProviderRegistry({ root = process.cwd(), scope = "g
   const refreshed = [];
 
   const providers = providerState.providers ?? {};
+  const nextConfig = await updateConfig(configPath, (config) => {
+    config.providers ??= {};
+    return config;
+  });
   for (const [providerId, provider] of Object.entries(providers)) {
     if (!provider || !Array.isArray(provider.models) || !provider.models.length) {
       continue;
@@ -633,7 +653,8 @@ export async function refreshProviderRegistry({ root = process.cwd(), scope = "g
       continue;
     }
 
-    await writeConfigValue(configPath, `providers.${providerId}.models`, JSON.stringify(provider.models));
+    nextConfig.providers[providerId] ??= {};
+    nextConfig.providers[providerId].models = provider.models;
     refreshed.push({
       providerId,
       modelCount: provider.models.length
@@ -647,12 +668,16 @@ export async function refreshProviderRegistry({ root = process.cwd(), scope = "g
       ...(projectConfig.config.providers?.ollama ?? {})
     };
     if (!nextOllama.host) {
-      await writeConfigValue(configPath, "providers.ollama.host", ollama.host);
+      nextConfig.providers.ollama ??= {};
+      nextConfig.providers.ollama.host = ollama.host;
     }
     if (Array.isArray(ollama.endpoints) && ollama.endpoints.length) {
-      await writeConfigValue(configPath, "providers.ollama.endpoints", JSON.stringify(ollama.endpoints));
+      nextConfig.providers.ollama ??= {};
+      nextConfig.providers.ollama.endpoints = ollama.endpoints;
     }
   }
+
+  await updateConfig(configPath, () => nextConfig);
 
   return {
     configPath,

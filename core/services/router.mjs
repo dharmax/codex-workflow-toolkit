@@ -66,9 +66,11 @@ export async function routeTask({
       // Item 35: Historical Success Bias
       const modelMetrics = routedState.metricsSummary?.byModel?.find(m => m.model_id === model.id);
       const reliabilityBonus = modelMetrics ? (modelMetrics.success_rate / 20) : 2; // 0-5 bonus based on success rate
+      const latencyBonus = scoreLatency(modelMetrics?.avg_latency, { taskClass, local: provider.local });
+      const interactiveShellBonus = scoreInteractiveShellPlanner(model, taskClass);
       const quotaBonus = scoreQuota(provider, { quotaStrategy, remoteFreeQuotaAvailable });
       const fitBonus = typeof model.fitScore === "number" ? (model.fitScore / 10) : 0;
-      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + reliabilityBonus + quotaBonus + configTrustBonus + fitBonus;
+      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + reliabilityBonus + latencyBonus + interactiveShellBonus + quotaBonus + configTrustBonus + fitBonus;
       
       candidates.push({
         providerId,
@@ -112,6 +114,57 @@ export async function routeTask({
       contextCompression: routedState.routingPolicy.contextCompression
     }
   };
+}
+
+function scoreLatency(avgLatencyMs, { taskClass, local }) {
+  const latency = Number(avgLatencyMs ?? 0);
+  if (!Number.isFinite(latency) || latency <= 0) {
+    return 0;
+  }
+
+  const latencySensitive = taskClass === "shell-planning";
+  if (latencySensitive) {
+    if (latency <= 4_000) return 3;
+    if (latency <= 8_000) return 2;
+    if (latency <= 15_000) return 0;
+    if (latency <= 30_000) return -3;
+    return local ? -6 : -4;
+  }
+
+  if (latency <= 5_000) return 1;
+  if (latency <= 15_000) return 0;
+  if (latency <= 30_000) return -1;
+  return local ? -2 : -1;
+}
+
+function scoreInteractiveShellPlanner(model, taskClass) {
+  if (taskClass !== "shell-planning") {
+    return 0;
+  }
+
+  const lower = String(model?.id ?? "").toLowerCase();
+  const capabilities = model?.capabilities ?? {};
+  const prose = Number(capabilities.prose ?? 0);
+  const strategy = Number(capabilities.strategy ?? 0);
+  let score = 0;
+
+  // Interactive shell turns need a bounded, instruction-following assistant more than a slow reasoning model.
+  if (/(?:\br1\b|reason)/.test(lower)) {
+    score -= 6;
+  }
+  if (prose >= 4) {
+    score += 2;
+  } else if (prose >= 3) {
+    score += 1;
+  }
+  if (strategy >= 2.5 && strategy <= 4) {
+    score += 1;
+  }
+  if (strategy - prose > 1) {
+    score -= 1;
+  }
+
+  return score;
 }
 
 function buildReason(candidate, taskClass, minimumQuality, capability) {

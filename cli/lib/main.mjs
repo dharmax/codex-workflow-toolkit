@@ -20,7 +20,7 @@ import { auditArchitecture } from "../../core/services/critic.mjs";
 import { refreshProviderQuotaState } from "../../core/services/providers.mjs";
 import { refreshCodeletRegistry, listCodeletsFromStore, getCodeletFromStore, searchCodeletsFromStore } from "../../core/services/codelets.mjs";
 import { executeCodelet } from "../../core/services/codelet-executor.mjs";
-import { buildTicketEntity, importLegacyProjections, renderEpicsProjection, renderKanbanProjection, writeProjectProjections } from "../../core/services/projections.mjs";
+import { buildTicketEntity, importLegacyProjections, inferTicketLane, renderEpicsProjection, renderKanbanProjection, writeProjectProjections } from "../../core/services/projections.mjs";
 import { addManualNote, createTicket, evaluateProjectReadiness, getEpic, getProjectMetrics, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { onboardProjectBrief } from "../../core/services/orchestrator.mjs";
@@ -633,7 +633,7 @@ async function handleProject(rest) {
       const ticket = buildTicketEntity({
         id,
         title,
-        lane: String(args.lane ?? "Todo"),
+        lane: inferTicketLane({ id, title, lane: args.lane ? String(args.lane) : null }),
         epicId: args.epic ? String(args.epic) : null,
         summary: args.summary ? String(args.summary) : ""
       });

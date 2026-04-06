@@ -534,6 +534,37 @@ test("ai-workflow project ticket create preserves an existing epic narrative", {
   }
 });
 
+test("ai-workflow project ticket create defaults BUG tickets into Bugs P2/P3", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-ticket-bug-lane-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "kanban.md"), "# Kanban\n\n## ToDo\n\n- No items\n", "utf8");
+    const syncResult = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--write-projections", "--json"], { cwd: targetRoot });
+    assert.equal(syncResult.code, 0, syncResult.stderr || syncResult.stdout);
+
+    const createResult = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "ticket",
+      "create",
+      "--id",
+      "BUG-SHELL-900",
+      "--title",
+      "Keep bug work in the dedicated bug lane",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(createResult.code, 0, createResult.stderr || createResult.stdout);
+    const ticket = JSON.parse(createResult.stdout);
+    assert.equal(ticket.lane, "Bugs P2/P3");
+
+    const projection = await readFile(path.join(targetRoot, "kanban.md"), "utf8");
+    assert.match(projection, /## Bugs P2\/P3/);
+    assert.match(projection, /BUG-SHELL-900 Keep bug work in the dedicated bug lane/);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("smart codelet observer routes through the provider and documents candidate patterns", { concurrency: false }, async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-smart-codelet-"));
 

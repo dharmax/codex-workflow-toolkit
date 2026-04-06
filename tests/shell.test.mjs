@@ -51,7 +51,7 @@ test("resolveShellPlanners prefers local shell planning when remote access is en
         async json() {
           return {
             models: [
-              { name: "deepseek-r1:8b", size: 5 * 1024 ** 3 }
+              { name: "hermes3:8b", size: Math.round(4.3 * 1024 ** 3) }
             ]
           };
         }
@@ -168,7 +168,52 @@ test("resolveShellPlanners prefers a text-capable Ollama model over a vision-onl
     const planners = await resolveShellPlanners(root);
     assert.equal(planners.planners[0]?.providerId, "ollama");
     assert.equal(planners.planners[0]?.modelId, "qwen2.5-coder:7b");
-    assert.match(planners.planners[0]?.reason ?? "", /text-capable planner pool/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("resolveShellPlanners trusts the routed interactive shell planner instead of a weaker capped tiny model or slow local reasoner", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-router-overrides-local-chooser-" + Math.random().toString(36).slice(2));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "phi:latest", size: Math.round(1.5 * 1024 ** 3) },
+              { name: "deepseek-r1:8b", size: Math.round(4.9 * 1024 ** 3) },
+              { name: "hermes3:8b", size: Math.round(4.3 * 1024 ** 3) }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  await fs.mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".ai-workflow", "config.json"),
+    JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://127.0.0.1:11434",
+          maxModelSizeB: 4
+        }
+      }
+    }, null, 2)
+  );
+
+  try {
+    const planners = await resolveShellPlanners(root);
+    assert.equal(planners.planners[0]?.providerId, "ollama");
+    assert.equal(planners.planners[0]?.modelId, "hermes3:8b");
+    assert.notEqual(planners.planners[0]?.modelId, "phi:latest");
+    assert.notEqual(planners.planners[0]?.modelId, "deepseek-r1:8b");
   } finally {
     globalThis.fetch = originalFetch;
     await fs.rm(root, { recursive: true, force: true });
@@ -219,7 +264,7 @@ test("resolveShellPlanners drops vision-only local planners and falls back to re
   }
 });
 
-test("resolveShellPlanners uses the live model-fit matrix to prefer gemma4 for shell planning", async () => {
+test("resolveShellPlanners uses the live model-fit matrix instead of a hardcoded local fallback", async () => {
   const root = path.resolve("/tmp/ai-workflow-shell-gemma4-" + Math.random().toString(36).slice(2));
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
@@ -256,7 +301,8 @@ test("resolveShellPlanners uses the live model-fit matrix to prefer gemma4 for s
   try {
     const planners = await resolveShellPlanners(root);
     assert.equal(planners.planners[0]?.providerId, "ollama");
-    assert.equal(planners.planners[0]?.modelId, "gemma4:9b");
+    assert.equal(planners.planners[0]?.modelId, "qwen2.5-coder:7b");
+    assert.notEqual(planners.planners[0]?.modelId, "gemma4:9b");
   } finally {
     globalThis.fetch = originalFetch;
     await fs.rm(root, { recursive: true, force: true });
@@ -335,8 +381,8 @@ test("planShellRequestWithAgent uses operator-first prompt design and interactio
 
   assert.match(capturedPrompt.system, /## Operating Contract/);
   assert.match(capturedPrompt.system, /## Available Actions \(Your Capabilities\):/);
-  assert.match(capturedPrompt.system, /## Graph Contract/);
   assert.match(capturedPrompt.system, /## Planning Rules/);
+  assert.match(capturedPrompt.system, /Prefer flat `actions`; only use `graph` if truly needed\./);
   assert.doesNotMatch(capturedPrompt.system, /### MISSION\.md/);
   assert.doesNotMatch(capturedPrompt.system, /## Project Current Status \(Smart Summary\)/);
   assert.match(capturedPrompt.prompt, /## Runtime Context/);
@@ -581,6 +627,102 @@ test("planShellRequest falls back to the next AI planner when the first one retu
     { type: "provider_status" }
   ]);
   assert.equal(options.plannerBlacklist?.has("mock-bad-shell-planner:brain-v1"), true);
+});
+
+test("planShellRequest does not split a single natural-language request on plain `and`", async () => {
+  let callCount = 0;
+  registerProvider("mock-no-split-shell-planner", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async () => {
+      callCount += 1;
+      return {
+        response: JSON.stringify({
+          kind: "plan",
+          confidence: 0.91,
+          reason: "Need one project summary before answering.",
+          strategy: "Read the summary, then synthesize one brief.",
+          actions: [{ type: "project_summary" }]
+        })
+      };
+    }
+  });
+
+  const options = {
+    root: "/tmp",
+    plannerContext: { summary: {}, toolkitCodelets: [], projectCodelets: [] },
+    history: [],
+    planners: {
+      planners: [
+        { providerId: "mock-no-split-shell-planner", modelId: "brain-v1" }
+      ],
+      heuristic: { mode: "heuristic", reason: "fallback" }
+    }
+  };
+
+  const plan = await planShellRequest("Give me a concise operator brief grounded in the current workflow state, and justify the recommendation.", options);
+  assert.equal(plan.kind, "plan");
+  assert.equal(callCount, 1);
+});
+
+test("planShellRequest times out a slow planner and falls back to the next one", async () => {
+  registerProvider("mock-slow-shell-planner", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async ({ signal }) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve({
+        response: JSON.stringify({
+          kind: "plan",
+          confidence: 0.8,
+          reason: "Too slow",
+          strategy: "Late plan",
+          actions: [{ type: "provider_status" }]
+        })
+      }), 250);
+      if (signal) {
+        signal.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(signal.reason ?? new Error("aborted"));
+        }, { once: true });
+      }
+    })
+  });
+
+  registerProvider("mock-fast-shell-planner", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async () => ({
+      response: JSON.stringify({
+        kind: "plan",
+        confidence: 0.93,
+        reason: "Fast fallback.",
+        strategy: "Use the provider status action.",
+        actions: [{ type: "provider_status" }]
+      })
+    })
+  });
+
+  const options = {
+    root: "/tmp",
+    plannerContext: { summary: {}, toolkitCodelets: [], projectCodelets: [] },
+    history: [],
+    plannerTimeoutMs: 25,
+    planners: {
+      planners: [
+        { providerId: "mock-slow-shell-planner", modelId: "brain-v1" },
+        { providerId: "mock-fast-shell-planner", modelId: "brain-v1" }
+      ],
+      heuristic: { mode: "heuristic", reason: "fallback" }
+    }
+  };
+
+  const plan = await planShellRequest("orchestrate the telemetry lattice", options);
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.planner.providerId, "mock-fast-shell-planner");
+  assert.equal(options.plannerBlacklist?.has("mock-slow-shell-planner:brain-v1"), true);
 });
 
 test("planShellRequestWithAgent multi-turn grounding scenario", async (t) => {
@@ -1501,4 +1643,16 @@ test("chooseShellPlannerModel ignores planner overrides when the matrix prefers 
   });
   assert.equal(sized.id, "qwen2.5:7b");
   assert.match(sized.reason, /hardware class medium/);
+});
+
+test("chooseShellPlannerModel excludes weak phi-class shell planners", () => {
+  const selected = chooseShellPlannerModel({
+    maxModelSizeB: 4,
+    models: [
+      { id: "phi:latest", quality: "low", sizeB: 1.5, fitScore: 90 },
+      { id: "deepseek-r1:8b", quality: "medium", sizeB: 4.9, fitScore: 84, strengths: ["strategy", "logic", "prose"] }
+    ]
+  });
+
+  assert.equal(selected.id, "deepseek-r1:8b");
 });

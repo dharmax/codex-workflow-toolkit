@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { addManualNote, evaluateProjectReadiness, getEpic, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, withWorkflowStore } from "../core/services/sync.mjs";
-import { buildTicketEntity, renderEpicsProjection, renderKanbanProjection } from "../core/services/projections.mjs";
+import { buildTicketEntity, inferTicketLane, renderEpicsProjection, renderKanbanProjection } from "../core/services/projections.mjs";
 import { openWorkflowStore } from "../core/db/sqlite-store.mjs";
 import { PROTOCOL_VERSION, validateEvaluateReadinessResponse } from "../core/contracts/dual-surface-protocol.mjs";
 import { withWorkspaceMutation } from "../core/lib/workspace-mutation.mjs";
@@ -226,6 +226,17 @@ test("kanban projection keeps rare lanes hidden until they have cards", async ()
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }
+});
+
+test("buildTicketEntity defaults BUG tickets into the bug lane", () => {
+  const bugTicket = buildTicketEntity({
+    id: "BUG-SHELL-01",
+    title: "Keep shell defects out of the feature backlog"
+  });
+  assert.equal(bugTicket.lane, "Bugs P2/P3");
+  assert.equal(inferTicketLane({ id: "BUG-CLI-01", title: "Example" }), "Bugs P2/P3");
+  assert.equal(inferTicketLane({ id: "TKT-001", title: "Normal work" }), "Todo");
+  assert.equal(inferTicketLane({ id: "BUG-CLI-02", title: "Urgent issue", lane: "Bugs P1" }), "Bugs P1");
 });
 
 test("kanban projection renders done tickets with a completion date", async () => {

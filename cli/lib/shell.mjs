@@ -12,7 +12,7 @@ import { decomposeTicket, executeTicket, ideateFeature, sweepBugs } from "../../
 import { auditArchitecture } from "../../core/services/critic.mjs";
 import { addManualNote, createTicket, evaluateProjectReadiness, getProjectMetrics, getProjectSummary, getSmartProjectStatus, recordMetric, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
 import { executeCodelet } from "../../core/services/codelet-executor.mjs";
-import { buildTicketEntity } from "../../core/services/projections.mjs";
+import { buildTicketEntity, inferTicketLane } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
@@ -29,6 +29,19 @@ const TICKET_ID_PATTERN = "[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+";
 const WORKFLOW_GATED_MUTATIONS = new Set(["add_note", "create_ticket", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
 
 const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
+const FAST_DIRECT_ACTIONS = new Set([
+  "project_summary",
+  "list_tickets",
+  "metrics",
+  "version",
+  "doctor",
+  "provider_status",
+  "audit_architecture",
+  "route",
+  "search",
+  "extract_ticket",
+  "next_ticket"
+]);
 const NOTE_TYPES = ["NOTE", "TODO", "FIXME", "HACK", "BUG", "RISK"];
 const KNOWN_TASK_CLASSES = [
   "summarization",
@@ -76,18 +89,113 @@ export async function handleShell(rest, { cliPath } = {}) {
 
   const prompt = args._.join(" ").trim();
   if (prompt) {
-    await runProviderSetupWizard({ root, scope: "global", interactive: false });
-    await syncProject({ projectRoot: root, writeProjections: true });
-    options.plannerContext = await buildShellContext(root);
-    options.planners = await resolveShellPlanners(root, { providerState: options.plannerContext.providerState });
-    const result = await runShellTurn(prompt, options);
-    return emitShellResult(result, options);
+    const fastResult = await tryRunShellFastPath(prompt, options);
+    if (fastResult) {
+      return emitShellResult(fastResult, options);
+    }
+    const processingIndicator = createShellProcessingIndicator(options);
+    try {
+      processingIndicator.update("refreshing providers");
+      await runProviderSetupWizard({ root, scope: "global", interactive: false });
+      processingIndicator.update("syncing project");
+      await syncProject({ projectRoot: root, writeProjections: true });
+      processingIndicator.update("refreshing context");
+      options.plannerContext = await buildShellContext(root);
+      options.planners = await resolveShellPlanners(root, { providerState: options.plannerContext.providerState });
+      processingIndicator.update("planning and running", { planner: options.planners.planners[0] ?? options.planners.heuristic });
+      const result = await runShellTurn(prompt, options);
+      processingIndicator.clear();
+      return emitShellResult(result, options);
+    } finally {
+      processingIndicator.clear();
+    }
   }
 
   await runProviderSetupWizard({ root, scope: "global", interactive: false });
   options.plannerContext = await buildShellContext(root);
   options.planners = await resolveShellPlanners(root, { providerState: options.plannerContext.providerState });
   return runInteractiveShell(options);
+}
+
+async function buildFastShellContext(root = process.cwd()) {
+  const summary = await safeGetProjectSummary(root);
+  return {
+    root,
+    toolkitCodelets: [],
+    projectCodelets: [],
+    summary,
+    smartStatus: null,
+    providerState: { providers: {} },
+    knowledge: { tasks: [] },
+    kanban: null
+  };
+}
+
+async function tryRunShellFastPath(inputText, options) {
+  const plannerContext = await buildFastShellContext(options.root);
+  const plan = planShellRequestHeuristically(inputText, plannerContext, {
+    activeGraphState: options.activeGraphState ?? null
+  });
+
+  if (isFastShellReplyPlan(plan)) {
+    return {
+      input: inputText,
+      plan,
+      executed: [],
+      executedGraph: { nodes: [], executions: [], branchPath: [] },
+      continuationState: buildContinuationState({
+        inputText,
+        plan,
+        executedGraph: { nodes: [], executions: [], branchPath: [] }
+      }),
+      preRendered: false,
+      recovery: null,
+      assistantReply: null
+    };
+  }
+
+  if (isFastShellActionPlan(plan)) {
+    const fastOptions = {
+      ...options,
+      noAi: true,
+      plannerContext,
+      planners: {
+        planners: [],
+        heuristic: {
+          mode: "heuristic",
+          reason: "Fast local shell path."
+        }
+      }
+    };
+    const executedGraph = await executeActionGraph(plan.graph, fastOptions);
+    const executed = executedGraph.nodes
+      .filter((node) => node.execution)
+      .map((node) => node.execution);
+    return {
+      input: inputText,
+      plan,
+      executed,
+      executedGraph,
+      continuationState: buildContinuationState({ inputText, plan, executedGraph }),
+      preRendered: true,
+      recovery: null,
+      assistantReply: null
+    };
+  }
+
+  return null;
+}
+
+function isFastShellReplyPlan(plan) {
+  return plan?.kind === "reply" && (plan.confidence ?? 0) >= 0.9;
+}
+
+function isFastShellActionPlan(plan) {
+  return plan?.kind === "plan"
+    && (plan.confidence ?? 0) >= 0.93
+    && Array.isArray(plan.actions)
+    && plan.actions.length > 0
+    && plan.actions.every((action) => FAST_DIRECT_ACTIONS.has(action.type));
 }
 
 function parseShellArgs(argv) {
@@ -194,8 +302,15 @@ export async function resolveShellPlanners(root = process.cwd(), { providerState
   const planners = [];
   const providers = route.providers ?? {};
 
+  if (route.recommended) {
+    const mapped = mapRouteCandidateToPlanner(route.recommended, providers);
+    if (isEligibleShellPlanner(mapped, providers)) {
+      planners.push(mapped);
+    }
+  }
+
   const ollamaProvider = providers.ollama;
-  if (ollamaProvider?.available) {
+  if (!planners.length && ollamaProvider?.available) {
     try {
       const localShellModel = chooseShellPlannerModel(ollamaProvider);
       planners.push({
@@ -208,13 +323,6 @@ export async function resolveShellPlanners(root = process.cwd(), { providerState
       });
     } catch {
       // keep route-derived planners only
-    }
-  }
-
-  if (route.recommended) {
-    const mapped = mapRouteCandidateToPlanner(route.recommended, providers);
-    if (isEligibleShellPlanner(mapped, providers)) {
-      planners.push(mapped);
     }
   }
 
@@ -275,7 +383,7 @@ export async function planShellRequest(inputText, options) {
     return planSingleRequest(inputText, options);
   }
 
-  const segments = inputText.split(/\s+then\s+|\s+and\s+/i);
+  const segments = splitShellRequestSegments(inputText);
   if (segments.length > 1) {
     const plans = await Promise.all(segments.map(s => planSingleRequest(s.trim(), options)));
     const canSafelyCombine = plans.every((plan) => {
@@ -401,7 +509,7 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
   const asksCurrentWork = /\b(working on right now|working on now|what are we working on|what were working on|current work|current focus)\b/.test(normalizedQuestion);
   const asksRelatedArtifacts = /\b(artifact|artifacts|relates to it|related to it|relate to it)\b/.test(normalizedQuestion);
   const readinessGoal = extractReadinessGoal(text);
-  const asksProjectStatus = /\b(project status|status update|whats the project status|what is the project status|hows the project|how is the project)\b/.test(normalizedQuestion);
+  const asksProjectStatus = /\b(project status|projects status|status update|whats the project status|whats the projects status|what is the project status|what is the projects status|hows the project|how is the project)\b/.test(normalizedQuestion);
   const asksReadiness = Boolean(readinessGoal);
   const wantsCombinedStatusReadiness = asksProjectStatus && asksReadiness;
   const readinessContinuationPlan = buildReadinessContinuationPlan({
@@ -998,36 +1106,29 @@ export async function buildShellPlannerPrompt(inputText, options) {
   const { recentMemory, longTermMemorySummary } = await summarizeHistory(history);
   const runtimeContext = buildShellPlannerRuntimeContext(options.plannerContext, options);
   const notesLoreExtra = buildShellPlannerNotesLoreExtra({ recentMemory, longTermMemorySummary, activeGraphState });
-  const schema = buildShellPlannerJsonSchema();
+  const schemaPrompt = buildShellPlannerSchemaPrompt();
 
   const system = [
     "You are the shell planning brain inside ai-workflow.",
     "Behave like a strong operator that decides how to use tools, not like a chatty project summarizer.",
-    "Your first job is to infer what information is needed, then choose the smallest truthful tool graph to get it.",
+    "Choose the smallest truthful next step.",
     "",
     "## Operating Contract",
-    "- Convert the user request into a JSON action graph or a direct reply when the answer is purely shell-local.",
+    "- Convert the user request into JSON actions or a direct reply when the answer is purely shell-local.",
     "- For project-state questions, prefer discovery actions before answering.",
     "- Do not assume project facts that have not been discovered in this turn or a prior node result.",
-    "- Keep the first graph minimal, then use branch/assert/replan to go deeper from results.",
+    "- Keep the first plan minimal. Prefer flat `actions`; only use `graph` if truly needed.",
     "",
     "## Available Actions (Your Capabilities):",
     catalog,
     "",
-    "## Graph Contract",
-    "- Build conditional action graphs using `action`, `branch`, `assert`, `synthesize`, and `replan` nodes.",
-    "- Use `assert` to gate risky work on verification or baseline health.",
-    "- Use `branch` when later steps depend on observed results.",
-    "- Use `replan` when the next graph fragment should be generated from prior node outputs.",
-    "- Prefer graph-shaped plans over flat `actions` except for trivial fallback plans.",
-    "",
     "## Planning Rules",
     "- Start with the user's intent, then decide what context must be pulled.",
     "- Pull project info only when the request makes that context necessary.",
-    "- Prefer targeted discovery like `project_summary`, `extract_ticket`, `search`, `route`, or codelets over broad context dumps.",
+    "- Prefer targeted discovery like `project_summary`, `extract_ticket`, `search`, or `route` over broad context dumps.",
     "- If the question is only about shell usage or capabilities, `kind=reply` is allowed without tool execution.",
     "- If the answer depends on project state, use tools first unless the needed state is already present in prior node results.",
-    "- For multi-clause, goal-driven, ordered, or ambiguous requests, prefer a graph plan over a direct reply.",
+    "- For multi-clause, goal-driven, ordered, or ambiguous requests, prefer a small ordered `actions` list over a long reply.",
     "- Preserve the user's requested order unless observed tool results prove a blocker.",
     "- When the user states a goal or success criterion, use it to choose discovery steps and rank remaining work.",
     "- Do not collapse a long request into a shallow answer just because one phrase matches a simpler pattern.",
@@ -1041,7 +1142,7 @@ export async function buildShellPlannerPrompt(inputText, options) {
     notesLoreExtra ? `\n${notesLoreExtra}` : "",
     "",
     "## Allowed JSON Schema:",
-    JSON.stringify(schema, null, 2),
+    schemaPrompt,
     "",
     `## Current User Request:\n"${inputText}"\n\nYour Response (JSON):`
   ];
@@ -1116,6 +1217,9 @@ export async function planShellRequestWithAgent(inputText, options) {
 
 async function runShellCompletion({ stage, planner, system, prompt, config = {}, options, contentParts = null }) {
   const trace = typeof options?.traceAi === "function" ? options.traceAi : null;
+  const timeoutMs = getShellPlannerTimeoutMs(options, planner);
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timeoutId = null;
   trace?.({
     phase: "request",
     stage,
@@ -1125,13 +1229,25 @@ async function runShellCompletion({ stage, planner, system, prompt, config = {},
   });
   const start = Date.now();
   try {
+    if (controller && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      timeoutId = setTimeout(() => controller.abort(new Error(`planner timed out after ${timeoutMs}ms`)), timeoutMs);
+    }
     const completion = await generateCompletion({
       providerId: planner.providerId,
       modelId: planner.modelId,
       system,
       prompt,
-      config,
-      contentParts
+      config: planner.providerId === "ollama"
+        ? {
+            ...config,
+            generationOptions: {
+              ...(config.generationOptions ?? {}),
+              num_predict: stage === "planner" ? 384 : 512
+            }
+          }
+        : config,
+      contentParts,
+      signal: controller?.signal ?? null
     });
     trace?.({
       phase: "response",
@@ -1142,14 +1258,22 @@ async function runShellCompletion({ stage, planner, system, prompt, config = {},
     });
     return completion;
   } catch (error) {
+    const timedOut = controller?.signal?.aborted && Number.isFinite(timeoutMs) && timeoutMs > 0;
     trace?.({
       phase: "error",
       stage,
       planner,
-      error: error?.message ?? String(error),
+      error: timedOut ? `planner timed out after ${timeoutMs}ms` : (error?.message ?? String(error)),
       elapsedMs: Date.now() - start
     });
+    if (timedOut) {
+      throw new Error(`planner timed out after ${timeoutMs}ms`);
+    }
     throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
@@ -2039,6 +2163,17 @@ export async function runInteractiveShell(options) {
           continue;
         }
 
+        const fastResult = await tryRunShellFastPath(line, options);
+        if (fastResult) {
+          options.activeGraphState = fastResult.continuationState ?? null;
+          if (options.json) {
+            output.write(`${JSON.stringify(fastResult, null, 2)}\n`);
+          } else {
+            renderHumanShellResult(fastResult);
+          }
+          continue;
+        }
+
         // 0. Ensure bidirectional sync so manual edits are ingested and DB changes are projected
         processingIndicator.update("syncing project");
         await syncProject({ projectRoot: options.root, writeProjections: true });
@@ -2048,7 +2183,7 @@ export async function runInteractiveShell(options) {
         options.plannerContext = await buildShellContext(options.root);
         options.planners = await resolveShellPlanners(options.root, { providerState: options.plannerContext.providerState });
 
-        processingIndicator.update("planning and running");
+        processingIndicator.update("planning and running", { planner: options.planners.planners[0] ?? options.planners.heuristic });
         const result = await runShellTurn(line, options);
         processingIndicator.clear();
         options.activeGraphState = result.continuationState ?? null;
@@ -2102,12 +2237,20 @@ export async function runInteractiveShell(options) {
 
 function createShellProcessingIndicator(options) {
   const enabled = !options.json && process.stdin.isTTY && process.stdout.isTTY;
+  const nonInteractive = !process.stdin.isTTY || !process.stdout.isTTY;
   let active = false;
   return {
-    update(message) {
-      if (!enabled) return;
-      active = true;
-      output.write(`${renderShellStatusLine(`processing: ${message}...`)}`);
+    update(message, { planner = null } = {}) {
+      if (enabled) {
+        active = true;
+        output.write(`${renderShellStatusLine(`processing: ${message}...`)}`);
+        return;
+      }
+      if (!nonInteractive) {
+        return;
+      }
+      const plannerHint = planner ? ` -> ${describeShellPlanner(planner)}` : "";
+      process.stderr.write(`[progress] ${message}${plannerHint}\n`);
     },
     clear() {
       if (!enabled || !active) return;
@@ -2185,7 +2328,7 @@ export function handleShellCommand(line, options) {
 }
 
 function logShellTrace(options, event) {
-  if (!options?.trace || options?.json) {
+  if (!options?.trace) {
     return;
   }
 
@@ -2214,7 +2357,12 @@ function logShellTrace(options, event) {
     lines.push(`latency: ${event.elapsedMs}ms`);
   }
 
-  output.write(`${lines.join("\n")}\n`);
+  const traceText = `${lines.join("\n")}\n`;
+  if (options?.json) {
+    process.stderr.write(traceText);
+    return;
+  }
+  output.write(traceText);
 }
 
 function describeShellPlanner(planner) {
@@ -2440,7 +2588,7 @@ async function runShellActionDirect(action, options) {
         const entity = buildTicketEntity({
           id: action.id,
           title: action.title,
-          lane: action.lane ?? "Todo",
+          lane: inferTicketLane({ id: action.id, title: action.title, lane: action.lane ?? null }),
           epicId: action.epicId,
           summary: action.summary ?? ""
         });
@@ -3288,42 +3436,53 @@ function renderShellCommandHelp(command) {
 }
 
 function buildActionCatalog(plannerContext) {
-  const lines = [
-    "- project_summary: show overall project status, file/symbol counts, and recent friction",
-    "- list_tickets: show all active tickets with summaries",
-    "- doctor: local diagnostics and provider visibility",
-    "- provider_status: show configured and routeable AI providers",
-    "- version: show the current ai-workflow build and toolkit root",
-    "- sync: sync the workflow DB",
-    "- run_review: run the review summary codelet",
-    "- evaluate_readiness: issue a structured beta/release/handoff readiness opinion",
-    "- search: search indexed project data",
-    "- extract_ticket: extract a specific ticket",
-    "- next_ticket: find the next priority ticket to work on",
-    "- decompose_ticket: decompose a ticket into sub-tasks",
-    "- execute_ticket: plan or execute a specific ticket with verification gating",
-    "- ideate_feature: scope a new feature into an Epic and Tickets",
-    "- sweep_bugs: automated bug-fixing loop for Todo lane",
-    "- ingest_artifact: normalize a project brief / PRD into Epics/Tickets",
-    "- extract_guidelines: extract task guidance",
-    "- route: show provider/model routing for a task class",
-    "- run_dynamic_codelet: execute an on-the-fly JavaScript code snippet to solve a custom problem",
-    "- telegram_preview: render Telegram status text",
-    "- add_note: add a project note",
-    "- create_ticket: create a workflow ticket",
-    "- run_codelet: execute a known codelet by id",
-    "- provider_connect: connect to a new AI provider (browser/API key)",
-    "- reprofile: refresh model capability matrix",
-    "- set_provider_key: set API key for a provider"
+  const baseActions = [
+    "project_summary",
+    "list_tickets",
+    "doctor",
+    "provider_status",
+    "version",
+    "sync",
+    "run_review",
+    "evaluate_readiness",
+    "search",
+    "extract_ticket",
+    "next_ticket",
+    "decompose_ticket",
+    "execute_ticket",
+    "ideate_feature",
+    "sweep_bugs",
+    "ingest_artifact",
+    "extract_guidelines",
+    "route",
+    "run_dynamic_codelet",
+    "telegram_preview",
+    "add_note",
+    "create_ticket",
+    "run_codelet",
+    "provider_connect",
+    "reprofile",
+    "set_provider_key"
   ];
-
-  lines.push("");
-  lines.push("Known codelets:");
-  for (const codelet of [...plannerContext.toolkitCodelets, ...plannerContext.projectCodelets]) {
-    lines.push(`- ${codelet.id}: ${codelet.summary}`);
-  }
-
+  const codeletIds = [...plannerContext.toolkitCodelets, ...plannerContext.projectCodelets]
+    .map((codelet) => codelet.id)
+    .filter(Boolean)
+    .slice(0, 12);
+  const lines = [
+    `Valid actions: ${baseActions.join(", ")}`,
+    codeletIds.length ? `Known codelets: ${codeletIds.join(", ")}` : "Known codelets: none"
+  ];
   return lines.join("\n");
+}
+
+function buildShellPlannerSchemaPrompt() {
+  return [
+    '{"kind":"plan|reply|exit","confidence":0.8,"reason":"required","strategy":"optional","reply":"required for reply","actions":[{"type":"project_summary"}]}',
+    'Reply: {"kind":"reply","confidence":0.9,"reason":"...","reply":"..."}',
+    'Plan: {"kind":"plan","confidence":0.9,"reason":"...","strategy":"optional","actions":[{"type":"project_summary"},{"type":"list_tickets"}]}',
+    'Optional advanced form: include `graph.nodes` only when branching or gating is truly needed.',
+    'Every action type must come from the valid action catalog.'
+  ].join("\n");
 }
 
 function cliCommand(args, mutation) {
@@ -3592,7 +3751,7 @@ function buildContextualShellReply(inputText, plannerContext) {
   const providerState = plannerContext?.providerState ?? {};
   const providerMap = providerState.providers ?? {};
   const projectName = path.basename(plannerContext?.root ?? process.cwd());
-  const hasProjectQuestion = /\b(project|repo|repository|codebase)\b/.test(normalized);
+  const hasProjectQuestion = /\b(project|projects|repo|repository|codebase)\b/.test(normalized);
   const asksWhere = /\b(where)\b/.test(normalized)
     || /\bwhich project\b/.test(normalized)
     || /\bwhat (?:project|repo|repository)\b/.test(normalized);
@@ -3621,7 +3780,7 @@ function buildContextualShellReply(inputText, plannerContext) {
     return replyPlan([
       "I can inspect project state, answer questions about the repo, search code and tickets, sync the workflow DB, prepare context, and run guided workflow actions.",
       "If you want to change code or project state, say that directly and I’ll plan or execute the next step."
-    ].join("\n"), 0.7, "Capability explanation.");
+    ].join("\n"), 0.95, "Capability explanation.");
   }
 
   if (asksInProgress && /\bwhat(s| is)?\b/.test(normalized)) {
@@ -3749,17 +3908,23 @@ function buildContextualShellReply(inputText, plannerContext) {
   }
 
   if (asksGreeting || ["how are you", "tell me a joke"].includes(normalized) || /\bhow(?:'s| is) it going\b/.test(normalized) || /\bready to help\b/.test(normalized)) {
-    return replyPlan("Ready. Point me at the code or the problem and I’ll work it through.", 0.45, "Light conversational reply.");
+    return replyPlan("Ready. Point me at the code or the problem and I’ll work it through.", 0.96, "Light conversational reply.");
   }
 
   if (asksStatus && hasProjectQuestion) {
     const ticketHint = activeTickets[0] ? `Top active ticket: ${activeTickets[0].id} (${activeTickets[0].lane}).` : "No active ticket is obvious yet.";
     const moduleHint = modules.length ? `Main areas: ${modules.slice(0, 5).map((item) => item.name).join(", ")}.` : "Module summary is not available yet.";
+    const counts = [];
+    if (Number.isFinite(summary.fileCount)) counts.push(`${summary.fileCount} files`);
+    if (Number.isFinite(summary.symbolCount)) counts.push(`${summary.symbolCount} symbols`);
+    if (Number.isFinite(summary.noteCount)) counts.push(`${summary.noteCount} notes`);
+    const countHint = counts.length ? `Indexed state: ${counts.join(", ")}.` : null;
     return replyPlan([
       `You are in \`${projectName}\`.`,
+      ...(countHint ? [countHint] : []),
       ticketHint,
       moduleHint
-    ].join("\n"), 0.84, "Project status grounding reply.");
+    ].join("\n"), 0.96, "Project status grounding reply.");
   }
 
   return null;
@@ -4158,18 +4323,23 @@ export function chooseShellPlannerModel(ollamaProvider) {
 
   const qualityCap = ollamaProvider.plannerMaxQuality ?? defaultPlannerQualityCap(ollamaProvider.hardwareClass);
   const sizeCap = ollamaProvider.maxModelSizeB ?? defaultPlannerSizeCap(ollamaProvider.hardwareClass);
-  const sizeFiltered = models.filter((model) => model.sizeB == null || sizeCap == null || model.sizeB <= sizeCap);
-  const qualityFiltered = sizeFiltered.filter((model) => qualityRank(model.quality) <= qualityRank(qualityCap));
-  const pool = qualityFiltered.length
-    ? qualityFiltered
-    : sizeFiltered.length
-      ? sizeFiltered
-      : models;
-  const textCapablePool = pool.filter((model) => isTextCapableShellPlannerModel(model));
+  const textCapablePool = models.filter((model) => isTextCapableShellPlannerModel(model) && isViableShellPlannerModel(model));
   if (!textCapablePool.length) {
     throw new Error("No text-capable Ollama models available for shell planning.");
   }
-  const selectionPool = textCapablePool;
+  const sizeAndQualityPool = textCapablePool.filter((model) =>
+    (model.sizeB == null || sizeCap == null || model.sizeB <= sizeCap)
+    && qualityRank(model.quality) <= qualityRank(qualityCap)
+  );
+  const qualityPool = textCapablePool.filter((model) => qualityRank(model.quality) <= qualityRank(qualityCap));
+  const sizePool = textCapablePool.filter((model) => model.sizeB == null || sizeCap == null || model.sizeB <= sizeCap);
+  const selectionPool = sizeAndQualityPool.length
+    ? sizeAndQualityPool
+    : qualityPool.length
+      ? qualityPool
+      : sizePool.length
+        ? sizePool
+        : textCapablePool;
 
   selectionPool.sort((left, right) =>
     (right.fitScore ?? -1) - (left.fitScore ?? -1)
@@ -4228,7 +4398,35 @@ function isTextCapableShellPlannerModel(model) {
   }
 
   const lower = String(model.id ?? "").toLowerCase();
-  return /(?:coder|reason|chat|assistant|gemma|llama|mistral|hermes|qwen|phi)/.test(lower) && !/(?:moondream|vision)/.test(lower);
+  return /(?:coder|reason|chat|assistant|gemma|llama|mistral|hermes|qwen|phi|deepseek)/.test(lower) && !/(?:moondream|vision)/.test(lower);
+}
+
+function isViableShellPlannerModel(model) {
+  if (!model || typeof model !== "object") {
+    return false;
+  }
+  const capabilities = model.capabilities ?? {};
+  const strengths = Array.isArray(model.strengths) ? model.strengths : [];
+  const lower = String(model.id ?? "").toLowerCase();
+  const textScore = Math.max(
+    Number(capabilities.logic ?? 0),
+    Number(capabilities.strategy ?? 0),
+    Number(capabilities.prose ?? 0)
+  );
+
+  if (/(?:moondream|vision|embed)/.test(lower)) {
+    return false;
+  }
+  if (/\bphi\b/.test(lower)) {
+    return false;
+  }
+  if (strengths.some((strength) => ["logic", "strategy", "prose"].includes(String(strength).toLowerCase()))) {
+    return true;
+  }
+  if (textScore >= 2.5) {
+    return true;
+  }
+  return /(?:coder|reason|chat|assistant|gemma|llama|mistral|hermes|qwen|deepseek)/.test(lower);
 }
 
 function defaultPlannerSizeCap(hardwareClass) {
@@ -4244,6 +4442,28 @@ function defaultPlannerSizeCap(hardwareClass) {
     default:
       return 8;
   }
+}
+
+function splitShellRequestSegments(inputText) {
+  const text = String(inputText ?? "").trim();
+  if (!text) {
+    return [];
+  }
+
+  return text
+    .split(/(?:\s+then\s+|[;\n]+(?=\s*\S))/i)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function getShellPlannerTimeoutMs(options, planner) {
+  if (Number.isFinite(options?.plannerTimeoutMs) && options.plannerTimeoutMs > 0) {
+    return options.plannerTimeoutMs;
+  }
+  if (planner?.providerId === "ollama") {
+    return 20000;
+  }
+  return 15000;
 }
 
 function defaultPlannerQualityCap(hardwareClass) {

@@ -142,7 +142,7 @@ async function buildShellScenarios({ profile, cliPath, root, timeoutMs }) {
       cwd: root,
       timeoutMs,
       cliPath,
-      args: ["shell", "what are we working on right now?", "--json", "--trace"]
+      args: ["shell", "Give me a concise operator brief grounded in the current workflow state, and justify the recommendation.", "--json", "--trace"]
     }));
   }
 
@@ -257,17 +257,21 @@ async function runCliScenario({ id, description, cwd, timeoutMs, cliPath, args }
 }
 
 function buildScenarioResult({ id, description, command, result }) {
+  const model = extractModelTrace(result.stdout, result.stderr);
+  const progressLines = extractProgressLines(result.stdout, result.stderr);
+  const validation = validateScenarioResult({ id, result, model, progressLines });
   return {
     id,
     description,
     command,
-    ok: result.code === 0,
+    ok: validation.ok,
     code: result.code,
     timedOut: Boolean(result.timedOut),
     durationMs: result.durationMs,
-    model: extractModelTrace(result.stdout, result.stderr),
+    model,
+    progressLines,
     stdout: truncateText(result.stdout),
-    stderr: truncateText(result.stderr)
+    stderr: truncateText(validation.message ? `${result.stderr}\n${validation.message}`.trim() : result.stderr)
   };
 }
 
@@ -275,6 +279,45 @@ function extractModelTrace(stdout, stderr) {
   const combined = `${stdout ?? ""}\n${stderr ?? ""}`;
   const match = combined.match(/\[trace\][^\n]*->\s*([^\n]+)/i);
   return match ? match[1].trim() : null;
+}
+
+function extractProgressLines(stdout, stderr) {
+  const combined = `${stdout ?? ""}\n${stderr ?? ""}`;
+  return combined
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("[progress] "));
+}
+
+function validateScenarioResult({ id, result, model, progressLines }) {
+  if ([
+    "doctor-command",
+    "doctor-help-command",
+    "incomplete-epic-request",
+    "epic-read-request"
+  ].includes(id)) {
+    if (progressLines.length) {
+      return { ok: false, message: "local shell scenario unexpectedly emitted planner progress output" };
+    }
+    if (model) {
+      return { ok: false, message: "local shell scenario unexpectedly emitted an AI model trace" };
+    }
+  }
+  if (id === "ai-planning-read") {
+    if (!progressLines.length) {
+      return { ok: false, message: "missing non-interactive shell progress output" };
+    }
+    if (!model) {
+      return { ok: false, message: "missing AI model trace for live shell planning" };
+    }
+    if (result.code === 124 && result.timedOut) {
+      return { ok: true, message: "live shell planning timed out, but progress and selected-model trace were surfaced" };
+    }
+  }
+  if (result.code !== 0) {
+    return { ok: false, message: "scenario process exited with a non-zero code" };
+  }
+  return { ok: true, message: "" };
 }
 
 function truncateText(value, maxLength = 1600) {
