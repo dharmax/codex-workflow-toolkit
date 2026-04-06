@@ -4098,8 +4098,10 @@ export function chooseShellPlannerModel(ollamaProvider) {
     : sizeFiltered.length
       ? sizeFiltered
       : models;
+  const textCapablePool = pool.filter((model) => isTextCapableShellPlannerModel(model));
+  const selectionPool = textCapablePool.length ? textCapablePool : pool;
 
-  pool.sort((left, right) =>
+  selectionPool.sort((left, right) =>
     (right.fitScore ?? -1) - (left.fitScore ?? -1)
     || (right.fitReasons?.length ?? 0) - (left.fitReasons?.length ?? 0)
     ||
@@ -4108,9 +4110,14 @@ export function chooseShellPlannerModel(ollamaProvider) {
     || left.id.localeCompare(right.id)
   );
 
-  const selected = pool[0];
+  const selected = selectionPool[0];
   const needsHardwareHint = !ollamaProvider.hardwareClass && !ollamaProvider.maxModelSizeB && !ollamaProvider.plannerMaxQuality;
   const reasonParts = [];
+  if (textCapablePool.length) {
+    reasonParts.push("text-capable planner pool");
+  } else if (pool.length) {
+    reasonParts.push("no text-capable models discovered; falling back to all local models");
+  }
   if (needsHardwareHint) {
     reasonParts.push("hardware unknown; defaulting to a smaller planner model");
   } else if (ollamaProvider.hardwareClass) {
@@ -4130,6 +4137,32 @@ export function chooseShellPlannerModel(ollamaProvider) {
     needsHardwareHint,
     reason: reasonParts.join(", ") || "using the lightest suitable local planner model"
   };
+}
+
+function isTextCapableShellPlannerModel(model) {
+  if (!model || typeof model !== "object") {
+    return false;
+  }
+
+  const capabilities = model.capabilities ?? {};
+  const strengths = Array.isArray(model.strengths) ? model.strengths : [];
+  const textScore = Math.max(
+    Number(capabilities.logic ?? 0),
+    Number(capabilities.strategy ?? 0),
+    Number(capabilities.prose ?? 0)
+  );
+  const visualScore = Number(capabilities.visual ?? 0);
+
+  if (strengths.some((strength) => ["logic", "strategy", "prose"].includes(String(strength).toLowerCase()))) {
+    return true;
+  }
+
+  if (textScore >= 2.5 && textScore >= visualScore) {
+    return true;
+  }
+
+  const lower = String(model.id ?? "").toLowerCase();
+  return /(?:coder|reason|chat|assistant|gemma|llama|mistral|hermes|qwen|phi)/.test(lower) && !/(?:moondream|vision)/.test(lower);
 }
 
 function defaultPlannerSizeCap(hardwareClass) {

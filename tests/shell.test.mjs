@@ -132,6 +132,49 @@ test("resolveShellPlanners keeps local Ollama first even when a remote provider 
   }
 });
 
+test("resolveShellPlanners prefers a text-capable Ollama model over a vision-only one", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-text-model-" + Math.random().toString(36).slice(2));
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith("/api/tags")) {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "moondream:latest", size: 2 * 1024 ** 3 },
+              { name: "qwen2.5-coder:7b", size: 7 * 1024 ** 3 }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  await fs.mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".ai-workflow", "config.json"),
+    JSON.stringify({
+      providers: {
+        ollama: {
+          host: "http://127.0.0.1:11434"
+        }
+      }
+    }, null, 2)
+  );
+
+  try {
+    const planners = await resolveShellPlanners(root);
+    assert.equal(planners.planners[0]?.providerId, "ollama");
+    assert.equal(planners.planners[0]?.modelId, "qwen2.5-coder:7b");
+    assert.match(planners.planners[0]?.reason ?? "", /text-capable planner pool/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("resolveShellPlanners uses the live model-fit matrix to prefer gemma4 for shell planning", async () => {
   const root = path.resolve("/tmp/ai-workflow-shell-gemma4-" + Math.random().toString(36).slice(2));
   const originalFetch = globalThis.fetch;
