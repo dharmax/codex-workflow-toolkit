@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { execFile, spawn } from "node:child_process";
 import { access } from "node:fs/promises";
@@ -609,7 +609,9 @@ test("shell trace uses a text-capable Ollama planner for a multi-phase epic requ
     assert.match(result.stdout, /\[trace\] planner request -> ollama:qwen2\.5-coder:7b @ http:\/\/127\.0\.0\.1:11434/);
     assert.doesNotMatch(result.stdout, /moondream:latest/);
     assert.match(result.stdout, /Current User Request:\n"i want a new epic: Telegram remote-control\./);
-    assert.match(result.stdout, /Vision: build a resilient Telegram remote-control layer with explicit approval, auditability, and staged rollout\./);
+    const humanTail = result.stdout.trim().split(/\nlatency: \d+ms\n/).at(-1) ?? "";
+    assert.match(humanTail, /^Vision: build a resilient Telegram remote-control layer with explicit approval, auditability, and staged rollout\./);
+    assert.match(humanTail, /Phases: 1\) discovery, 2\) command transport, 3\) execution controls, 4\) safety\/observability, 5\) operator polish\./);
   } finally {
     await cleanup(projectRoot);
   }
