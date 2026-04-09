@@ -21,6 +21,7 @@ import { configureOllamaHardware } from "./ollama-hw.mjs";
 import { runProviderSetupWizard } from "./provider-setup.mjs";
 import { handleProviderConnect } from "./provider-connect.mjs";
 import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
+import { formatStatusReport, resolveProjectStatus } from "../../core/services/status.mjs";
 
 const STREAMED_STDIO = "__STREAMED_STDIO__";
 const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
@@ -32,6 +33,7 @@ const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_olla
 const FAST_DIRECT_ACTIONS = new Set([
   "project_summary",
   "list_tickets",
+  "status_query",
   "metrics",
   "version",
   "doctor",
@@ -344,6 +346,25 @@ export async function resolveShellPlanners(root = process.cwd(), { providerState
     deduped.push(planner);
   }
 
+  // Ensure at least one remote model is in the chain as a final safety net
+  // if we only have local models so far.
+  if (deduped.length > 0 && deduped.every(p => p.mode === "ollama")) {
+    const providerState = await discoverProviderState({ root, forceRefresh: false });
+    const remoteRoute = await routeTask({
+      root,
+      taskClass: "shell-planning",
+      preferLocal: false,
+      forceRefresh: false,
+      providerState
+    });
+    if (remoteRoute.recommended && !remoteRoute.recommended.local) {
+      const mapped = mapRouteCandidateToPlanner(remoteRoute.recommended, providers);
+      if (isEligibleShellPlanner(mapped, providers)) {
+        deduped.push(mapped);
+      }
+    }
+  }
+
   return {
     planners: deduped,
     heuristic: {
@@ -464,6 +485,7 @@ async function planSingleRequest(inputText, options) {
         planner
       };
     } catch (error) {
+      const timedOut = isShellPlannerTimeoutError(error);
       const isFatal = String(error).includes("403") || String(error).includes("PERMISSION_DENIED") || String(error).includes("invalid_key");
       if (isFatal) {
         options.blacklist ??= new Set();
@@ -475,6 +497,9 @@ async function planSingleRequest(inputText, options) {
       options.plannerBlacklist ??= new Set();
       options.plannerBlacklist.add(plannerKey);
       errors.push(`${planner.providerId}: ${error.message ?? String(error)}`);
+      if (timedOut && planner.providerId === "ollama") {
+        break;
+      }
     }
   }
 
@@ -496,6 +521,10 @@ function shouldSurfacePlannerFailure(inputText, heuristic) {
     return true;
   }
   return false;
+}
+
+function isShellPlannerTimeoutError(error) {
+  return /planner timed out after \d+ms/i.test(String(error?.message ?? error));
 }
 
 export function planShellRequestHeuristically(inputText, plannerContext, options = {}) {
@@ -570,6 +599,14 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     };
   }
 
+  if (looksLikeGenericStatusQuery(text, plannerContext)) {
+    return actionPlan([{
+      type: "status_query",
+      query: text,
+      entityType: inferStatusEntityType(text)
+    }], 0.95, "Generic status-style request routed to the deterministic status resolver.");
+  }
+
   if (routing.mode === "staged-core") {
     const stagedPlan = buildGoalDirectedShellPlan(intent, plannerContext);
     if (stagedPlan) {
@@ -598,17 +635,19 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
   if ((/\b(explain|describe|summarize|detail|details)\b/.test(lower) || /\bwhat functionality\b/.test(lower))
     && /\bticket\b/.test(lower)
     && implicitTicketId) {
-    const actions = hasKnownCodelet(plannerContext, "context-pack")
-      ? [{ type: "run_codelet", codeletId: "context-pack", args: buildTicketContextPackArgs(plannerContext, implicitTicketId) }]
-      : [{ type: "extract_ticket", ticketId: implicitTicketId }];
-    return actionPlan(actions, 0.91, "Implicit ticket explanation request resolved from active ticket state.");
+    return actionPlan([{
+      type: "status_query",
+      query: implicitTicketId,
+      entityType: "ticket"
+    }], 0.93, "Implicit ticket explanation request resolved to ticket status with related evidence.");
   }
 
   if (asksCurrentWork && implicitTicketId) {
-    const actions = hasKnownCodelet(plannerContext, "context-pack")
-      ? [{ type: "run_codelet", codeletId: "context-pack", args: buildTicketContextPackArgs(plannerContext, implicitTicketId) }]
-      : [{ type: "extract_ticket", ticketId: implicitTicketId }];
-    return actionPlan(actions, 0.93, "Current work request resolved from active in-progress ticket.");
+    return actionPlan([{
+      type: "status_query",
+      query: implicitTicketId,
+      entityType: "ticket"
+    }], 0.95, "Current work request resolved from active in-progress ticket with related evidence.");
   }
 
   if (/\b(complete|finish|resolve|do|handle)\b/.test(lower)
@@ -893,9 +932,7 @@ function buildGoalDirectedShellPlan(intent, plannerContext) {
   };
 
   if (ticketId) {
-    const currentTicketAction = hasKnownCodelet(plannerContext, "context-pack")
-      ? { type: "run_codelet", codeletId: "context-pack", args: buildTicketContextPackArgs(plannerContext, ticketId) }
-      : { type: "extract_ticket", ticketId };
+    const currentTicketAction = { type: "status_query", query: ticketId, entityType: "ticket" };
     addActionNode(currentTicketAction);
     if (intent.requestedMutations.executeCurrent) {
       addActionNode({ type: "execute_ticket", ticketId, apply: false });
@@ -1031,13 +1068,14 @@ function buildShellPlannerJsonSchema() {
         ifFalse: [{ type: "sync" }],
         instruction: "for replan nodes; explain how to generate the next graph fragment from prior results",
         action: {
-          type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key"
+          type: "project_summary|list_tickets|status_query|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key"
         }
       }]
     },
     actions: [{
-      type: "project_summary|list_tickets|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key",
-      query: "for search",
+      type: "project_summary|list_tickets|status_query|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key",
+      query: "for status_query/search",
+      entityType: "optional type hint for status_query",
       goalType: "for evaluate_readiness",
       question: "for evaluate_readiness",
       ticketId: "for extract_ticket/decompose_ticket/execute_ticket/extract_guidelines",
@@ -1118,6 +1156,10 @@ export async function buildShellPlannerPrompt(inputText, options) {
     "- For project-state questions, prefer discovery actions before answering.",
     "- Do not assume project facts that have not been discovered in this turn or a prior node result.",
     "- Keep the first plan minimal. Prefer flat `actions`; only use `graph` if truly needed.",
+    "",
+    "## Graph Contract",
+    "- Use direct `actions` for simple deterministic status, summary, and extraction work.",
+    "- Use `graph.nodes` only when branching, gating, or replanning is required.",
     "",
     "## Available Actions (Your Capabilities):",
     catalog,
@@ -1565,7 +1607,14 @@ function renderFallbackAssistantReply({ inputText, plan, executed, plannerContex
   if (plan.actions.some((action) => action.type === "execute_ticket") && plan.actions.some((action) => action.type === "evaluate_readiness")) {
     return renderExecutionPlusReadinessReply(graphExecutions);
   }
+  const goalDirectedReply = renderGoalDirectedFallbackReply({ inputText, plan, graphExecutions, plannerContext });
+  if (goalDirectedReply) {
+    return goalDirectedReply;
+  }
   const actionType = plan.actions[0]?.type;
+  if (actionType === "status_query") {
+    return raw;
+  }
   if (plan.actions.some((action) => action.type === "project_summary") && plan.actions.some((action) => action.type === "evaluate_readiness")) {
     return renderCombinedStatusReadinessReply(graphExecutions);
   }
@@ -1586,10 +1635,6 @@ function renderFallbackAssistantReply({ inputText, plan, executed, plannerContex
   }
   if (actionType === "doctor") {
     return `Here is the current diagnostics report:\n${raw}`;
-  }
-  const goalDirectedReply = renderGoalDirectedFallbackReply({ inputText, plan, graphExecutions, plannerContext });
-  if (goalDirectedReply) {
-    return goalDirectedReply;
   }
   const renderedExecutions = graphExecutions
     .map((item) => String(item.ok ? item.stdout : `${item.stdout ?? ""}${item.stderr ?? ""}`).trim())
@@ -1627,6 +1672,7 @@ function renderGoalDirectedFallbackReply({ inputText, plan, graphExecutions, pla
   if (ranked.length) {
     lines.push(`Suggested remaining priorities: ${ranked.map((item) => `${item.id} (${item.lane})`).join(", ")}.`);
   }
+  lines.push("Apply: no.");
   lines.push("Proposed mutation steps should be confirmed before changing board state.");
 
   const renderedExecutions = graphExecutions
@@ -1654,7 +1700,6 @@ function validateShellAction(action, plannerContext) {
     case "version":
     case "sync":
     case "run_review":
-    case "evaluate_readiness":
     case "run_dynamic_codelet":
     case "telegram_preview":
     case "reprofile":
@@ -1671,6 +1716,15 @@ function validateShellAction(action, plannerContext) {
         throw new Error("search action requires query");
       }
       return { type, query: String(action.query).trim() };
+    case "status_query":
+      if (!String(action.query ?? "").trim()) {
+        throw new Error("status_query action requires query");
+      }
+      return {
+        type,
+        query: String(action.query).trim(),
+        entityType: action.entityType ? String(action.entityType).trim() : null
+      };
     case "evaluate_readiness":
       if (!String(action.goalType ?? "").trim()) {
         throw new Error("evaluate_readiness action requires goalType");
@@ -1880,6 +1934,26 @@ export async function executeShellAction(action, options) {
         summary: `Project summary loaded with ${payload.activeTickets.length} active tickets.`
       });
     }
+    if (action.type === "status_query") {
+      const payload = await resolveProjectStatus({
+        projectRoot: options.root,
+        selector: action.query,
+        type: action.entityType,
+        includeRelated: true,
+        rawQuestion: true,
+        relatedLimit: 18
+      });
+      return attachStructuredExecution({
+        action,
+        command: compiled.display,
+        mutation: compiled.mutation,
+        ok: Boolean(payload?.ok),
+        stdout: formatStatusReport(payload),
+        stderr: payload?.ok ? "" : `${payload?.error ?? "Status query failed."}\n`,
+        structuredPayload: payload,
+        summary: payload?.ok ? `${payload.title} ${payload.status}` : (payload?.error ?? "status query failed")
+      });
+    }
     if (action.type === "evaluate_readiness") {
       const payload = await evaluateProjectReadiness({
         projectRoot: options.root,
@@ -1975,6 +2049,14 @@ export function compileShellAction(action, { json = false } = {}) {
     case "project_summary":
     case "list_tickets":
       return cliCommand(["project", "summary", ...(json ? ["--json"] : [])], false);
+    case "status_query":
+      return cliCommand([
+        "project",
+        "status",
+        action.query,
+        ...(action.entityType ? ["--type", action.entityType] : []),
+        ...(json ? ["--json"] : [])
+      ], false);
     case "next_ticket":
       return cliCommand(["project", "ticket", "next", ...(json ? ["--json"] : [])], false);
     case "metrics":
@@ -2400,14 +2482,10 @@ async function promptShellQuestion(rl, prompt) {
     return null;
   }
 
-  const closePromise = once(rl, "close").then(() => null);
   try {
-    return await Promise.race([
-      rl.question(prompt),
-      closePromise
-    ]);
+    return await rl.question(prompt);
   } catch (error) {
-    if (error?.code === "ERR_USE_AFTER_CLOSE") {
+    if (error?.code === "ERR_USE_AFTER_CLOSE" || error?.message?.includes("closed")) {
       return null;
     }
     throw error;
@@ -3439,6 +3517,7 @@ function buildActionCatalog(plannerContext) {
   const baseActions = [
     "project_summary",
     "list_tickets",
+    "status_query",
     "doctor",
     "provider_status",
     "version",
@@ -3761,8 +3840,8 @@ function buildContextualShellReply(inputText, plannerContext) {
     || /what should we do next/.test(normalized)
     || /\bwhat is next\b/.test(normalized);
   const asksTellAboutProject = /\b(tell me about the project|tell me about this project|tell me about the repo|tell me about this repo)\b/.test(normalized);
-  const asksCapabilities = /\b(what can you do|how can you help|what are you capable of|what do you do here)\b/.test(normalized);
-  const asksGreeting = /\b(how are you|hows it going|how is it going|are you feeling well|ready to help|you there)\b/.test(normalized);
+  const asksCapabilities = /\b(what can you do|how can you help|what are you capable of|capable of working|can you work|what do you do here)\b/.test(normalized);
+  const asksGreeting = /\b(how are you|hows it going|how is it going|are you feeling well|ready to help|you there|are you working)\b/.test(normalized);
   const asksStatus = /\b(status|shape|state of the project|how is the project)\b/.test(normalized);
   const asksCodebaseAssessment = /\bwhat do you think about the codebase\b/.test(normalized)
     || /\bwhat do you think about this repo\b/.test(normalized);
@@ -4067,6 +4146,51 @@ function renderRecovery(recovery) {
     lines.push(rendered || (execution.ok ? "OK" : "Command failed."));
   }
   return `${lines.join("\n")}\n`;
+}
+
+function looksLikeGenericStatusQuery(inputText, plannerContext) {
+  const text = String(inputText ?? "").trim();
+  const normalized = normalizeConversationText(text);
+  if (!text || /^(status|summary|project summary|show status|show tickets|list tickets)$/i.test(text)) {
+    return false;
+  }
+  if (/\b(readiness|ready for beta|ready for release|doctor|diagnostics|provider|providers|version|metrics|stats|usage)\b/.test(normalized)) {
+    return false;
+  }
+  if (/\b(what did the tests cover|what do the tests cover|test coverage|test status)\b/.test(normalized)) {
+    return true;
+  }
+  if (/\b(status of|state of|how is|what about)\b/.test(normalized)) {
+    return true;
+  }
+  if (/\bstatus\b/.test(normalized) && !/\bproject status\b/.test(normalized)) {
+    return Boolean(
+      inferStatusEntityType(text)
+      || resolveImplicitTicketId(plannerContext, text)
+      || /\b(shell|workflow|module|feature|file|symbol|class|ticket|epic|story|codelet|bug|issue|idea|risk)\b/.test(normalized)
+    );
+  }
+  return false;
+}
+
+function inferStatusEntityType(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  if (/\b(shell|workflow|provider|init surface)\b/.test(normalized)) return "surface";
+  if (/\bmodule\b/.test(normalized)) return "module";
+  if (/\bfeature|flow\b/.test(normalized)) return "feature";
+  if (/\bfile\b/.test(normalized)) return "file";
+  if (/\b(symbol|class|function|method|interface|type)\b/.test(normalized)) return "symbol";
+  if (/\btest\b/.test(normalized)) return "test";
+  if (/\bticket\b/.test(normalized)) return "ticket";
+  if (/\bepic\b/.test(normalized)) return "epic";
+  if (/\bstory|user story|use case\b/.test(normalized)) return "story";
+  if (/\bcodelet\b/.test(normalized)) return "codelet";
+  if (/\bbug\b/.test(normalized)) return "bug";
+  if (/\bissue\b/.test(normalized)) return "issue";
+  if (/\bidea\b/.test(normalized)) return "idea";
+  if (/\brisk\b/.test(normalized)) return "risk";
+  if (/\b(project|repo|repository|codebase)\b/.test(normalized)) return "project";
+  return null;
 }
 
 function buildReadinessContinuationPlan({ text, plannerContext, activeGraphState }) {
@@ -4460,6 +4584,10 @@ function getShellPlannerTimeoutMs(options, planner) {
   if (Number.isFinite(options?.plannerTimeoutMs) && options.plannerTimeoutMs > 0) {
     return options.plannerTimeoutMs;
   }
+  const envTimeout = Number(process.env.AI_WORKFLOW_SHELL_PLANNER_TIMEOUT_MS ?? "");
+  if (Number.isFinite(envTimeout) && envTimeout > 0) {
+    return envTimeout;
+  }
   if (planner?.providerId === "ollama") {
     return 20000;
   }
@@ -4527,15 +4655,24 @@ function formatProjectMetrics(metrics, json) {
     return `${JSON.stringify(metrics, null, 2)}\n`;
   }
   const lines = [
-    `Total AI Calls: ${metrics.totalCalls}`,
-    `Success Rate: ${metrics.successRate}%`,
-    `Avg Latency: ${metrics.avgLatencyMs}ms`,
-    `Total Tokens: ${metrics.totalPromptTokens + metrics.totalCompletionTokens} (P: ${metrics.totalPromptTokens} / C: ${metrics.totalCompletionTokens})`,
-    "",
-    "Usage by Model:"
+    `All time: ${metrics.totalCalls} calls, ${metrics.successRate}% success, ${metrics.avgLatencyMs}ms avg latency`,
+    `Assumptions: ${metrics.assumptions?.helpVsBaseline ?? "heuristic estimate"}`
   ];
-  for (const m of metrics.byModel) {
-    lines.push(`- ${m.model_id}: ${m.count} calls, ${Math.round(m.success_rate)}% success, ${Math.round(m.avg_latency)}ms avg`);
+
+  for (const key of ["latestSession", "last4WorkHours", "trailingWeek"]) {
+    const window = metrics.windows?.[key];
+    if (!window) {
+      continue;
+    }
+    lines.push("");
+    lines.push(window.label);
+    lines.push(`- Calls: ${window.calls}`);
+    lines.push(`- Cost: estimated ${window.cost.estimatedManualMinutes}m manual vs ${window.cost.estimatedToolMinutes}m tool time, ${window.cost.estimatedMinutesSaved}m saved`);
+    lines.push(`- Quality: ${window.quality.qualityScore}/100 (${window.quality.successRate}% success, ${window.quality.fastEnoughRate}% fast-enough)`);
+    lines.push(`- Mix: ${window.localCalls} local / ${window.remoteCalls} remote, ${window.totalTokens} total tokens`);
+    if (window.byModel?.length) {
+      lines.push(`- Top model: ${window.byModel[0].model_id} (${window.byModel[0].count} calls, ${window.byModel[0].success_rate}% success)`);
+    }
   }
   return lines.join("\n") + "\n";
 }

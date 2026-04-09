@@ -118,7 +118,8 @@ function inferVerificationCommands({ root, ticket, entity, workingSet, packageMe
   ].map((value) => String(value ?? "")).join("\n");
   const ticketText = compact(rawTicketText);
 
-  for (const explicit of extractExplicitCommands(rawTicketText)) {
+  const explicitCommands = extractExplicitCommands(rawTicketText);
+  for (const explicit of explicitCommands) {
     pushCommand(commands, seen, explicit, "ticket-verification");
   }
 
@@ -130,6 +131,10 @@ function inferVerificationCommands({ root, ticket, entity, workingSet, packageMe
     || /\b(functions|firebase|backend|server|webhook)\b/.test(lowerText);
   const docsOnly = lowerFiles.length > 0 && lowerFiles.every((filePath) => filePath.startsWith("docs/"));
   const targetedCommands = inferTargetedVerificationCommands({ root, workingSet: lowerFiles, packageMeta });
+  const hasExplicitVerification = explicitCommands.length > 0;
+  const hasTargetedUnit = targetedCommands.some((item) => item.source === "targeted-unit" || item.source === "targeted-node-test");
+  const hasTargetedE2e = targetedCommands.some((item) => item.source === "targeted-e2e");
+  const hasSourceCoverageTargets = lowerFiles.some((filePath) => filePath.startsWith("src/") || filePath.startsWith("functions/"));
 
   for (const targeted of targetedCommands) {
     pushCommand(commands, seen, targeted.command, targeted.source);
@@ -138,10 +143,18 @@ function inferVerificationCommands({ root, ticket, entity, workingSet, packageMe
   if (uiTicket && scripts["test:e2e"]) {
     pushCommand(commands, seen, packageManager.runScript("test:e2e"), "ui-flow");
   }
-  if ((uiTicket || backendTicket || lowerFiles.some((filePath) => filePath.startsWith("src/") || filePath.startsWith("functions/"))) && scripts["test:unit"]) {
+  const shouldAddBroadUnitCoverage = Boolean(
+    scripts["test:unit"]
+    && (
+      hasTargetedUnit
+      || backendTicket
+      || (!hasExplicitVerification && !hasTargetedE2e && hasSourceCoverageTargets)
+    )
+  );
+  if (shouldAddBroadUnitCoverage) {
     pushCommand(commands, seen, packageManager.runScript("test:unit"), "unit-coverage");
   }
-  if ((backendTicket || uiTicket || lowerFiles.some((filePath) => filePath.startsWith("src/") || filePath.startsWith("functions/"))) && scripts.build) {
+  if ((backendTicket || uiTicket || hasSourceCoverageTargets) && scripts.build) {
     pushCommand(commands, seen, packageManager.runScript("build"), "build");
   }
   if (!commands.length && scripts.test) {

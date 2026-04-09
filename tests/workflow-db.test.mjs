@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { addManualNote, evaluateProjectReadiness, getEpic, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, withWorkflowStore } from "../core/services/sync.mjs";
 import { buildTicketEntity, inferTicketLane, renderEpicsProjection, renderKanbanProjection } from "../core/services/projections.mjs";
@@ -10,6 +11,7 @@ import { openWorkflowStore } from "../core/db/sqlite-store.mjs";
 import { PROTOCOL_VERSION, validateEvaluateReadinessResponse } from "../core/contracts/dual-surface-protocol.mjs";
 import { withWorkspaceMutation } from "../core/lib/workspace-mutation.mjs";
 import { writeProjectFile } from "../core/lib/filesystem.mjs";
+import { resolveProjectStatus } from "../core/services/status.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixtureRoot = path.join(repoRoot, "tests", "fixtures", "workflow-repo");
@@ -47,6 +49,65 @@ test("syncProject skips indexing when the project snapshot is unchanged", async 
     assert.equal(second.skipped, true);
     assert.equal(second.indexedFiles, 0);
     assert.equal(second.reason, "project state unchanged");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveProjectStatus materializes surface links and test evidence", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-status-surface-"));
+
+  try {
+    await mkdir(path.join(targetRoot, "cli", "lib"), { recursive: true });
+    await mkdir(path.join(targetRoot, "tests"), { recursive: true });
+    await mkdir(path.join(targetRoot, ".ai-workflow", "generated"), { recursive: true });
+    await writeFile(path.join(targetRoot, "package.json"), JSON.stringify({ name: "status-surface-test", type: "module" }, null, 2), "utf8");
+    await writeFile(path.join(targetRoot, "cli", "lib", "shell.mjs"), "export function shellEntry() { return 'ok'; }\n", "utf8");
+    await writeFile(path.join(targetRoot, "tests", "shell.test.mjs"), "import '../cli/lib/shell.mjs';\nexport const covered = true;\n", "utf8");
+    await writeFile(path.join(targetRoot, "kanban.md"), "# Kanban\n\n## Todo\n- [ ] TKT-001 Example ticket\n", "utf8");
+    await writeFile(path.join(targetRoot, ".ai-workflow", "generated", "dogfood-report.json"), `${JSON.stringify({
+      version: 1,
+      generatedAt: "2026-04-09T12:00:00.000Z",
+      root: targetRoot,
+      profile: "full",
+      timeoutMs: 45000,
+      surfaces: {
+        shell: {
+          description: "Interactive shell surface",
+          fileCount: 1,
+          files: ["cli/lib/shell.mjs"],
+          fileHashes: {},
+          scenarioCount: 1,
+          status: "pass",
+          scenarios: [{
+            id: "doctor-command",
+            description: "shell handles doctor locally",
+            command: "node cli/ai-workflow.mjs shell doctor --json --no-ai",
+            ok: true,
+            code: 0,
+            timedOut: false,
+            durationMs: 25,
+            stdout: "{\"kind\":\"reply\"}",
+            stderr: ""
+          }]
+        }
+      }
+    }, null, 2)}\n`, "utf8");
+
+    await syncProject({ projectRoot: targetRoot, writeProjections: false });
+    const report = await resolveProjectStatus({
+      projectRoot: targetRoot,
+      selector: "shell",
+      type: "surface",
+      includeRelated: true
+    });
+
+    assert.equal(report.ok, true);
+    assert.equal(report.id, "surface:shell");
+    assert.equal(report.related.some((item) => item.id === "file:cli/lib/shell.mjs"), true);
+    assert.equal(report.tests.some((item) => item.title === "tests/shell.test.mjs"), true);
+    assert.equal(report.tests.some((item) => /dogfood shell doctor-command/.test(item.title)), true);
+    assert.equal(report.latestTestResult.status, "pass");
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }
@@ -417,6 +478,31 @@ test("openWorkflowStore tolerates legacy DBs that already contain guarded column
   }
 });
 
+test("openWorkflowStore retries transient locked initialization before succeeding", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-open-retry-"));
+  const originalExec = DatabaseSync.prototype.exec;
+  let injected = false;
+
+  DatabaseSync.prototype.exec = function patchedExec(sql) {
+    if (!injected && String(sql).includes("PRAGMA journal_mode = WAL")) {
+      injected = true;
+      const error = new Error("database is locked");
+      error.code = "ERR_SQLITE_ERROR";
+      throw error;
+    }
+    return originalExec.call(this, sql);
+  };
+
+  try {
+    const store = await openWorkflowStore({ projectRoot: targetRoot, dbPath: path.join(targetRoot, "workflow.db") });
+    assert.equal(injected, true);
+    store.close();
+  } finally {
+    DatabaseSync.prototype.exec = originalExec;
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("syncProject ignores generated artifact directories that would pollute search", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-generated-ignore-"));
 
@@ -549,6 +635,73 @@ test("syncProject imports richer docs kanban tickets instead of template root ka
     const exactTicketSearch = await searchProject({ projectRoot: targetRoot, query: "REF-APP-SHELL-01" });
     assert.equal(exactTicketSearch[0]?.scope, "entity");
     assert.equal(exactTicketSearch[0]?.refId, "REF-APP-SHELL-01");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("metrics summary reports latest session, trailing week, and last active work hours", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-metrics-summary-"));
+
+  try {
+    const store = await openWorkflowStore({ projectRoot: targetRoot, dbPath: path.join(targetRoot, "workflow.db") });
+    store.appendMetric({
+      taskClass: "review",
+      capability: "logic",
+      providerId: "google",
+      modelId: "gemini-2.0-pro-exp",
+      promptTokens: 400,
+      completionTokens: 120,
+      latencyMs: 12000,
+      success: true,
+      createdAt: "2026-03-30T10:00:00.000Z"
+    });
+    store.appendMetric({
+      taskClass: "shell-planning",
+      capability: "strategy",
+      providerId: "ollama",
+      modelId: "hermes3:8b",
+      promptTokens: 120,
+      completionTokens: 40,
+      latencyMs: 2200,
+      success: true,
+      createdAt: "2026-04-09T08:00:00.000Z"
+    });
+    store.appendMetric({
+      taskClass: "summarization",
+      capability: "data",
+      providerId: "google",
+      modelId: "gemini-2.0-flash",
+      promptTokens: 180,
+      completionTokens: 70,
+      latencyMs: 4500,
+      success: false,
+      errorMessage: "timeout",
+      createdAt: "2026-04-09T09:05:00.000Z"
+    });
+    store.appendMetric({
+      taskClass: "review",
+      capability: "logic",
+      providerId: "ollama",
+      modelId: "hermes3:8b",
+      promptTokens: 300,
+      completionTokens: 90,
+      latencyMs: 6800,
+      success: true,
+      createdAt: "2026-04-09T09:15:00.000Z"
+    });
+
+    const summary = store.getMetricsSummary({ now: new Date("2026-04-09T12:00:00.000Z") });
+    store.close();
+
+    assert.equal(summary.totalCalls, 4);
+    assert.equal(summary.sessionCount, 3);
+    assert.equal(summary.windows.latestSession.calls, 2);
+    assert.equal(summary.windows.latestSession.localCalls, 1);
+    assert.equal(summary.windows.trailingWeek.calls, 3);
+    assert.equal(summary.windows.last4WorkHours.calls, 4);
+    assert.equal(summary.windows.latestSession.cost.estimatedManualMinutes > summary.windows.latestSession.cost.estimatedToolMinutes, true);
+    assert.equal(summary.windows.latestSession.quality.qualityScore >= 0, true);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

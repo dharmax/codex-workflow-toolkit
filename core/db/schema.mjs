@@ -160,9 +160,28 @@ CREATE TABLE IF NOT EXISTS metrics (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS test_runs (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  test_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  label TEXT,
+  status TEXT NOT NULL,
+  command TEXT,
+  summary TEXT,
+  artifact_ref TEXT,
+  recorded_at TEXT NOT NULL,
+  details_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_symbols_file_path ON symbols(file_path);
 CREATE INDEX IF NOT EXISTS idx_metrics_task ON metrics(task_class);
 CREATE INDEX IF NOT EXISTS idx_metrics_provider ON metrics(provider_id);
+CREATE INDEX IF NOT EXISTS idx_test_runs_test ON test_runs(test_id);
+CREATE INDEX IF NOT EXISTS idx_test_runs_target ON test_runs(target_id);
+CREATE INDEX IF NOT EXISTS idx_test_runs_recorded ON test_runs(recorded_at);
 CREATE INDEX IF NOT EXISTS idx_claims_subject ON claims(subject_id);
 CREATE INDEX IF NOT EXISTS idx_claims_file_path ON claims(file_path);
 CREATE INDEX IF NOT EXISTS idx_entities_type_lane ON entities(entity_type, lane);

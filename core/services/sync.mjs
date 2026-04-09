@@ -10,6 +10,7 @@ import { SEMANTICS } from "../lib/registry.mjs";
 import { evaluateReadiness } from "./readiness-evaluator.mjs";
 import { refreshCodeletRegistry, listCodeletsFromStore, getCodeletFromStore, searchCodeletsFromStore, listProjectCodelets } from "./codelets.mjs";
 import { withWorkspaceMutationGuardDisabled } from "../lib/workspace-mutation.mjs";
+import { readStatusEvidenceFingerprint, syncStatusGraph } from "./status.mjs";
 
 export async function syncProject({ projectRoot = process.cwd(), writeProjections = false } = {}) {
   const startedAt = new Date().toISOString();
@@ -99,6 +100,7 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
 
     const lifecycle = reviewCandidates(store);
     const codeletRegistry = await refreshCodeletRegistry(store, { projectRoot });
+    await syncStatusGraph({ projectRoot, store });
     createSearchDocumentsForEntities(store);
 
     // RAG-003: Shadow Sync
@@ -146,9 +148,10 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
 }
 
 async function computeProjectFingerprint({ projectRoot, store, snapshot }) {
-  const [derivedState, projectCodelets] = await Promise.all([
+  const [derivedState, projectCodelets, statusEvidence] = await Promise.all([
     readDerivedProjectionState(projectRoot, store),
-    listProjectCodelets(projectRoot).catch(() => [])
+    listProjectCodelets(projectRoot).catch(() => []),
+    readStatusEvidenceFingerprint(projectRoot)
   ]);
   const fingerprintEntries = snapshot.filter((entry) => !isDerivedProjectionSnapshot(entry.relativePath, derivedState));
   const codeletEntries = projectCodelets
@@ -162,7 +165,7 @@ async function computeProjectFingerprint({ projectRoot, store, snapshot }) {
       sourceKind: codelet.sourceKind ?? "project"
     }))
     .sort((left, right) => String(left.manifestPath).localeCompare(String(right.manifestPath)) || String(left.id).localeCompare(String(right.id)));
-  return sha1(JSON.stringify({ snapshot: fingerprintEntries, codelets: codeletEntries }));
+  return sha1(JSON.stringify({ snapshot: fingerprintEntries, codelets: codeletEntries, statusEvidence }));
 }
 
 async function readDerivedProjectionState(projectRoot, store) {

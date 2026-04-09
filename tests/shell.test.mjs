@@ -953,7 +953,7 @@ test("heuristic shell planner handles broad project-next questions and implicit 
   });
   assert.equal(explain.kind, "plan");
   assert.deepEqual(explain.actions, [
-    { type: "run_codelet", codeletId: "context-pack", args: ["--ticket", "REF-APP-SHELL-01"] }
+    { type: "status_query", query: "REF-APP-SHELL-01", entityType: "ticket" }
   ]);
 
   const currentWork = planShellRequestHeuristically("tell me what we're working on right now and what should we do about it. which artifacts relates to it.", {
@@ -966,7 +966,7 @@ test("heuristic shell planner handles broad project-next questions and implicit 
   });
   assert.equal(currentWork.kind, "plan");
   assert.deepEqual(currentWork.actions, [
-    { type: "run_codelet", codeletId: "context-pack", args: ["--ticket", "REF-APP-SHELL-01"] }
+    { type: "status_query", query: "REF-APP-SHELL-01", entityType: "ticket" }
   ]);
 
   const execute = planShellRequestHeuristically("ok, complete the ticket in progress. resolve it.", {
@@ -1006,13 +1006,13 @@ test("heuristic shell planner routes complex goal-directed ticket requests throu
     const plan = planShellRequestHeuristically(input, complexContext);
     assert.equal(plan.kind, "plan", input);
     assert.deepEqual(plan.actions, [
-      { type: "run_codelet", codeletId: "context-pack", args: ["--ticket", "REF-APP-SHELL-01"] },
+      { type: "status_query", query: "REF-APP-SHELL-01", entityType: "ticket" },
       { type: "execute_ticket", ticketId: "REF-APP-SHELL-01", apply: false },
       { type: "list_tickets" }
     ], input);
     assert.match(plan.strategy, /goal|beta|stability/i, input);
     assert.deepEqual(plan.graph.nodes.map((node) => ({ kind: node.kind, type: node.type, dependsOn: node.dependsOn })), [
-      { kind: "action", type: "run_codelet", dependsOn: [] },
+      { kind: "action", type: "status_query", dependsOn: [] },
       { kind: "action", type: "execute_ticket", dependsOn: ["n1"] },
       { kind: "action", type: "list_tickets", dependsOn: ["n2"] },
       { kind: "synthesize", type: "synthesize", dependsOn: ["n1", "n2", "n3"] }
@@ -1042,6 +1042,16 @@ test("heuristic shell planner combines project status and readiness questions in
     }
   ]);
   assert.equal(plan.presentation, "assistant-first");
+});
+
+test("heuristic shell planner routes generic surface status questions to the status resolver", () => {
+  const plan = planShellRequestHeuristically("what's the status of shell and what did the tests cover?", plannerContext);
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [{
+    type: "status_query",
+    query: "what's the status of shell and what did the tests cover?",
+    entityType: "surface"
+  }]);
 });
 
 test("heuristic shell planner turns 'make it ready' into execution against the latest readiness blockers", () => {

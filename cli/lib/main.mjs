@@ -33,6 +33,7 @@ import { invalidateModelFitCache } from "../../core/services/model-fit.mjs";
 import { invalidateWebSearchCache } from "../../core/services/web-search.mjs";
 import { assertDirectCommandChannel } from "../../core/lib/command-channel.mjs";
 import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
+import { STATUS_NODE_TYPES, formatStatusReport, resolveProjectStatus } from "../../core/services/status.mjs";
 
 const toolkitRoot = getToolkitRoot();
 const execFileAsync = promisify(execFile);
@@ -64,6 +65,9 @@ const HELP = `Usage:
   ai-workflow update <codelet> <file>
   ai-workflow remove <codelet>
   ai-workflow project summary [--json]
+  ai-workflow project status <selector> [--type <type>] [--json]
+  ai-workflow project status related <selector> [--type <type>] [--json]
+  ai-workflow project status types
   ai-workflow project readiness --goal <goal-type> --question <text> [--mode <default|tool-dev>] [--root <path>] [--evidence-root <path>] [--json]
   ai-workflow project search <text> [--json]
   ai-workflow project epic <list|show|search> [...]
@@ -458,6 +462,42 @@ async function handleProject(rest) {
     return 0;
   }
 
+  if (subcommand === "status") {
+    const [action, ...statusExtras] = args._;
+    if (action === "types") {
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(STATUS_NODE_TYPES, null, 2)}\n`);
+      } else {
+        process.stdout.write(`${STATUS_NODE_TYPES.join("\n")}\n`);
+      }
+      return 0;
+    }
+
+    const includeRelated = action === "related";
+    const selectorParts = includeRelated ? statusExtras : args._;
+    const selector = selectorParts.join(" ").trim() || (args.selector ? String(args.selector) : "");
+    if (!selector) {
+      printAndExit("Usage: ai-workflow project status <selector> [--type <type>] [--json]\n       ai-workflow project status related <selector> [--type <type>] [--json]\n       ai-workflow project status types", 1);
+    }
+    const report = await resolveProjectStatus({
+      projectRoot: process.cwd(),
+      selector,
+      type: args.type ? String(args.type) : null,
+      includeRelated: true,
+      rawQuestion: false,
+      relatedLimit: includeRelated ? 24 : 12
+    });
+    if (!report.ok) {
+      printAndExit(report.error ?? `No status target matched ${selector}`, 1);
+    }
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      return 0;
+    }
+    process.stdout.write(formatStatusReport(report));
+    return 0;
+  }
+
   if (subcommand === "readiness") {
     const goalType = String(args.goal ?? "beta_readiness");
     const question = String(args.question ?? args._.join(" ") ?? "").trim() || `Is this project ready for ${goalType.replace(/_/g, " ")}?`;
@@ -733,7 +773,7 @@ async function handleProject(rest) {
     });
   }
 
-  printAndExit("Usage: ai-workflow project <summary|readiness|search|epic|story|codelet|ticket|note|review-candidates|render|import-projections> ...", 1);
+  printAndExit("Usage: ai-workflow project <summary|status|readiness|search|epic|story|codelet|ticket|note|review-candidates|render|import-projections> ...", 1);
 }
 
 async function handleProjectCodelet(args) {
@@ -1164,14 +1204,33 @@ async function handleMetrics(rest) {
     return 0;
   }
 
-  process.stdout.write(`Total AI Calls: ${metrics.totalCalls}\n`);
-  process.stdout.write(`Success Rate: ${metrics.successRate}%\n`);
-  process.stdout.write(`Avg Latency: ${metrics.avgLatencyMs}ms\n`);
-  process.stdout.write("\nUsage by Model:\n");
-  for (const m of metrics.byModel) {
-    process.stdout.write(`- ${m.model_id}: ${m.count} calls, ${Math.round(m.success_rate)}% success, ${Math.round(m.avg_latency)}ms avg\n`);
-  }
+  process.stdout.write(renderMetricsSummary(metrics));
   return 0;
+}
+
+function renderMetricsSummary(metrics) {
+  const lines = [
+    `All time: ${metrics.totalCalls} calls, ${metrics.successRate}% success, ${metrics.avgLatencyMs}ms avg latency`,
+    `Assumptions: ${metrics.assumptions?.helpVsBaseline ?? "heuristic estimate"}`
+  ];
+
+  for (const key of ["latestSession", "last4WorkHours", "trailingWeek"]) {
+    const window = metrics.windows?.[key];
+    if (!window) {
+      continue;
+    }
+    lines.push("");
+    lines.push(window.label);
+    lines.push(`- Calls: ${window.calls}`);
+    lines.push(`- Cost: estimated ${window.cost.estimatedManualMinutes}m manual vs ${window.cost.estimatedToolMinutes}m tool time, ${window.cost.estimatedMinutesSaved}m saved`);
+    lines.push(`- Quality: ${window.quality.qualityScore}/100 (${window.quality.successRate}% success, ${window.quality.fastEnoughRate}% fast-enough)`);
+    lines.push(`- Mix: ${window.localCalls} local / ${window.remoteCalls} remote, ${window.totalTokens} total tokens`);
+    if (window.byModel?.length) {
+      lines.push(`- Top model: ${window.byModel[0].model_id} (${window.byModel[0].count} calls, ${window.byModel[0].success_rate}% success)`);
+    }
+  }
+
+  return `${lines.join("\n")}\n`;
 }
 
 async function handleIngest(rest) {

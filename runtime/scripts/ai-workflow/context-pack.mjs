@@ -3,7 +3,7 @@
 import path from "node:path";
 import { parseArgs, printAndExit, splitCsv } from "./lib/cli.mjs";
 import { isWorkflowStatePath, normalizePath, readText } from "./lib/fs-utils.mjs";
-import { deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
+import { compactGuidanceItems, deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
 import { getChanges, isGitRepo } from "./lib/git-utils.mjs";
 import { inferTicketWorkingSet, loadTicketContext } from "./lib/workflow-store-utils.mjs";
 
@@ -70,14 +70,14 @@ const [agents, contributing, executionProtocol, enforcement, guidelines, knowled
   readText(path.resolve(root, "knowledge.md"))
 ]);
 
-const guidanceSlices = compactGuidance([
+const guidanceSlices = compactGuidanceItems([
   ...summarizeGuidance(agents, keywords, { alwaysIncludeTop: true, limit: 3, fallbackLimit: 2 }),
   ...summarizeGuidance(contributing, keywords, { limit: 2, fallbackLimit: 2 }),
   ...summarizeGuidance(executionProtocol, keywords, { limit: 3, fallbackLimit: 2 }),
   ...summarizeGuidance(enforcement, keywords, { limit: 2, fallbackLimit: 1 }),
   ...summarizeGuidance(guidelines, keywords, { limit: 3, fallbackLimit: 2 }),
   ...summarizeGuidance(knowledge, keywords, { limit: 2, fallbackLimit: 1 })
-]);
+], { limit: 10 });
 
 const reviewFocus = buildReviewFocus(workingSetFiles, inferredWorkingSet);
 const hygiene = recommendSessionHygiene({ fileCount: workingSetFiles.length, guidanceCount: guidanceSlices.length, ticket });
@@ -130,22 +130,6 @@ lines.push("Resume prompt");
 lines.push(summary.resumePrompt);
 
 process.stdout.write(`${lines.join("\n").trimEnd()}\n`);
-
-function compactGuidance(items) {
-  const seen = new Set();
-  const compact = [];
-
-  for (const item of items) {
-    const value = String(item).trim();
-    if (!value || seen.has(value)) {
-      continue;
-    }
-    seen.add(value);
-    compact.push(value);
-  }
-
-  return compact.slice(0, 10);
-}
 
 function buildReviewFocus(files, inferredWorkingSet = { files: [], symbols: [] }) {
   const focus = [];

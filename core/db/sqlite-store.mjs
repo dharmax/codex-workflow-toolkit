@@ -4,6 +4,30 @@ import { mkdir } from "node:fs/promises";
 import { SQLITE_SCHEMA } from "./schema.mjs";
 import { stableId } from "../lib/hash.mjs";
 
+const WORKFLOW_STORE_OPEN_RETRY_DELAYS_MS = [0, 50, 150, 300, 600, 1200];
+const METRICS_SESSION_IDLE_GAP_MS = 45 * 60 * 1000;
+const METRICS_TRAILING_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const METRICS_LAST_WORK_HOURS_MS = 4 * 60 * 60 * 1000;
+const METRICS_DEFAULT_PROFILE = {
+  manualBaselineMs: 12 * 60 * 1000,
+  operatorOverheadMs: 75 * 1000,
+  fastEnoughMs: 15 * 1000
+};
+const METRICS_TASK_PROFILES = {
+  "shell-planning": { manualBaselineMs: 8 * 60 * 1000, operatorOverheadMs: 45 * 1000, fastEnoughMs: 8 * 1000 },
+  "task-decomposition": { manualBaselineMs: 18 * 60 * 1000, operatorOverheadMs: 90 * 1000, fastEnoughMs: 20 * 1000 },
+  "review": { manualBaselineMs: 25 * 60 * 1000, operatorOverheadMs: 90 * 1000, fastEnoughMs: 20 * 1000 },
+  "architectural-reasoning": { manualBaselineMs: 22 * 60 * 1000, operatorOverheadMs: 90 * 1000, fastEnoughMs: 20 * 1000 },
+  "code-generation": { manualBaselineMs: 30 * 60 * 1000, operatorOverheadMs: 2 * 60 * 1000, fastEnoughMs: 30 * 1000 },
+  "refactoring": { manualBaselineMs: 24 * 60 * 1000, operatorOverheadMs: 90 * 1000, fastEnoughMs: 25 * 1000 },
+  "bug-hunting": { manualBaselineMs: 28 * 60 * 1000, operatorOverheadMs: 2 * 60 * 1000, fastEnoughMs: 30 * 1000 },
+  "summarization": { manualBaselineMs: 10 * 60 * 1000, operatorOverheadMs: 60 * 1000, fastEnoughMs: 12 * 1000 },
+  "extraction": { manualBaselineMs: 8 * 60 * 1000, operatorOverheadMs: 60 * 1000, fastEnoughMs: 12 * 1000 },
+  "classification": { manualBaselineMs: 7 * 60 * 1000, operatorOverheadMs: 45 * 1000, fastEnoughMs: 10 * 1000 },
+  "note-normalization": { manualBaselineMs: 6 * 60 * 1000, operatorOverheadMs: 45 * 1000, fastEnoughMs: 10 * 1000 },
+  "data": { manualBaselineMs: 10 * 60 * 1000, operatorOverheadMs: 60 * 1000, fastEnoughMs: 12 * 1000 }
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -22,15 +46,258 @@ function parseJson(value, fallback = {}) {
 export async function openWorkflowStore({ projectRoot, dbPath } = {}) {
   const resolvedDbPath = dbPath ?? path.resolve(projectRoot, ".ai-workflow", "state", "workflow.db");
   await mkdir(path.dirname(resolvedDbPath), { recursive: true });
-  const db = new DatabaseSync(resolvedDbPath);
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec("PRAGMA synchronous = NORMAL;");
-  db.exec("PRAGMA busy_timeout = 5000;");
-  db.exec(SQLITE_SCHEMA);
+  for (let attempt = 0; attempt < WORKFLOW_STORE_OPEN_RETRY_DELAYS_MS.length; attempt += 1) {
+    let db = null;
+    try {
+      db = new DatabaseSync(resolvedDbPath);
+      db.exec("PRAGMA busy_timeout = 5000;");
+      db.exec("PRAGMA synchronous = NORMAL;");
+      const journalMode = db.prepare("PRAGMA journal_mode;").get()?.journal_mode;
+      if (String(journalMode ?? "").toLowerCase() !== "wal") {
+        db.exec("PRAGMA journal_mode = WAL;");
+      }
+      db.exec(SQLITE_SCHEMA);
 
-  const store = new SqliteWorkflowStore({ db, dbPath: resolvedDbPath, projectRoot });
-  await store.ensureSchemaConsistency();
-  return store;
+      const store = new SqliteWorkflowStore({ db, dbPath: resolvedDbPath, projectRoot });
+      await store.ensureSchemaConsistency();
+      return store;
+    } catch (error) {
+      try {
+        db?.close();
+      } catch {
+        // Ignore close failures during retry cleanup.
+      }
+      if (!isWorkflowStoreLockError(error) || attempt === WORKFLOW_STORE_OPEN_RETRY_DELAYS_MS.length - 1) {
+        throw error;
+      }
+      await sleep(WORKFLOW_STORE_OPEN_RETRY_DELAYS_MS[attempt + 1]);
+    }
+  }
+
+  throw new Error(`failed to open workflow store at ${resolvedDbPath}`);
+}
+
+function isWorkflowStoreLockError(error) {
+  const text = `${error?.code ?? ""} ${error?.message ?? error ?? ""}`;
+  return /(?:database|sqlite).*(?:locked|busy)|ERR_SQLITE_ERROR/i.test(text);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function metricTimestampMs(metric) {
+  return Date.parse(metric?.created_at ?? 0) || 0;
+}
+
+function metricProfile(taskClass) {
+  return METRICS_TASK_PROFILES[String(taskClass ?? "").trim()] ?? METRICS_DEFAULT_PROFILE;
+}
+
+function estimateMetricActiveWorkMs(metric) {
+  const profile = metricProfile(metric?.task_class);
+  return Math.max(0, Number(metric?.latency_ms ?? 0)) + profile.operatorOverheadMs;
+}
+
+function estimateMetricManualBaselineMs(metric) {
+  return metricProfile(metric?.task_class).manualBaselineMs;
+}
+
+function isFastEnoughMetric(metric) {
+  const profile = metricProfile(metric?.task_class);
+  return Boolean(metric?.success) && Number(metric?.latency_ms ?? 0) <= profile.fastEnoughMs;
+}
+
+function splitMetricSessions(metrics) {
+  const sessions = [];
+  let current = [];
+  let previousAt = null;
+
+  for (const metric of metrics) {
+    const createdAtMs = metricTimestampMs(metric);
+    if (current.length && previousAt !== null && createdAtMs - previousAt > METRICS_SESSION_IDLE_GAP_MS) {
+      sessions.push(current);
+      current = [];
+    }
+    current.push(metric);
+    previousAt = createdAtMs;
+  }
+
+  if (current.length) {
+    sessions.push(current);
+  }
+
+  return sessions;
+}
+
+function selectLastActiveWorkRows(metrics, targetMs) {
+  const selected = [];
+  let accumulatedMs = 0;
+
+  for (let index = metrics.length - 1; index >= 0; index -= 1) {
+    const metric = metrics[index];
+    selected.unshift(metric);
+    accumulatedMs += estimateMetricActiveWorkMs(metric);
+    if (accumulatedMs >= targetMs) {
+      break;
+    }
+  }
+
+  return selected;
+}
+
+function summarizeMetricsWindow(metrics) {
+  if (!metrics.length) {
+    return {
+      calls: 0,
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalTokens: 0,
+      avgLatencyMs: 0,
+      successRate: 0,
+      activeWorkHours: 0,
+      wallClockHours: 0,
+      localCalls: 0,
+      remoteCalls: 0,
+      byModel: [],
+      byTaskClass: [],
+      periodStart: null,
+      periodEnd: null,
+      cost: {
+        estimatedManualMinutes: 0,
+        estimatedToolMinutes: 0,
+        estimatedMinutesSaved: 0,
+        leverageRatio: 0,
+        localCallShare: 0
+      },
+      quality: {
+        successRate: 0,
+        failureRate: 0,
+        fastEnoughRate: 0,
+        qualityScore: 0
+      },
+      helpVsBaseline: {
+        helpScore: 0
+      }
+    };
+  }
+
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let latencyTotal = 0;
+  let successCount = 0;
+  let fastEnoughCount = 0;
+  let localCalls = 0;
+  let estimatedToolMs = 0;
+  let estimatedManualMs = 0;
+  const byModel = new Map();
+  const byTaskClass = new Map();
+
+  for (const metric of metrics) {
+    const prompt = Number(metric.prompt_tokens ?? 0);
+    const completion = Number(metric.completion_tokens ?? 0);
+    const latency = Number(metric.latency_ms ?? 0);
+    const success = Boolean(metric.success);
+    const activeMs = estimateMetricActiveWorkMs(metric);
+    const manualMs = estimateMetricManualBaselineMs(metric);
+
+    promptTokens += prompt;
+    completionTokens += completion;
+    latencyTotal += latency;
+    successCount += success ? 1 : 0;
+    fastEnoughCount += isFastEnoughMetric(metric) ? 1 : 0;
+    localCalls += metric.provider_id === "ollama" ? 1 : 0;
+    estimatedToolMs += activeMs;
+    estimatedManualMs += manualMs;
+
+    const modelEntry = byModel.get(metric.model_id) ?? {
+      model_id: metric.model_id,
+      provider_id: metric.provider_id,
+      count: 0,
+      successes: 0,
+      latencyTotal: 0
+    };
+    modelEntry.count += 1;
+    modelEntry.successes += success ? 1 : 0;
+    modelEntry.latencyTotal += latency;
+    byModel.set(metric.model_id, modelEntry);
+
+    const taskEntry = byTaskClass.get(metric.task_class) ?? {
+      task_class: metric.task_class,
+      count: 0,
+      successes: 0,
+      estimated_manual_ms: 0,
+      estimated_tool_ms: 0
+    };
+    taskEntry.count += 1;
+    taskEntry.successes += success ? 1 : 0;
+    taskEntry.estimated_manual_ms += manualMs;
+    taskEntry.estimated_tool_ms += activeMs;
+    byTaskClass.set(metric.task_class, taskEntry);
+  }
+
+  const calls = metrics.length;
+  const totalTokens = promptTokens + completionTokens;
+  const successRate = Math.round((successCount / calls) * 100);
+  const fastEnoughRate = Math.round((fastEnoughCount / calls) * 100);
+  const failureRate = 100 - successRate;
+  const qualityScore = Math.round((successRate * 0.7) + (fastEnoughRate * 0.3));
+  const estimatedMinutesSaved = Math.round((estimatedManualMs - estimatedToolMs) / 60000);
+  const leverageRatio = estimatedToolMs > 0
+    ? Number((estimatedManualMs / estimatedToolMs).toFixed(2))
+    : 0;
+  const helpScore = Math.max(0, Math.round((qualityScore / 100) * Math.max(0, (estimatedManualMs - estimatedToolMs)) / Math.max(estimatedManualMs, 1) * 100));
+  const firstTimestamp = metricTimestampMs(metrics[0]);
+  const lastTimestamp = metricTimestampMs(metrics[metrics.length - 1]);
+
+  return {
+    calls,
+    totalPromptTokens: promptTokens,
+    totalCompletionTokens: completionTokens,
+    totalTokens,
+    avgLatencyMs: Math.round(latencyTotal / calls),
+    successRate,
+    activeWorkHours: Number((estimatedToolMs / (60 * 60 * 1000)).toFixed(2)),
+    wallClockHours: Number((Math.max(0, lastTimestamp - firstTimestamp) / (60 * 60 * 1000)).toFixed(2)),
+    localCalls,
+    remoteCalls: calls - localCalls,
+    periodStart: metrics[0].created_at,
+    periodEnd: metrics[metrics.length - 1].created_at,
+    byModel: Array.from(byModel.values())
+      .map((entry) => ({
+        model_id: entry.model_id,
+        provider_id: entry.provider_id,
+        count: entry.count,
+        success_rate: Math.round((entry.successes / entry.count) * 100),
+        avg_latency: Math.round(entry.latencyTotal / entry.count)
+      }))
+      .sort((left, right) => right.count - left.count || left.model_id.localeCompare(right.model_id)),
+    byTaskClass: Array.from(byTaskClass.values())
+      .map((entry) => ({
+        task_class: entry.task_class,
+        count: entry.count,
+        success_rate: Math.round((entry.successes / entry.count) * 100),
+        estimated_manual_minutes: Math.round(entry.estimated_manual_ms / 60000),
+        estimated_tool_minutes: Math.round(entry.estimated_tool_ms / 60000)
+      }))
+      .sort((left, right) => right.count - left.count || left.task_class.localeCompare(right.task_class)),
+    cost: {
+      estimatedManualMinutes: Math.round(estimatedManualMs / 60000),
+      estimatedToolMinutes: Math.round(estimatedToolMs / 60000),
+      estimatedMinutesSaved,
+      leverageRatio,
+      localCallShare: Math.round((localCalls / calls) * 100)
+    },
+    quality: {
+      successRate,
+      failureRate,
+      fastEnoughRate,
+      qualityScore
+    },
+    helpVsBaseline: {
+      helpScore
+    }
+  };
 }
 
 export class SqliteWorkflowStore {
@@ -99,6 +366,36 @@ export class SqliteWorkflowStore {
   getMeta(key, fallback = null) {
     const row = this.db.prepare("SELECT value_json FROM workspace_meta WHERE key = ?").get(key);
     return row ? parseJson(row.value_json, fallback) : fallback;
+  }
+
+  getFile(filePath) {
+    const row = this.db.prepare("SELECT * FROM files WHERE path = ?").get(filePath);
+    if (!row) {
+      return null;
+    }
+    return {
+      path: row.path,
+      language: row.language,
+      fileKind: row.file_kind,
+      sha1: row.sha1,
+      sizeBytes: row.size_bytes,
+      mtimeMs: row.mtime_ms,
+      metadata: parseJson(row.metadata_json),
+      indexedAt: row.indexed_at
+    };
+  }
+
+  listFiles() {
+    return this.db.prepare("SELECT * FROM files ORDER BY path").all().map((row) => ({
+      path: row.path,
+      language: row.language,
+      fileKind: row.file_kind,
+      sha1: row.sha1,
+      sizeBytes: row.size_bytes,
+      mtimeMs: row.mtime_ms,
+      metadata: parseJson(row.metadata_json),
+      indexedAt: row.indexed_at
+    }));
   }
 
   replaceIndexedFile({ file, parsed, sha1, indexedAt }) {
@@ -578,6 +875,64 @@ export class SqliteWorkflowStore {
     }));
   }
 
+  getSymbolById(symbolId) {
+    const row = this.db.prepare("SELECT * FROM symbols WHERE id = ?").get(symbolId);
+    if (!row) {
+      return null;
+    }
+    return {
+      id: row.id,
+      filePath: row.file_path,
+      name: row.name,
+      kind: row.kind,
+      exported: Boolean(row.exported),
+      line: row.line,
+      column: row.column,
+      metadata: parseJson(row.metadata_json),
+      sourceKind: row.source_kind,
+      updatedAt: row.updated_at
+    };
+  }
+
+  listClaims(filters = {}) {
+    const clauses = [];
+    const values = [];
+    if (filters.subjectId) {
+      clauses.push("subject_id = ?");
+      values.push(filters.subjectId);
+    }
+    if (filters.predicate) {
+      clauses.push("predicate = ?");
+      values.push(filters.predicate);
+    }
+    if (filters.filePath) {
+      clauses.push("file_path = ?");
+      values.push(filters.filePath);
+    }
+    const query = `
+      SELECT *
+      FROM claims
+      ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+      ORDER BY updated_at DESC, id
+    `;
+    return this.db.prepare(query).all(...values).map((row) => ({
+      id: row.id,
+      subjectId: row.subject_id,
+      predicate: row.predicate,
+      objectId: row.object_id,
+      objectText: row.object_text,
+      kind: row.kind,
+      confidence: row.confidence,
+      provenance: row.provenance,
+      sourceKind: row.source_kind,
+      lifecycleState: row.lifecycle_state,
+      filePath: row.file_path,
+      line: row.line,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+  }
+
   upsertCandidate(candidate) {
     const existing = this.db.prepare("SELECT * FROM candidates WHERE id = ?").get(candidate.id);
     const preservedStatus = existing && ["rejected", "archived", "promoted"].includes(existing.status)
@@ -658,6 +1013,9 @@ export class SqliteWorkflowStore {
   }
 
   appendMetric({ taskClass, capability, providerId, modelId, promptTokens, completionTokens, latencyMs, success, errorMessage = null, createdAt = nowIso() }) {
+    const normalizedPromptTokens = Number.isFinite(Number(promptTokens)) ? Number(promptTokens) : 0;
+    const normalizedCompletionTokens = Number.isFinite(Number(completionTokens)) ? Number(completionTokens) : 0;
+    const normalizedLatencyMs = Number.isFinite(Number(latencyMs)) ? Math.max(0, Math.round(Number(latencyMs))) : 0;
     this.db.prepare(`
       INSERT INTO metrics (id, task_class, capability, provider_id, model_id, prompt_tokens, completion_tokens, latency_ms, success, error_message, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -667,39 +1025,66 @@ export class SqliteWorkflowStore {
       capability,
       providerId,
       modelId,
-      promptTokens,
-      completionTokens,
-      latencyMs,
+      normalizedPromptTokens,
+      normalizedCompletionTokens,
+      normalizedLatencyMs,
       success ? 1 : 0,
       errorMessage,
       createdAt
     );
   }
 
-  getMetricsSummary() {
-    const total = this.db.prepare("SELECT COUNT(*) as count, SUM(prompt_tokens) as prompt, SUM(completion_tokens) as completion, AVG(latency_ms) as latency FROM metrics").get();
-    const successRate = this.db.prepare("SELECT AVG(success) * 100 as rate FROM metrics").get().rate;
-    const byModel = this.db.prepare(`
-      SELECT model_id, COUNT(*) as count, AVG(success) * 100 as success_rate, AVG(latency_ms) as avg_latency
-      FROM metrics
-      GROUP BY model_id
-      ORDER BY count DESC
-    `).all();
+  getMetricsSummary({ now = new Date() } = {}) {
+    const rows = this.listMetrics({ limit: null, order: "asc" });
+    const allTime = summarizeMetricsWindow(rows);
+    const sessions = splitMetricSessions(rows);
+    const latestSessionRows = sessions.at(-1) ?? [];
+    const latestSession = summarizeMetricsWindow(latestSessionRows);
+    const last4WorkHoursRows = selectLastActiveWorkRows(rows, METRICS_LAST_WORK_HOURS_MS);
+    const trailingWeekRows = rows.filter((row) => metricTimestampMs(row) >= now.getTime() - METRICS_TRAILING_WEEK_MS);
+    const trailingWeek = summarizeMetricsWindow(trailingWeekRows);
 
     return {
-      totalCalls: total.count ?? 0,
-      totalPromptTokens: total.prompt ?? 0,
-      totalCompletionTokens: total.completion ?? 0,
-      avgLatencyMs: Math.round(total.latency ?? 0),
-      successRate: Math.round(successRate ?? 0),
-      byModel
+      totalCalls: allTime.calls,
+      totalPromptTokens: allTime.totalPromptTokens,
+      totalCompletionTokens: allTime.totalCompletionTokens,
+      avgLatencyMs: allTime.avgLatencyMs,
+      successRate: allTime.successRate,
+      byModel: allTime.byModel,
+      sessionCount: sessions.length,
+      assumptions: {
+        helpVsBaseline: "heuristic estimate from task-class manual baselines versus active ai-workflow work time",
+        activeWork: "latency plus a fixed operator-overhead allowance per recorded metric event",
+        sessionIdleGapMinutes: Math.round(METRICS_SESSION_IDLE_GAP_MS / 60000),
+        trailingWeekDays: 7,
+        lastWorkHours: 4
+      },
+      windows: {
+        latestSession: {
+          label: "Latest session",
+          ...latestSession
+        },
+        last4WorkHours: {
+          label: "Last 4 active work hours",
+          ...summarizeMetricsWindow(last4WorkHoursRows)
+        },
+        trailingWeek: {
+          label: "Trailing week",
+          ...trailingWeek
+        }
+      }
     };
   }
 
-  listMetrics({ limit = 20 } = {}) {
-    return this.db.prepare(`
-      SELECT * FROM metrics ORDER BY created_at DESC LIMIT ?
-    `).all(limit).map(m => ({
+  listMetrics({ limit = 20, order = "desc" } = {}) {
+    const normalizedOrder = String(order).toLowerCase() === "asc" ? "ASC" : "DESC";
+    const query = limit == null
+      ? `SELECT * FROM metrics ORDER BY created_at ${normalizedOrder}`
+      : `SELECT * FROM metrics ORDER BY created_at ${normalizedOrder} LIMIT ?`;
+    const rows = limit == null
+      ? this.db.prepare(query).all()
+      : this.db.prepare(query).all(limit);
+    return rows.map(m => ({
       id: m.id,
       task_class: m.task_class,
       capability: m.capability,
@@ -793,6 +1178,152 @@ export class SqliteWorkflowStore {
     const codelets = this.db.prepare("SELECT COUNT(*) AS value FROM entities WHERE entity_type = 'codelet'").get().value;
     const candidates = this.db.prepare("SELECT COUNT(*) AS value FROM candidates").get().value;
     return { files, notes, symbols, claims, tickets, codelets, candidates };
+  }
+
+  deleteEntitiesBySourceKind(sourceKind, entityTypes = []) {
+    const values = [sourceKind];
+    let entityClause = "";
+    if (entityTypes.length) {
+      entityClause = ` AND entity_type IN (${entityTypes.map(() => "?").join(", ")})`;
+      values.push(...entityTypes);
+    }
+    const ids = this.db.prepare(`
+      SELECT id
+      FROM entities
+      WHERE source_kind = ?
+      ${entityClause}
+    `).all(...values).map((row) => row.id);
+    if (!ids.length) {
+      return 0;
+    }
+    const deleteValues = [sourceKind, ...entityTypes];
+    this.db.prepare(`
+      DELETE FROM entities
+      WHERE source_kind = ?
+      ${entityClause}
+    `).run(...deleteValues);
+    this.db.prepare(`
+      DELETE FROM search_index
+      WHERE scope = 'entity'
+        AND ref_id IN (${ids.map(() => "?").join(", ")})
+    `).run(...ids);
+    return ids.length;
+  }
+
+  deleteArchitecturalPredicatesByMetadataToken(token) {
+    const pattern = `%${String(token)}%`;
+    return this.db.prepare("DELETE FROM architectural_graph WHERE metadata_json LIKE ?").run(pattern).changes ?? 0;
+  }
+
+  listArchitecturalPredicates(filters = {}) {
+    const clauses = [];
+    const values = [];
+    if (filters.subjectId) {
+      clauses.push("subject_id = ?");
+      values.push(filters.subjectId);
+    }
+    if (filters.objectId) {
+      clauses.push("object_id = ?");
+      values.push(filters.objectId);
+    }
+    if (filters.predicate) {
+      clauses.push("predicate = ?");
+      values.push(filters.predicate);
+    }
+    const query = `
+      SELECT *
+      FROM architectural_graph
+      ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+      ORDER BY created_at DESC, id
+    `;
+    return this.db.prepare(query).all(...values).map((row) => ({
+      id: row.id,
+      subjectId: row.subject_id,
+      predicate: row.predicate,
+      objectId: row.object_id,
+      metadata: parseJson(row.metadata_json),
+      createdAt: row.created_at
+    }));
+  }
+
+  upsertTestRun(run) {
+    const timestamp = run.updatedAt ?? nowIso();
+    this.db.prepare(`
+      INSERT INTO test_runs (id, run_id, test_id, target_id, source, label, status, command, summary, artifact_ref, recorded_at, details_json, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        run_id = excluded.run_id,
+        test_id = excluded.test_id,
+        target_id = excluded.target_id,
+        source = excluded.source,
+        label = excluded.label,
+        status = excluded.status,
+        command = excluded.command,
+        summary = excluded.summary,
+        artifact_ref = excluded.artifact_ref,
+        recorded_at = excluded.recorded_at,
+        details_json = excluded.details_json,
+        updated_at = excluded.updated_at
+    `).run(
+      run.id,
+      run.runId,
+      run.testId,
+      run.targetId,
+      run.source,
+      run.label ?? null,
+      run.status,
+      run.command ?? null,
+      run.summary ?? null,
+      run.artifactRef ?? null,
+      run.recordedAt ?? timestamp,
+      asJson(run.details),
+      timestamp
+    );
+  }
+
+  replaceTestRunsForSource(source, runs = []) {
+    this.db.prepare("DELETE FROM test_runs WHERE source = ?").run(source);
+    for (const run of runs) {
+      this.upsertTestRun(run);
+    }
+  }
+
+  listTestRuns(filters = {}) {
+    const clauses = [];
+    const values = [];
+    if (filters.source) {
+      clauses.push("source = ?");
+      values.push(filters.source);
+    }
+    if (filters.testId) {
+      clauses.push("test_id = ?");
+      values.push(filters.testId);
+    }
+    if (filters.targetId) {
+      clauses.push("target_id = ?");
+      values.push(filters.targetId);
+    }
+    const query = `
+      SELECT *
+      FROM test_runs
+      ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+      ORDER BY recorded_at DESC, updated_at DESC, id DESC
+    `;
+    return this.db.prepare(query).all(...values).map((row) => ({
+      id: row.id,
+      runId: row.run_id,
+      testId: row.test_id,
+      targetId: row.target_id,
+      source: row.source,
+      label: row.label,
+      status: row.status,
+      command: row.command,
+      summary: row.summary,
+      artifactRef: row.artifact_ref,
+      recordedAt: row.recorded_at,
+      details: parseJson(row.details_json),
+      updatedAt: row.updated_at
+    }));
   }
 }
 

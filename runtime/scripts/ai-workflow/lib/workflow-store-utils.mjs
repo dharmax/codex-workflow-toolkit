@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { readText } from "./fs-utils.mjs";
 import { findTicket, parseKanban } from "./kanban-utils.mjs";
+import { inferTicketRetrievalContext } from "../../../../core/services/shell-retrieval.mjs";
 
 export async function selectKanbanSource(root, relativePath = null) {
   const candidates = relativePath
@@ -59,113 +60,39 @@ export async function loadTicketContext({ root, ticketId, kanbanPath = null }) {
 }
 
 export async function inferTicketWorkingSet({ root, ticket, entity = null, limit = 8 } = {}) {
-  const dbPath = path.resolve(root, ".ai-workflow", "state", "workflow.db");
-  if (!existsSync(dbPath) || !ticket) {
+  if (!ticket) {
     return { files: [], symbols: [], evidence: [] };
   }
 
-  let db = null;
-  try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
-    const queries = buildTicketQueries(ticket, entity);
-    const relatedQueries = new Set();
-    const fileScores = new Map();
-    const symbolScores = new Map();
-    const fileReasons = new Map();
-    const symbolReasons = new Map();
-    const evidence = [];
+  const retrieval = await inferTicketRetrievalContext({
+    projectRoot: root,
+    ticket,
+    entity,
+    profile: "plan",
+    limit
+  });
 
-    for (const query of queries) {
-      const rows = searchIndex(db, query, 12);
-      if (!rows.length) continue;
-      const filteredHits = [];
-      collectRelatedQueries(db, rows, ticket.id, relatedQueries);
+  return {
+    files: retrieval.files,
+    symbols: retrieval.symbols.map((symbol) => renderSymbolLabel({
+      name: symbol.name,
+      file_path: symbol.filePath ?? symbol.path ?? "",
+      line: symbol.line ?? null
+    })),
+    evidence: normalizeWorkingSetEvidence(retrieval.evidence)
+  };
+}
 
-      for (const row of rows) {
-        if (row.scope === "file") {
-          const filePath = String(row.ref_id ?? "").trim();
-          if (!isUsefulFileCandidate(filePath)) continue;
-          const score = scoreSearchRow(row, query, "file", filePath);
-          bumpScore(fileScores, filePath, score);
-          collectReason(fileReasons, filePath, { query, via: "file-hit", title: row.title, refId: filePath, score });
-          filteredHits.push({ scope: row.scope, title: row.title, refId: row.ref_id });
-          continue;
-        }
-
-        if (row.scope === "symbol") {
-          const symbol = getSymbolById(db, row.ref_id);
-          if (!symbol?.file_path || !isCodePath(symbol.file_path)) continue;
-          const symbolLabel = renderSymbolLabel(symbol);
-          const symbolScore = scoreSearchRow(row, query, "symbol", symbol.file_path);
-          const fileScore = scoreSearchRow(row, query, "symbol-file", symbol.file_path);
-          bumpScore(symbolScores, symbolLabel, symbolScore);
-          bumpScore(fileScores, symbol.file_path, fileScore);
-          collectReason(symbolReasons, symbolLabel, { query, via: "symbol-hit", title: row.title, refId: row.ref_id, score: symbolScore });
-          collectReason(fileReasons, symbol.file_path, { query, via: "symbol-hit", title: row.title, refId: symbol.file_path, score: fileScore });
-          filteredHits.push({ scope: row.scope, title: row.title, refId: row.ref_id });
-          continue;
-        }
-      }
-
-      if (filteredHits.length) {
-        evidence.push({ query, hits: filteredHits.slice(0, 3) });
-      }
+function normalizeWorkingSetEvidence(evidence = []) {
+  return (Array.isArray(evidence) ? evidence : []).map((entry) => {
+    if (entry?.kind === "file") {
+      return { ...entry, kind: "selected-file" };
     }
-
-    for (const query of [...relatedQueries].slice(0, 8)) {
-      const rows = searchIndex(db, query, 8);
-      if (!rows.length) continue;
-      const filteredHits = [];
-
-      for (const row of rows) {
-        if (row.scope === "file") {
-          const filePath = String(row.ref_id ?? "").trim();
-          if (!isUsefulFileCandidate(filePath)) continue;
-          const score = scoreSearchRow(row, query, "file", filePath);
-          bumpScore(fileScores, filePath, score);
-          collectReason(fileReasons, filePath, { query, via: "related-file-hit", title: row.title, refId: filePath, score });
-          filteredHits.push({ scope: row.scope, title: row.title, refId: row.ref_id });
-          continue;
-        }
-
-        if (row.scope === "symbol") {
-          const symbol = getSymbolById(db, row.ref_id);
-          if (!symbol?.file_path || !isCodePath(symbol.file_path)) continue;
-          const symbolLabel = renderSymbolLabel(symbol);
-          const symbolScore = scoreSearchRow(row, query, "symbol", symbol.file_path);
-          const fileScore = scoreSearchRow(row, query, "symbol-file", symbol.file_path);
-          bumpScore(symbolScores, symbolLabel, symbolScore);
-          bumpScore(fileScores, symbol.file_path, fileScore);
-          collectReason(symbolReasons, symbolLabel, { query, via: "related-symbol-hit", title: row.title, refId: row.ref_id, score: symbolScore });
-          collectReason(fileReasons, symbol.file_path, { query, via: "related-symbol-hit", title: row.title, refId: symbol.file_path, score: fileScore });
-          filteredHits.push({ scope: row.scope, title: row.title, refId: row.ref_id });
-        }
-      }
-
-      if (filteredHits.length) {
-        evidence.push({ query, hits: filteredHits.slice(0, 3) });
-      }
+    if (entry?.kind === "symbol") {
+      return { ...entry, kind: "selected-symbol" };
     }
-
-    const files = rankFileKeys(fileScores, limit);
-    const symbols = rankedKeys(symbolScores, Math.min(6, limit));
-
-    return {
-      files,
-      symbols,
-      evidence: buildSelectionEvidence({
-        files,
-        symbols,
-        fileReasons,
-        symbolReasons,
-        fallbackEvidence: evidence
-      })
-    };
-  } catch {
-    return { files: [], symbols: [], evidence: [] };
-  } finally {
-    db?.close?.();
-  }
+    return entry;
+  });
 }
 
 async function loadTicketEntityFromStore(root, ticketId) {
@@ -443,8 +370,9 @@ function collectRelatedQueries(db, rows, activeTicketId, target) {
 }
 
 function renderSymbolLabel(symbol) {
+  const filePath = symbol.file_path ?? symbol.filePath ?? "";
   const linePart = Number.isFinite(symbol.line) ? `:${symbol.line}` : "";
-  return `${symbol.name} (${symbol.file_path}${linePart})`;
+  return `${symbol.name} (${filePath}${linePart})`;
 }
 
 function isUsefulFileCandidate(filePath) {

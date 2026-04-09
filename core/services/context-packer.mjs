@@ -2,6 +2,7 @@ import { withWorkflowStore } from "./sync.mjs";
 import { readProjectFile } from "../lib/filesystem.mjs";
 import { SEMANTICS } from "../lib/registry.mjs";
 import { probeLeanCtx } from "./lean-ctx.mjs";
+import { inferTicketRetrievalContextFromStore } from "./shell-retrieval.mjs";
 
 /**
  * Context Packer
@@ -30,9 +31,24 @@ export async function buildSurgicalContext(projectRoot, { symbolNames = [], file
       context.ticket = store.getEntity(ticketId);
     }
 
+    const retrieval = ticketId
+      ? inferTicketRetrievalContextFromStore(store, {
+        projectRoot,
+        ticket: null,
+        entity: context.ticket,
+        profile: "execute",
+        limit: budget.MAX_FILES
+      })
+      : null;
+
+    const inferredFilePaths = retrieval?.files ?? [];
+    const inferredSymbolNames = (retrieval?.symbols ?? []).map((symbol) => symbol.name).filter(Boolean);
+    context.retrieval = retrieval;
+
     // 2. Pull specified files (with Budgeting)
-    const limitedFilePaths = filePaths.slice(0, budget.MAX_FILES);
-    if (filePaths.length > budget.MAX_FILES) context.budgetReached = true;
+    const mergedFilePaths = [...new Set([...filePaths, ...inferredFilePaths].filter(Boolean))];
+    const limitedFilePaths = mergedFilePaths.slice(0, budget.MAX_FILES);
+    if (mergedFilePaths.length > budget.MAX_FILES) context.budgetReached = true;
 
     for (const filePath of limitedFilePaths) {
       const file = await readProjectFile(projectRoot, filePath);
@@ -46,7 +62,8 @@ export async function buildSurgicalContext(projectRoot, { symbolNames = [], file
     }
 
     // 3. Pull specified symbols (with Budgeting)
-    const limitedSymbols = symbolNames.slice(0, budget.MAX_SYMBOLS);
+    const mergedSymbols = [...new Set([...symbolNames, ...inferredSymbolNames].filter(Boolean))];
+    const limitedSymbols = mergedSymbols.slice(0, budget.MAX_SYMBOLS);
     for (const name of limitedSymbols) {
       const matches = store.listSymbols({ name }).slice(0, 3);
       for (const symbol of matches) {
@@ -89,6 +106,14 @@ export function formatContextForPrompt(context) {
 
   if (context.ticket) {
     parts.push(`## Ticket: ${context.ticket.id}\n${context.ticket.title}\n${context.ticket.data?.summary ?? ""}`);
+  }
+
+  if (context.retrieval?.evidence?.length) {
+    parts.push("## Retrieval Evidence");
+    for (const item of context.retrieval.evidence.slice(0, 4)) {
+      const reasons = Array.isArray(item.reasons) ? item.reasons.map((reason) => reason.title || reason.via).filter(Boolean) : [];
+      parts.push(`- ${item.kind}: ${item.target}${reasons.length ? ` (${reasons.join("; ")})` : ""}`);
+    }
   }
 
   if (context.files.length) {
