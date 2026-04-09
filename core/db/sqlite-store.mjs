@@ -146,40 +146,49 @@ function selectLastActiveWorkRows(metrics, targetMs) {
   return selected;
 }
 
-function summarizeMetricsWindow(metrics) {
-  if (!metrics.length) {
-    return {
-      calls: 0,
-      totalPromptTokens: 0,
-      totalCompletionTokens: 0,
-      totalTokens: 0,
-      avgLatencyMs: 0,
+function isMockMetric(metric) {
+  const providerId = String(metric?.provider_id ?? "").trim().toLowerCase();
+  const modelId = String(metric?.model_id ?? "").trim().toLowerCase();
+  return /^mock(?:[-_:]|$)/.test(providerId)
+    || /^mock(?:[-_:]|$)/.test(modelId)
+    || /(?:^|[-_:])mock(?:[-_:]|$)/.test(modelId);
+}
+
+function emptyMetricsSetSummary() {
+  return {
+    calls: 0,
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    totalTokens: 0,
+    avgLatencyMs: 0,
+    successRate: 0,
+    activeWorkHours: 0,
+    wallClockHours: 0,
+    localCalls: 0,
+    remoteCalls: 0,
+    byModel: [],
+    byTaskClass: [],
+    periodStart: null,
+    periodEnd: null,
+    cost: {
+      estimatedManualMinutes: 0,
+      estimatedToolMinutes: 0,
+      estimatedMinutesSaved: 0,
+      leverageRatio: 0,
+      localCallShare: 0
+    },
+    quality: {
       successRate: 0,
-      activeWorkHours: 0,
-      wallClockHours: 0,
-      localCalls: 0,
-      remoteCalls: 0,
-      byModel: [],
-      byTaskClass: [],
-      periodStart: null,
-      periodEnd: null,
-      cost: {
-        estimatedManualMinutes: 0,
-        estimatedToolMinutes: 0,
-        estimatedMinutesSaved: 0,
-        leverageRatio: 0,
-        localCallShare: 0
-      },
-      quality: {
-        successRate: 0,
-        failureRate: 0,
-        fastEnoughRate: 0,
-        qualityScore: 0
-      },
-      helpVsBaseline: {
-        helpScore: 0
-      }
-    };
+      failureRate: 0,
+      fastEnoughRate: 0,
+      qualityScore: 0
+    }
+  };
+}
+
+function summarizeMetricSet(metrics) {
+  if (!metrics.length) {
+    return emptyMetricsSetSummary();
   }
 
   let promptTokens = 0;
@@ -246,7 +255,6 @@ function summarizeMetricsWindow(metrics) {
   const leverageRatio = estimatedToolMs > 0
     ? Number((estimatedManualMs / estimatedToolMs).toFixed(2))
     : 0;
-  const helpScore = Math.max(0, Math.round((qualityScore / 100) * Math.max(0, (estimatedManualMs - estimatedToolMs)) / Math.max(estimatedManualMs, 1) * 100));
   const firstTimestamp = metricTimestampMs(metrics[0]);
   const lastTimestamp = metricTimestampMs(metrics[metrics.length - 1]);
 
@@ -293,10 +301,69 @@ function summarizeMetricsWindow(metrics) {
       failureRate,
       fastEnoughRate,
       qualityScore
+    }
+  };
+}
+
+function summarizeMetricsWindow(metrics) {
+  const overall = summarizeMetricSet(metrics);
+  const realMetrics = metrics.filter((metric) => !isMockMetric(metric));
+  const mockMetrics = metrics.filter((metric) => isMockMetric(metric));
+  const realTraffic = summarizeMetricSet(realMetrics);
+  const mockTraffic = summarizeMetricSet(mockMetrics);
+  const scoringSource = realMetrics.length ? realTraffic : overall;
+  const basis = realMetrics.length ? "real-traffic" : (mockMetrics.length ? "mock-only" : "all-traffic");
+  const basisLabel = realMetrics.length ? "real traffic" : (mockMetrics.length ? "all traffic (mock only)" : "all traffic");
+  const helpScore = Math.max(
+    0,
+    Math.round(
+      (scoringSource.quality.qualityScore / 100)
+        * Math.max(0, (scoringSource.cost.estimatedManualMinutes - scoringSource.cost.estimatedToolMinutes))
+        / Math.max(scoringSource.cost.estimatedManualMinutes, 1)
+        * 100
+    )
+  );
+  const alerts = [];
+
+  if (realMetrics.length && mockMetrics.length) {
+    alerts.push(`Quality/help score excludes ${mockTraffic.calls} mock calls and follows ${realTraffic.calls} real calls.`);
+  }
+  if (realTraffic.calls && (realTraffic.quality.successRate < 50 || realTraffic.quality.fastEnoughRate < 50)) {
+    alerts.push(`Real traffic is degraded: ${realTraffic.quality.successRate}% success, ${realTraffic.avgLatencyMs}ms avg latency.`);
+  }
+
+  return {
+    ...overall,
+    realTraffic: {
+      calls: realTraffic.calls,
+      successRate: realTraffic.quality.successRate,
+      avgLatencyMs: realTraffic.avgLatencyMs,
+      totalTokens: realTraffic.totalTokens,
+      localCalls: realTraffic.localCalls,
+      remoteCalls: realTraffic.remoteCalls
+    },
+    mockTraffic: {
+      calls: mockTraffic.calls,
+      successRate: mockTraffic.quality.successRate,
+      avgLatencyMs: mockTraffic.avgLatencyMs,
+      totalTokens: mockTraffic.totalTokens,
+      localCalls: mockTraffic.localCalls,
+      remoteCalls: mockTraffic.remoteCalls
+    },
+    quality: {
+      ...scoringSource.quality,
+      basis,
+      basisLabel,
+      evaluatedCalls: scoringSource.calls,
+      excludedMockCalls: mockTraffic.calls
     },
     helpVsBaseline: {
-      helpScore
-    }
+      helpScore,
+      basis,
+      evaluatedCalls: scoringSource.calls,
+      excludedMockCalls: mockTraffic.calls
+    },
+    alerts
   };
 }
 
@@ -1055,6 +1122,8 @@ export class SqliteWorkflowStore {
       assumptions: {
         helpVsBaseline: "heuristic estimate from task-class manual baselines versus active ai-workflow work time",
         activeWork: "latency plus a fixed operator-overhead allowance per recorded metric event",
+        qualityBasis: "quality/help score prefers real traffic when available and excludes mock traffic from scoring",
+        tokens: "token counts show actual model usage only; manual-baseline token savings are not estimated",
         sessionIdleGapMinutes: Math.round(METRICS_SESSION_IDLE_GAP_MS / 60000),
         trailingWeekDays: 7,
         lastWorkHours: 4

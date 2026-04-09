@@ -707,6 +707,62 @@ test("metrics summary reports latest session, trailing week, and last active wor
   }
 });
 
+test("metrics summary scores mixed windows from real traffic instead of mock traffic", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-metrics-mock-split-"));
+
+  try {
+    const store = await openWorkflowStore({ projectRoot: targetRoot, dbPath: path.join(targetRoot, "workflow.db") });
+    store.appendMetric({
+      taskClass: "shell-planning",
+      capability: "strategy",
+      providerId: "ollama",
+      modelId: "mock-model",
+      promptTokens: 20,
+      completionTokens: 10,
+      latencyMs: 1,
+      success: true,
+      createdAt: "2026-04-09T09:00:00.000Z"
+    });
+    store.appendMetric({
+      taskClass: "shell-planning",
+      capability: "strategy",
+      providerId: "ollama",
+      modelId: "mock-model",
+      promptTokens: 20,
+      completionTokens: 10,
+      latencyMs: 1,
+      success: true,
+      createdAt: "2026-04-09T09:05:00.000Z"
+    });
+    store.appendMetric({
+      taskClass: "shell-planning",
+      capability: "strategy",
+      providerId: "ollama",
+      modelId: "hermes3:8b",
+      promptTokens: 100,
+      completionTokens: 30,
+      latencyMs: 20003,
+      success: false,
+      errorMessage: "timeout",
+      createdAt: "2026-04-09T09:10:00.000Z"
+    });
+
+    const summary = store.getMetricsSummary({ now: new Date("2026-04-09T12:00:00.000Z") });
+    store.close();
+
+    assert.equal(summary.windows.latestSession.calls, 3);
+    assert.equal(summary.windows.latestSession.realTraffic.calls, 1);
+    assert.equal(summary.windows.latestSession.mockTraffic.calls, 2);
+    assert.equal(summary.windows.latestSession.quality.basis, "real-traffic");
+    assert.equal(summary.windows.latestSession.quality.successRate, 0);
+    assert.equal(summary.windows.latestSession.helpVsBaseline.helpScore, 0);
+    assert.match(summary.windows.latestSession.alerts.join("\n"), /mock calls/);
+    assert.match(summary.windows.latestSession.alerts.join("\n"), /Real traffic is degraded/);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("project summary excludes done tickets and sync suppresses projection/progress note noise", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-summary-"));
 

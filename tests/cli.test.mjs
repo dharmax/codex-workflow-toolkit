@@ -251,6 +251,42 @@ test("metrics command reports session, last active work hours, and trailing week
   }
 });
 
+test("metrics command explains real-vs-mock scoring and degraded real traffic", async () => {
+  const targetRoot = await makeTempDir();
+
+  try {
+    const seed = await runNode([
+      "--input-type=module",
+      "-e",
+      [
+        `import { openWorkflowStore } from ${JSON.stringify(path.join(repoRoot, "core", "db", "sqlite-store.mjs"))};`,
+        "const store = await openWorkflowStore({ projectRoot: process.cwd() });",
+        "store.appendMetric({ taskClass: 'shell-planning', capability: 'strategy', providerId: 'ollama', modelId: 'mock-model', promptTokens: 20, completionTokens: 10, latencyMs: 1, success: true, createdAt: '2026-04-09T09:00:00.000Z' });",
+        "store.appendMetric({ taskClass: 'shell-planning', capability: 'strategy', providerId: 'ollama', modelId: 'hermes3:8b', promptTokens: 100, completionTokens: 30, latencyMs: 20003, success: false, errorMessage: 'timeout', createdAt: '2026-04-09T09:15:00.000Z' });",
+        "store.close();"
+      ].join(" ")
+    ], { cwd: targetRoot });
+    assert.equal(seed.code, 0, seed.stderr || seed.stdout);
+
+    const jsonResult = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "metrics", "--json"], { cwd: targetRoot });
+    assert.equal(jsonResult.code, 0, jsonResult.stderr || jsonResult.stdout);
+    const payload = JSON.parse(jsonResult.stdout);
+    assert.equal(payload.windows.latestSession.quality.basis, "real-traffic");
+    assert.equal(payload.windows.latestSession.realTraffic.calls, 1);
+    assert.equal(payload.windows.latestSession.mockTraffic.calls, 1);
+    assert.equal(payload.windows.latestSession.quality.successRate, 0);
+
+    const textResult = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "metrics"], { cwd: targetRoot });
+    assert.equal(textResult.code, 0, textResult.stderr || textResult.stdout);
+    assert.match(textResult.stdout, /Quality basis:/);
+    assert.match(textResult.stdout, /based on real traffic/);
+    assert.match(textResult.stdout, /1 real \/ 1 mock calls/);
+    assert.match(textResult.stdout, /Alert: Real traffic is degraded/);
+  } finally {
+    await cleanup(targetRoot);
+  }
+});
+
 test("top-level --version reports the installed package version and toolkit root", async () => {
   const result = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "--version"], { cwd: repoRoot });
   assert.equal(result.code, 0);

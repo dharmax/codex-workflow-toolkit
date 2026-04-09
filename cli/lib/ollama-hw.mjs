@@ -366,20 +366,18 @@ Options:
 
 async function writeOllamaHardwareConfig({ configPath, existing, configWarning, host, hardwareClass, maxModelSizeB, plannerModel }) {
   if (!configWarning) {
-    const writes = [];
     if (host) {
-      writes.push(writeConfigValue(configPath, "providers.ollama.host", host));
+      await writeConfigValue(configPath, "providers.ollama.host", host);
     }
     if (hardwareClass) {
-      writes.push(writeConfigValue(configPath, "providers.ollama.hardwareClass", hardwareClass));
+      await writeConfigValue(configPath, "providers.ollama.hardwareClass", hardwareClass);
     }
     if (maxModelSizeB != null) {
-      writes.push(writeConfigValue(configPath, "providers.ollama.maxModelSizeB", String(maxModelSizeB)));
+      await writeConfigValue(configPath, "providers.ollama.maxModelSizeB", String(maxModelSizeB));
     }
     if (plannerModel) {
-      writes.push(writeConfigValue(configPath, "providers.ollama.plannerModel", plannerModel));
+      await writeConfigValue(configPath, "providers.ollama.plannerModel", plannerModel);
     }
-    await Promise.all(writes);
     return;
   }
 

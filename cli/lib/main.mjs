@@ -1211,7 +1211,9 @@ async function handleMetrics(rest) {
 function renderMetricsSummary(metrics) {
   const lines = [
     `All time: ${metrics.totalCalls} calls, ${metrics.successRate}% success, ${metrics.avgLatencyMs}ms avg latency`,
-    `Assumptions: ${metrics.assumptions?.helpVsBaseline ?? "heuristic estimate"}`
+    `Assumptions: ${metrics.assumptions?.helpVsBaseline ?? "heuristic estimate"}`,
+    `Quality basis: ${metrics.assumptions?.qualityBasis ?? "all traffic"}`,
+    `Tokens: ${metrics.assumptions?.tokens ?? "actual usage only"}`
   ];
 
   for (const key of ["latestSession", "last4WorkHours", "trailingWeek"]) {
@@ -1223,10 +1225,14 @@ function renderMetricsSummary(metrics) {
     lines.push(window.label);
     lines.push(`- Calls: ${window.calls}`);
     lines.push(`- Cost: estimated ${window.cost.estimatedManualMinutes}m manual vs ${window.cost.estimatedToolMinutes}m tool time, ${window.cost.estimatedMinutesSaved}m saved`);
-    lines.push(`- Quality: ${window.quality.qualityScore}/100 (${window.quality.successRate}% success, ${window.quality.fastEnoughRate}% fast-enough)`);
-    lines.push(`- Mix: ${window.localCalls} local / ${window.remoteCalls} remote, ${window.totalTokens} total tokens`);
+    lines.push(`- Quality: ${window.quality.qualityScore}/100 based on ${window.quality.basisLabel} (${window.quality.successRate}% success, ${window.quality.fastEnoughRate}% fast-enough)`);
+    lines.push(`- Mix: ${window.localCalls} local / ${window.remoteCalls} remote, ${window.realTraffic.calls} real / ${window.mockTraffic.calls} mock calls`);
+    lines.push(`- Tokens: ${window.totalTokens} total (${window.realTraffic.totalTokens} real / ${window.mockTraffic.totalTokens} mock)`);
     if (window.byModel?.length) {
       lines.push(`- Top model: ${window.byModel[0].model_id} (${window.byModel[0].count} calls, ${window.byModel[0].success_rate}% success)`);
+    }
+    for (const alert of window.alerts ?? []) {
+      lines.push(`- Alert: ${alert}`);
     }
   }
 

@@ -60,7 +60,8 @@ export async function routeTask({
         continue;
       }
 
-      const localPreference = preferLocalForTask && provider.local ? (shellPlanningLocal ? 5 : 3) : 0;
+      const localPreference = preferLocalForTask && provider.local ? (shellPlanningLocal ? 12 : 3) : 0;
+      const shellPlanningRemotePenalty = taskClass === "shell-planning" && preferLocalForTask && !provider.local ? -6 : 0;
       const configTrustBonus = provider.local ? 1 : provider.configured ? 2 : -3;
       
       // Item 35: Historical Success Bias
@@ -70,7 +71,7 @@ export async function routeTask({
       const interactiveShellBonus = scoreInteractiveShellPlanner(model, taskClass);
       const quotaBonus = scoreQuota(provider, { quotaStrategy, remoteFreeQuotaAvailable });
       const fitBonus = typeof model.fitScore === "number" ? (model.fitScore / 10) : 0;
-      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + reliabilityBonus + latencyBonus + interactiveShellBonus + quotaBonus + configTrustBonus + fitBonus;
+      const score = (10 - (model.costTier ?? 5)) + (competency * 2) + localPreference + shellPlanningRemotePenalty + reliabilityBonus + latencyBonus + interactiveShellBonus + quotaBonus + configTrustBonus + fitBonus;
       
       candidates.push({
         providerId,
