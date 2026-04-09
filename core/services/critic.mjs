@@ -1,3 +1,4 @@
+import { readDogfoodReport } from "../../runtime/scripts/ai-workflow/lib/dogfood-utils.mjs";
 import { withWorkflowStore } from "./sync.mjs";
 
 /**
@@ -21,8 +22,48 @@ export async function auditArchitecture(projectRoot) {
     const zombie = detectZombieCode(store);
     findings.push(...zombie);
 
+    // 4. Detect Dogfooding Gaps (Missing or failing reports)
+    const dogfood = await detectDogfoodingGaps(projectRoot);
+    findings.push(...dogfood);
+
     return findings;
   });
+}
+
+async function detectDogfoodingGaps(projectRoot) {
+  const report = await readDogfoodReport(projectRoot);
+  if (!report) {
+    return [{
+      type: "missing-dogfood-report",
+      severity: "high",
+      subject: "operator-surface",
+      summary: "Operator-surface dogfood report is missing. Run `ai-workflow dogfood` before closure."
+    }];
+  }
+
+  const findings = [];
+  const surfaces = Object.entries(report.surfaces ?? {});
+  for (const [id, surface] of surfaces) {
+    if (surface.status !== "pass") {
+      findings.push({
+        type: "failing-dogfood-surface",
+        severity: "critical",
+        subject: `operator-surface/${id}`,
+        summary: `Operator-surface ${id} is failing dogfood scenarios. Fix the tool path before closure.`
+      });
+    }
+  }
+
+  if (!surfaces.length) {
+    findings.push({
+      type: "empty-dogfood-report",
+      severity: "medium",
+      subject: "operator-surface",
+      summary: "Dogfood report exists but contains no surface results. Check surface discovery."
+    });
+  }
+
+  return findings;
 }
 
 function detectCircularDependencies(store) {

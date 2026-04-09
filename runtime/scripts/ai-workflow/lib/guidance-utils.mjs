@@ -16,7 +16,8 @@ export function summarizeGuidance(markdown, keywords, options = {}) {
     fallbackLimit = 4,
     alwaysIncludeTop = false
   } = options;
-  const rawCandidates = extractMarkdownCandidates(markdown);
+  const rawCandidates = extractMarkdownCandidates(markdown)
+    .filter((candidate) => !isLowSignalGuidanceText(candidate.text));
   const candidates = rawCandidates.some((candidate) => candidate.kind !== "heading")
     ? rawCandidates.filter((candidate) => candidate.kind !== "heading")
     : rawCandidates;
@@ -25,7 +26,8 @@ export function summarizeGuidance(markdown, keywords, options = {}) {
     return [];
   }
 
-  const scored = candidates.map((candidate, index) => {
+  const uniqueCandidates = compactGuidanceCandidates(candidates);
+  const scored = uniqueCandidates.map((candidate, index) => {
     const candidateTokens = tokenize(candidate.text);
     const overlap = candidateTokens.filter((token) => keywords.includes(token)).length;
     const score = overlap * 10 + candidate.weight - index * 0.001;
@@ -52,6 +54,31 @@ export function summarizeGuidance(markdown, keywords, options = {}) {
     .slice(0, limit)
     .sort((left, right) => left.line - right.line)
     .map((candidate) => candidate.text);
+}
+
+export function compactGuidanceItems(items, options = {}) {
+  const {
+    limit = Number.POSITIVE_INFINITY,
+    seenNormalized = new Set()
+  } = options;
+  const compact = [];
+
+  for (const item of items) {
+    const value = String(item ?? "").trim();
+    const normalized = normalizeGuidanceText(value);
+    if (!value || !normalized || seenNormalized.has(normalized)) {
+      continue;
+    }
+
+    seenNormalized.add(normalized);
+    compact.push(value);
+
+    if (compact.length >= limit) {
+      break;
+    }
+  }
+
+  return compact;
 }
 
 export function inferValidationPlan({ ticket = null, files = [] }) {
@@ -152,4 +179,53 @@ function buildValidationChecks({ level, touchesUi, touchesRuntime, touchesWorkfl
   }
 
   return checks;
+}
+
+function compactGuidanceCandidates(candidates) {
+  const seen = new Set();
+  const compact = [];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeGuidanceText(candidate.text);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    compact.push(candidate);
+  }
+
+  return compact;
+}
+
+function normalizeGuidanceText(value) {
+  return compactText(value)
+    .toLowerCase()
+    .replace(/[*_`]/g, "")
+    .replace(/[.;:]+$/g, "");
+}
+
+function isLowSignalGuidanceText(value) {
+  const compact = compactText(value);
+  if (!compact) {
+    return true;
+  }
+
+  if (/^this file$/i.test(compact)) {
+    return true;
+  }
+
+  if (/^`[^`]+`$/.test(compact)) {
+    return true;
+  }
+
+  if (/^[a-z][a-z /-]{0,40}:$/i.test(compact)) {
+    return true;
+  }
+
+  return false;
+}
+
+function compactText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
 }

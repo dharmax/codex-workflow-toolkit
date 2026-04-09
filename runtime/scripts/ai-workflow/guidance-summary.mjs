@@ -3,7 +3,7 @@
 import path from "node:path";
 import { parseArgs, printAndExit, splitCsv } from "./lib/cli.mjs";
 import { exists, isWorkflowStatePath, normalizePath, readText } from "./lib/fs-utils.mjs";
-import { deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
+import { compactGuidanceItems, deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
 import { getChanges, isGitRepo } from "./lib/git-utils.mjs";
 import { loadTicketContext } from "./lib/workflow-store-utils.mjs";
 
@@ -72,6 +72,7 @@ const [agents, contributing, executionProtocol, enforcement, guidelines, knowled
   readText(knowledgePath)
 ]);
 
+const seenGuidance = new Set();
 const summary = {
   root,
   ticket: ticket ? { id: ticket.id, title: ticket.title, section: ticket.section } : null,
@@ -80,12 +81,12 @@ const summary = {
   keywords,
   validationPlan: inferValidationPlan({ ticket, files: uniqueFiles }),
   sections: {
-    agents: summarizeGuidance(agents, keywords, { alwaysIncludeTop: true, limit: 4, fallbackLimit: 4 }),
-    contributing: summarizeGuidance(contributing, keywords, { limit: 4, fallbackLimit: 3 }),
-    executionProtocol: summarizeGuidance(executionProtocol, keywords, { limit: 4, fallbackLimit: 3 }),
-    enforcement: summarizeGuidance(enforcement, keywords, { limit: 3, fallbackLimit: 2 }),
-    projectGuidelines: summarizeGuidance(guidelines, keywords, { limit: 4, fallbackLimit: 3 }),
-    knowledge: summarizeGuidance(knowledge, keywords, { limit: 3, fallbackLimit: 2 })
+    agents: compactGuidanceItems(summarizeGuidance(agents, keywords, { alwaysIncludeTop: true, limit: 4, fallbackLimit: 4 }), { seenNormalized: seenGuidance }),
+    contributing: compactGuidanceItems(summarizeGuidance(contributing, keywords, { limit: 4, fallbackLimit: 3 }), { seenNormalized: seenGuidance }),
+    executionProtocol: compactGuidanceItems(summarizeGuidance(executionProtocol, keywords, { limit: 4, fallbackLimit: 3 }), { seenNormalized: seenGuidance }),
+    enforcement: compactGuidanceItems(summarizeGuidance(enforcement, keywords, { limit: 3, fallbackLimit: 2 }), { seenNormalized: seenGuidance }),
+    projectGuidelines: compactGuidanceItems(summarizeGuidance(guidelines, keywords, { limit: 4, fallbackLimit: 3 }), { seenNormalized: seenGuidance }),
+    knowledge: compactGuidanceItems(summarizeGuidance(knowledge, keywords, { limit: 3, fallbackLimit: 2 }), { seenNormalized: seenGuidance })
   }
 };
 

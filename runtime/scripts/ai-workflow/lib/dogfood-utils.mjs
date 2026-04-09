@@ -100,6 +100,9 @@ async function runSurfaceScenarios({ surfaceId, profile, root, toolkitRoot, cliP
 }
 
 async function buildShellScenarios({ profile, cliPath, root, timeoutMs }) {
+  const shellPlanningExpectation = profile === "bootstrap"
+    ? { expectLocalModel: false }
+    : await detectShellPlanningExpectation({ cliPath, root, timeoutMs });
   const scenarios = [
     await runCliScenario({
       id: "doctor-command",
@@ -142,11 +145,32 @@ async function buildShellScenarios({ profile, cliPath, root, timeoutMs }) {
       cwd: root,
       timeoutMs,
       cliPath,
-      args: ["shell", "Give me a concise operator brief grounded in the current workflow state, and justify the recommendation.", "--json", "--trace"]
+      args: ["shell", "Give me a concise operator brief grounded in the current workflow state, and justify the recommendation.", "--json", "--trace"],
+      validationHints: shellPlanningExpectation
     }));
   }
 
   return scenarios;
+}
+
+async function detectShellPlanningExpectation({ cliPath, root, timeoutMs }) {
+  const result = await runNodeProcess({
+    cwd: root,
+    timeoutMs,
+    args: [cliPath, "route", "shell-planning", "--json"]
+  });
+  if (result.code !== 0) {
+    return { expectLocalModel: false };
+  }
+
+  try {
+    const payload = JSON.parse(result.stdout);
+    return {
+      expectLocalModel: Boolean(payload?.providers?.ollama?.available)
+    };
+  } catch {
+    return { expectLocalModel: false };
+  }
 }
 
 async function buildProviderScenarios({ cliPath, root, timeoutMs }) {
@@ -242,7 +266,7 @@ async function buildInitScenarios({ timeoutMs, toolkitRoot }) {
   }
 }
 
-async function runCliScenario({ id, description, cwd, timeoutMs, cliPath, args }) {
+async function runCliScenario({ id, description, cwd, timeoutMs, cliPath, args, validationHints = {} }) {
   const result = await runNodeProcess({
     cwd,
     timeoutMs,
@@ -252,14 +276,15 @@ async function runCliScenario({ id, description, cwd, timeoutMs, cliPath, args }
     id,
     description,
     command: `${process.execPath} ${cliPath} ${args.map(shellQuote).join(" ")}`,
-    result
+    result,
+    validationHints
   });
 }
 
-function buildScenarioResult({ id, description, command, result }) {
+function buildScenarioResult({ id, description, command, result, validationHints = {} }) {
   const model = extractModelTrace(result.stdout, result.stderr);
   const progressLines = extractProgressLines(result.stdout, result.stderr);
-  const validation = validateScenarioResult({ id, result, model, progressLines });
+  const validation = validateScenarioResult({ id, result, model, progressLines, validationHints });
   return {
     id,
     description,
@@ -289,7 +314,7 @@ function extractProgressLines(stdout, stderr) {
     .filter((line) => line.startsWith("[progress] "));
 }
 
-function validateScenarioResult({ id, result, model, progressLines }) {
+function validateScenarioResult({ id, result, model, progressLines, validationHints = {} }) {
   if ([
     "doctor-command",
     "doctor-help-command",
@@ -310,8 +335,8 @@ function validateScenarioResult({ id, result, model, progressLines }) {
     if (!model) {
       return { ok: false, message: "missing AI model trace for live shell planning" };
     }
-    if (result.code === 124 && result.timedOut) {
-      return { ok: true, message: "live shell planning timed out, but progress and selected-model trace were surfaced" };
+    if (validationHints.expectLocalModel && !/^ollama:/i.test(model)) {
+      return { ok: false, message: "expected the shell soft test to route through Ollama when Ollama is available" };
     }
   }
   if (result.code !== 0) {

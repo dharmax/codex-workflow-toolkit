@@ -13,20 +13,16 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Preserve access to core state and critical controls when reshaping UI surfaces.
 - Keep hot-path guidance lean. Archive history elsewhere instead of turning active guidance files into context sinks.
 - Keep the core kanban lanes fixed and only show rare lanes when populated. `Archived` is not a live lane; it belongs in `kanban-archive.md`.
-- Smart codelets should be routed through the cheapest suitable provider, not hardcoded to one model family.
+- Smart codelets should be routed through the router and the cheapest suitable provider, not hardcoded to one model family.
 - Shell planning should use the live model-fit matrix plus cached web evidence and explicit refresh controls; `providers.ollama.plannerModel` is a manual override, not the normal default.
 - Mutating shell work must be blocked until the board has exactly one ticket in `In Progress`; the shell should tell the operator to move the ticket first instead of bypassing workflow state. State changes with their own command surface should use that command surface instead of shell execution.
-- Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer.
-- If `ai-workflow` fails, stop, identify root cause, and either fix it or report the blocker before continuing.
-- If you discover a bug while working on something else, stop and tell the operator unless they explicitly asked for full-batch triage.
-- Prefer the cheapest capable model route when the tool can use it; if it is unavailable, say so instead of silently widening the fallback.
 
 ## Architecture
 
-- Runtime:
-- Primary entry points:
-- State and data boundaries:
-- Test layers:
+- The workflow DB is the canonical operational state. `kanban.md` and `epics.md` are controlled projections, and direct edits must be reconciled instead of silently overwritten.
+- Shell, codelets, and CLI surfaces orchestrate work; durable domain behavior belongs in cohesive modules and services behind stable APIs.
+- Keep Architectural Graph facts in the DB and workflow services instead of duplicating predicate lists in narrative markdown.
+- Critical surfaces should preserve a real entrypoint, a degraded path, and testable seams at each boundary.
 
 ## Layer Boundaries
 
@@ -43,12 +39,11 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Make the smallest coherent burst that solves the ticket honestly; do not fragment systemic fixes into fake micro-progress.
 - For roadmap work, finish one epic before starting the next unless a blocker or dependency makes the order impossible.
 
-## Type Safety
+## Data Contracts
 
-- Use strict TypeScript.
-- Prefer explicit domain types over ad-hoc object literals.
-- Avoid `any` unless a boundary truly forces it and the reason is documented.
+- Prefer explicit contract shapes over ad-hoc object literals.
 - Handle unknown external or AI-shaped payloads defensively.
+- Normalize and validate external or AI-shaped payloads at the boundary so downstream code can stay simple.
 
 ## Structure and Ownership
 
@@ -78,12 +73,6 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - Use watchdogs only as safety nets, not primary flow control.
 - Save logic should be debounced where practical and immediate on critical lifecycle events.
 
-## Verification
-
-- Required checks:
-- Fast targeted checks:
-- Manual checks that matter:
-
 ## Test Strategy
 
 - Goal: maximize efficiency in time and token cost without compromising reliability.
@@ -93,6 +82,8 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
 - When fixing a bug, add the test that would have caught that bug.
 - Operator-surface changes should be dogfooded through `ai-workflow` itself before closure, not only through internal function tests.
 - Operator-surface changes are not done until `ai-workflow dogfood` (or `node scripts/ai-workflow/dogfood.mjs`) and `workflow-audit` both pass.
+- For provider, shell, routing, setup, and fallback changes, add at least one test at the actual entrypoint and one test for the degraded path. Do not count helper-only or happy-path-only coverage as sufficient.
+- When asserting Ollama behavior, tests must keep `configured`, `installed`, and `available` separate so a broken probe cannot hide behind a passing registry fallback.
 - Keep verification layered:
   - workflow/guidance/kanban contract changes should prove themselves through `workflow-audit`
   - operator-surface changes should prove themselves through `workflow:dogfood` plus `workflow-audit`
@@ -103,19 +94,6 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
   - domain changes should prefer focused deterministic tests before broader runs
   - E2E should cover system paths and regressions, not replace module-level proof
   - human-only acceptance should stay explicit instead of being implied by green automation
-
-## Test Examples
-
-- Small ticket example:
-  - fix one selector bug -> one focused unit test
-  - clamp one malformed payload path -> one focused module contract test
-- Batch example:
-  - normalize several related UI tickets -> targeted browser/E2E plus visual check
-  - land one larger routing/persistence ticket -> E2E for the affected user path
-- Super-E2E example:
-  - after a few related batches, run the heavier emulator/simulation path to regain broader confidence
-- Special-test example:
-  - imports, migrations, AI artifact shaping, payment paths, or other unusual flows should get purpose-built tests
 
 ## Review Triggers
 
