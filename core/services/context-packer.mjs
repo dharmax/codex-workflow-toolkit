@@ -108,6 +108,10 @@ export function formatContextForPrompt(context) {
     parts.push(`## Ticket: ${context.ticket.id}\n${context.ticket.title}\n${context.ticket.data?.summary ?? ""}`);
   }
 
+  if (typeof context.retrieval?.confidence === "number" && context.retrieval.confidence < 0.55) {
+    parts.push("## Retrieval Warning\nEvidence is weak. Validate the working set before relying on it for broad edits or higher-cost planning.");
+  }
+
   if (context.retrieval?.evidence?.length) {
     parts.push("## Retrieval Evidence");
     for (const item of context.retrieval.evidence.slice(0, 4)) {

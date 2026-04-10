@@ -689,9 +689,13 @@ function resolveImportedProjectPath(importerPath, specifier, fileSet) {
 
 function guessTestTargetsFromName(testFilePath, fileSet) {
   const basename = path.posix.basename(testFilePath).replace(TEST_FILE_NAME_RE, "");
+  const normalizedNames = new Set([
+    basename,
+    basename.replace(/(?:[._-](?:e2e|integration|unit|browser|component|ui|dom))+$/i, "")
+  ]);
   const directMatches = [...fileSet]
     .filter((candidate) => !isTestFile(candidate))
-    .filter((candidate) => path.posix.basename(candidate).replace(/\.[^.]+$/, "") === basename)
+    .filter((candidate) => normalizedNames.has(path.posix.basename(candidate).replace(/\.[^.]+$/, "")))
     .slice(0, 3);
   return directMatches;
 }

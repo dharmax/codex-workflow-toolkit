@@ -24,6 +24,9 @@ const QUERY_STOP_WORDS = new Set([
   "working"
 ]);
 
+const IMPLEMENTATION_FIRST_PROFILES = new Set(["execute", "plan"]);
+const MAX_IMPLEMENTATION_FIRST_TEST_FILES = 2;
+
 export async function inferTicketRetrievalContext({
   projectRoot = process.cwd(),
   ticket = null,
@@ -68,6 +71,7 @@ export function inferTicketRetrievalContextFromStore(store, {
   const queryEvidence = [];
   const allFiles = Array.isArray(store.listFiles?.()) ? store.listFiles() : [];
   const allEntities = Array.isArray(store.listEntities?.()) ? store.listEntities() : [];
+  const queryStats = buildQueryStats(allFiles, buildTicketQueries(normalizedTicket, queryText));
   const fileHintTokens = buildFileHintTokens(normalizedTicket, queryText);
 
   for (const explicitPath of extractExplicitPaths(normalizedTicket.text)) {
@@ -100,11 +104,12 @@ export function inferTicketRetrievalContextFromStore(store, {
       tests,
       testReasons,
       relatedEntities,
-      entityReasons
+      entityReasons,
+      queryStats
     });
   }
 
-  const queries = buildTicketQueries(normalizedTicket, queryText);
+  const queries = [...queryStats.keys()];
   for (const query of queries) {
     const rows = store.search?.(query, { limit: 12, scopes: ["entity", "symbol", "file", "note"] }) ?? [];
     const hits = [];
@@ -114,7 +119,9 @@ export function inferTicketRetrievalContextFromStore(store, {
         if (!isUsefulFileCandidate(filePath)) {
           continue;
         }
-        const score = scoreSearchResult(row, query, profile, "file", filePath);
+        const score = scoreSearchResult(row, query, profile, "file", filePath, {
+          queryStats
+        });
         addScoredItem(fileScores, fileReasons, filePath, score, {
           kind: "search-file",
           query,
@@ -130,8 +137,14 @@ export function inferTicketRetrievalContextFromStore(store, {
           continue;
         }
         const symbolLabel = renderSymbolLabel(symbol);
-        const symbolScore = scoreSearchResult(row, query, profile, "symbol", symbol.filePath);
-        const fileScore = scoreSearchResult(row, query, profile, "symbol-file", symbol.filePath);
+        const symbolScore = scoreSearchResult(row, query, profile, "symbol", symbol.filePath, {
+          queryStats,
+          symbol
+        });
+        const fileScore = scoreSearchResult(row, query, profile, "symbol-file", symbol.filePath, {
+          queryStats,
+          symbol
+        });
         symbols.set(symbolLabel, symbol);
         addScoredItem(fileScores, fileReasons, symbol.filePath, fileScore, {
           kind: "search-symbol-file",
@@ -192,10 +205,19 @@ export function inferTicketRetrievalContextFromStore(store, {
   applyLexicalFileHints(allFiles, fileHintTokens, {
     profile,
     fileScores,
-    fileReasons
+    fileReasons,
+    queryStats
   });
 
-  const rankedFiles = rankFileKeys(fileScores, profile, limit);
+  seedAdjacentTestFiles(allFiles, {
+    profile,
+    fileScores,
+    fileReasons,
+    tests,
+    testReasons
+  });
+
+  const rankedFiles = rankFileKeys(fileScores, profile, limit, fileReasons);
   for (const filePath of rankedFiles) {
     files.add(filePath);
   }
@@ -229,8 +251,21 @@ export function inferTicketRetrievalContextFromStore(store, {
       entityReasons,
       queryEvidence
     }),
-    confidence: estimateConfidence({ files: [...files], rankedSymbols, rankedTests, rankedEntities }),
-    fallbackStage: determineFallbackStage({ files: [...files], rankedSymbols, queryEvidence, graphEdges })
+    confidence: estimateConfidence({
+      files: [...files],
+      rankedSymbols,
+      rankedTests,
+      rankedEntities,
+      fileReasons,
+      symbolReasons
+    }),
+    fallbackStage: determineFallbackStage({
+      files: [...files],
+      rankedSymbols,
+      queryEvidence,
+      graphEdges,
+      fileReasons
+    })
   };
 }
 
@@ -272,6 +307,31 @@ function buildTicketQueries(ticket, queryText) {
   return [...new Set(values.map((value) => String(value ?? "").trim()).filter(Boolean))]
     .filter((value) => value.length >= 4)
     .slice(0, 12);
+}
+
+function buildQueryStats(allFiles, queries) {
+  const normalizedPaths = (Array.isArray(allFiles) ? allFiles : [])
+    .map((entry) => String(entry?.path ?? entry?.relativePath ?? "").toLowerCase())
+    .filter(Boolean);
+  const totalFiles = normalizedPaths.length || 1;
+  const stats = new Map();
+
+  for (const query of queries) {
+    const normalizedQuery = String(query ?? "").trim().toLowerCase();
+    if (!normalizedQuery) {
+      continue;
+    }
+    const matchingPaths = normalizedPaths.filter((filePath) => filePath.includes(normalizedQuery)).length;
+    const ratio = matchingPaths / totalFiles;
+    stats.set(normalizedQuery, {
+      matchingPaths,
+      ratio,
+      generic: matchingPaths >= Math.max(16, Math.ceil(totalFiles * 0.12)),
+      broad: matchingPaths >= Math.max(8, Math.ceil(totalFiles * 0.06))
+    });
+  }
+
+  return stats;
 }
 
 function buildFileHintTokens(ticket, queryText) {
@@ -318,12 +378,13 @@ function collectGraphEdge(store, {
   tests,
   testReasons,
   relatedEntities,
-  entityReasons
+  entityReasons,
+  queryStats
 }) {
   if (String(otherId).startsWith("file:")) {
     const filePath = otherId.slice(5);
     if (isUsefulFileCandidate(filePath)) {
-      addScoredItem(fileScores, fileReasons, filePath, 220, {
+      addScoredItem(fileScores, fileReasons, filePath, scoreGraphFile(filePath, profile), {
         kind: "graph-file",
         value: edge.predicate
       });
@@ -336,11 +397,11 @@ function collectGraphEdge(store, {
     if (symbol?.filePath) {
       const symbolLabel = renderSymbolLabel(symbol);
       symbols.set(symbolLabel, symbol);
-      addScoredItem(symbolScores, symbolReasons, symbolLabel, 72, {
+      addScoredItem(symbolScores, symbolReasons, symbolLabel, 48 + scoreSymbolSignal(symbol, "", profile), {
         kind: "graph-symbol",
         value: edge.predicate
       });
-      addScoredItem(fileScores, fileReasons, symbol.filePath, 190, {
+      addScoredItem(fileScores, fileReasons, symbol.filePath, scoreGraphFile(symbol.filePath, profile) - 12, {
         kind: "graph-symbol-file",
         value: edge.predicate
       });
@@ -376,7 +437,8 @@ function collectGraphEdge(store, {
 function applyLexicalFileHints(allFiles, tokens, {
   profile,
   fileScores,
-  fileReasons
+  fileReasons,
+  queryStats
 }) {
   if (!Array.isArray(allFiles) || !tokens.length) {
     return;
@@ -387,7 +449,7 @@ function applyLexicalFileHints(allFiles, tokens, {
     if (!isUsefulFileCandidate(filePath)) {
       continue;
     }
-    const hint = scoreFileHintMatch(filePath, tokens, profile);
+    const hint = scoreFileHintMatch(filePath, tokens, profile, queryStats);
     if (!hint) {
       continue;
     }
@@ -404,7 +466,7 @@ function attachEntityFiles(store, entity, { profile, fileScores, fileReasons, te
     if (String(edge.objectId).startsWith("file:")) {
       const filePath = edge.objectId.slice(5);
       if (isUsefulFileCandidate(filePath)) {
-        addScoredItem(fileScores, fileReasons, filePath, profile === "read" ? 40 : 68, {
+        addScoredItem(fileScores, fileReasons, filePath, scoreRelatedEntityFile(filePath, profile), {
           kind: "related-entity-file",
           value: `${entity.id}:${edge.predicate}`
         });
@@ -420,23 +482,47 @@ function attachEntityFiles(store, entity, { profile, fileScores, fileReasons, te
   }
 }
 
-function scoreSearchResult(row, query, profile, kind, filePath = "") {
+function seedAdjacentTestFiles(allFiles, { profile, fileScores, fileReasons, tests, testReasons }) {
+  const topImplementationFiles = [...fileScores.entries()]
+    .filter(([filePath]) => isImplementationPath(filePath))
+    .sort((left, right) => right[1] - left[1] || String(left[0]).localeCompare(String(right[0])))
+    .slice(0, 6)
+    .map(([filePath]) => filePath);
+
+  for (const filePath of topImplementationFiles) {
+    for (const candidate of findRelatedTests(allFiles, filePath)) {
+      const score = implementationFirstProfile(profile) ? 78 : 42;
+      addScoredItem(fileScores, fileReasons, candidate, score, {
+        kind: "adjacent-test-file",
+        value: filePath
+      });
+      addScoredItem(tests, testReasons, candidate, implementationFirstProfile(profile) ? 34 : 18, {
+        kind: "adjacent-test",
+        value: filePath
+      });
+    }
+  }
+}
+
+function scoreSearchResult(row, query, profile, kind, filePath = "", { queryStats = new Map(), symbol = null } = {}) {
   const title = String(row.title ?? "").toLowerCase();
   const normalizedQuery = String(query ?? "").toLowerCase();
   const tags = Array.isArray(row.tags) ? row.tags.map((item) => String(item).toLowerCase()) : [];
   let score = 0;
+  const breadthPenalty = scoreQueryBreadthPenalty(queryStats.get(normalizedQuery), kind);
 
   if (title === normalizedQuery || title.endsWith(` ${normalizedQuery}`)) score += 90;
   if (title.includes(normalizedQuery)) score += 48;
   if (tags.some((tag) => tag.includes(normalizedQuery))) score += 24;
-  if (kind === "symbol") score += profile === "execute" ? 56 : 34;
-  if (kind === "symbol-file") score += profile === "execute" ? 34 : 20;
-  if (kind === "file") score += profile === "execute" ? 22 : 30;
+  if (kind === "symbol") score += implementationFirstProfile(profile) ? 46 : 34;
+  if (kind === "symbol-file") score += implementationFirstProfile(profile) ? 42 : 20;
+  if (kind === "file") score += implementationFirstProfile(profile) ? 18 : 30;
+  if (symbol) score += scoreSymbolSignal(symbol, normalizedQuery, profile);
   score += scorePathBias(filePath, normalizedQuery, profile);
-  return score;
+  return Math.max(0, score - breadthPenalty);
 }
 
-function scoreFileHintMatch(filePath, tokens, profile) {
+function scoreFileHintMatch(filePath, tokens, profile, queryStats = new Map()) {
   const normalized = String(filePath ?? "").toLowerCase();
   const base = path.basename(normalized);
   const stem = base.replace(/\.[^.]+$/, "");
@@ -462,14 +548,17 @@ function scoreFileHintMatch(filePath, tokens, profile) {
   }
 
   const uniqueMatches = [...new Set(matches)];
-  let score = 70 + (uniqueMatches.length * 55);
-  if (/^(src|functions)\//.test(normalized)) score += 95;
-  else if (/^tests\//.test(normalized)) score += 88;
-  else if (/^(cli|core|runtime)\//.test(normalized)) score += 36;
-  else if (/^scripts\//.test(normalized)) score += 12;
-  else if (/^docs\//.test(normalized)) score -= 22;
+  let score = 55 + (uniqueMatches.length * 42);
+  if (isImplementationPath(normalized)) score += 120;
+  else if (isTestPath(normalized)) score += implementationFirstProfile(profile) ? 12 : 42;
+  else if (/^scripts\//.test(normalized)) score += implementationFirstProfile(profile) ? 4 : 18;
+  else if (isDocPath(normalized)) score -= implementationFirstProfile(profile) ? 32 : 8;
 
-  if (profile === "execute" && /^scripts\//.test(normalized)) {
+  const strongestMatch = uniqueMatches[0];
+  const queryStat = queryStats.get(strongestMatch);
+  score -= scoreQueryBreadthPenalty(queryStat, "path-hint");
+
+  if (implementationFirstProfile(profile) && /^scripts\//.test(normalized)) {
     score -= 18;
   }
 
@@ -493,17 +582,19 @@ function scoreEntityResult(entity, query, profile) {
 function scorePathBias(filePath, query, profile) {
   const normalized = String(filePath ?? "").toLowerCase();
   let score = 0;
-  if (profile === "execute") {
-    if (normalized.startsWith("src/") || normalized.startsWith("functions/") || normalized.startsWith("cli/") || normalized.startsWith("core/")) score += 26;
-    if (normalized.startsWith("tests/")) score += 18;
-    if (normalized.startsWith("docs/")) score -= 8;
+  if (implementationFirstProfile(profile)) {
+    if (isImplementationPath(normalized)) score += 34;
+    if (isTestPath(normalized)) score -= 8;
+    if (isDocPath(normalized)) score -= 20;
+    if (normalized.startsWith("scripts/")) score -= 6;
   } else {
-    if (normalized.startsWith("tests/")) score += 16;
-    if (normalized.startsWith("docs/")) score += 10;
+    if (isTestPath(normalized)) score += 16;
+    if (isDocPath(normalized)) score += 10;
   }
   const base = path.basename(normalized);
   if (query && base.includes(query)) score += 22;
-  if (/shell|workflow|router|status|ticket|telegram/.test(query) && /shell|workflow|router|status|ticket|telegram/.test(normalized)) score += 18;
+  if (query && stemMatchesQuery(base, query)) score += 12;
+  if (/shell|workflow|router|status|ticket|telegram|retrieval|context/.test(query) && isImplementationPath(normalized) && /shell|workflow|router|status|ticket|telegram|retrieval|context/.test(normalized)) score += 18;
   return score;
 }
 
@@ -524,21 +615,46 @@ function addScoredItemMap(map, key, value) {
   map.set(key, list);
 }
 
-function rankFileKeys(scoreMap, profile, limit) {
+function rankFileKeys(scoreMap, profile, limit, reasonMap = new Map()) {
   const ranked = [...scoreMap.entries()]
     .sort((left, right) => right[1] - left[1] || String(left[0]).localeCompare(String(right[0])));
-  const primaryCode = ranked.filter(([filePath]) => /^(src|functions|tests)\//.test(String(filePath)));
-  const projectInfra = ranked.filter(([filePath]) => /^(cli|core|runtime)\//.test(String(filePath)));
+  const implementation = ranked.filter(([filePath]) => isImplementationPath(filePath));
+  const tests = ranked.filter(([filePath]) => isTestPath(filePath));
   const scripts = ranked.filter(([filePath]) => String(filePath).startsWith("scripts/"));
-  const docs = ranked.filter(([filePath]) => String(filePath).startsWith("docs/"));
+  const docs = ranked.filter(([filePath]) => isDocPath(filePath));
   const other = ranked.filter(([filePath]) => {
     const normalized = String(filePath);
-    return !/^(src|functions|tests|cli|core|runtime|scripts|docs)\//.test(normalized);
+    return !isImplementationPath(normalized)
+      && !isTestPath(normalized)
+      && !normalized.startsWith("scripts/")
+      && !isDocPath(normalized);
   });
-  const nonDocs = [...primaryCode, ...projectInfra, ...scripts, ...other];
-  const includeDocs = profile === "read" || nonDocs.length < Math.max(3, Math.min(limit, 4));
-  const merged = includeDocs ? [...nonDocs, ...docs] : nonDocs;
-  return merged.slice(0, limit).map(([filePath]) => filePath);
+  if (!implementationFirstProfile(profile)) {
+    const merged = [...implementation, ...tests, ...scripts, ...other, ...docs];
+    return merged.slice(0, limit).map(([filePath]) => filePath);
+  }
+
+  const strongImplementation = implementation.filter(([filePath]) => hasStrongReason(reasonMap.get(filePath) ?? []));
+  const weakImplementation = implementation.filter(([filePath]) => !hasStrongReason(reasonMap.get(filePath) ?? []));
+  const shouldReserveVerificationSlots = strongImplementation.length > 0 && strongImplementation.length <= 2 && tests.length > 0;
+  const reservedTestSlots = shouldReserveVerificationSlots
+    ? Math.min(MAX_IMPLEMENTATION_FIRST_TEST_FILES, tests.length, Math.max(0, limit - strongImplementation.length))
+    : 0;
+  const implementationFirst = [...strongImplementation, ...weakImplementation, ...other, ...scripts];
+  const selected = implementationFirst.slice(0, Math.max(1, limit - reservedTestSlots));
+  const hasImplementation = selected.some(([filePath]) => isImplementationPath(filePath));
+  const testCap = hasImplementation ? MAX_IMPLEMENTATION_FIRST_TEST_FILES : 1;
+  const supportingTests = tests
+    .filter(([filePath]) => {
+      const reasons = reasonMap.get(filePath) ?? [];
+      return hasStrongReason(reasons) || !hasImplementation;
+    })
+    .slice(0, Math.max(0, Math.min(testCap, limit - selected.length)));
+  const docsNeeded = selected.length + supportingTests.length < Math.min(limit, 3);
+  const supportingDocs = docsNeeded
+    ? docs.slice(0, Math.max(0, Math.min(1, limit - selected.length - supportingTests.length)))
+    : [];
+  return [...selected, ...supportingTests, ...supportingDocs].slice(0, limit).map(([filePath]) => filePath);
 }
 
 function rankKeys(reasonMap, limit) {
@@ -636,14 +752,55 @@ function summarizeReasons(reasons = []) {
     }));
 }
 
-function estimateConfidence({ files, rankedSymbols, rankedTests, rankedEntities }) {
-  const score = (files.length * 0.2) + (rankedSymbols.length * 0.15) + (rankedTests.length * 0.15) + (rankedEntities.length * 0.1);
-  return Math.max(0.2, Math.min(0.98, score));
+function estimateConfidence({ files, rankedSymbols, rankedTests, rankedEntities, fileReasons, symbolReasons }) {
+  if (!files.length && !rankedSymbols.length) {
+    return rankedEntities.length ? 0.24 : 0;
+  }
+
+  const implementationFiles = files.filter((filePath) => isImplementationPath(filePath));
+  const fileReasonLists = files.map((filePath) => fileReasons.get(filePath) ?? []);
+  const strongFileMatches = fileReasonLists.filter((reasons) => hasStrongReason(reasons)).length;
+  const strongSymbolMatches = rankedSymbols
+    .map((symbol) => symbolReasons.get(symbol) ?? [])
+    .filter((reasons) => hasStrongReason(reasons))
+    .length;
+  let score = 0.18;
+
+  if (implementationFiles.length) {
+    score += 0.28 + Math.min(0.2, implementationFiles.length * 0.08);
+  } else if (files.some((filePath) => isTestPath(filePath))) {
+    score += 0.04;
+  }
+
+  score += Math.min(0.18, strongFileMatches * 0.09);
+  score += Math.min(0.12, strongSymbolMatches * 0.06);
+  score += Math.min(0.08, rankedEntities.length * 0.04);
+
+  if (files.length && files.every((filePath) => isTestPath(filePath))) score -= 0.18;
+  if (!implementationFiles.length && files.some((filePath) => isDocPath(filePath))) score -= 0.08;
+  if (!implementationFiles.length && rankedTests.length) score -= 0.06;
+
+  return clampScore(score, 0.12, 0.96);
 }
 
-function determineFallbackStage({ files, rankedSymbols, queryEvidence, graphEdges }) {
+function determineFallbackStage({ files, rankedSymbols, queryEvidence, graphEdges, fileReasons }) {
   if (files.length || rankedSymbols.length) {
-    return graphEdges.length ? "graph+search" : "search";
+    const implementationFiles = files.filter((filePath) => isImplementationPath(filePath));
+    const hasGraphImplementation = implementationFiles.some((filePath) => {
+      const reasons = fileReasons.get(filePath) ?? [];
+      return reasons.some((reason) => /^graph-/.test(String(reason.kind ?? "")));
+    });
+    const hasExplicitFile = implementationFiles.some((filePath) => {
+      const reasons = fileReasons.get(filePath) ?? [];
+      return reasons.some((reason) => String(reason.kind) === "explicit-path");
+    });
+    if (hasGraphImplementation || hasExplicitFile) {
+      return "graph+search";
+    }
+    if (implementationFiles.length) {
+      return "search";
+    }
+    return "weak-file-match";
   }
   if (queryEvidence.length) {
     return "search-only";
@@ -653,6 +810,96 @@ function determineFallbackStage({ files, rankedSymbols, queryEvidence, graphEdge
 
 function compactText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, 140);
+}
+
+function implementationFirstProfile(profile) {
+  return IMPLEMENTATION_FIRST_PROFILES.has(String(profile ?? "").toLowerCase());
+}
+
+function isImplementationPath(filePath) {
+  const normalized = String(filePath ?? "").trim().toLowerCase();
+  return /^(src|functions|cli|core|runtime)\//.test(normalized);
+}
+
+function isTestPath(filePath) {
+  return String(filePath ?? "").trim().toLowerCase().startsWith("tests/");
+}
+
+function isDocPath(filePath) {
+  return String(filePath ?? "").trim().toLowerCase().startsWith("docs/");
+}
+
+function stemMatchesQuery(baseName, query) {
+  const stem = String(baseName ?? "").replace(/\.[^.]+$/, "");
+  return stem.includes(String(query ?? "")) || String(query ?? "").includes(stem);
+}
+
+function scoreQueryBreadthPenalty(stat, kind) {
+  if (!stat) {
+    return 0;
+  }
+  if (stat.generic) {
+    return kind === "symbol-file" ? 18 : 34;
+  }
+  if (stat.broad) {
+    return kind === "symbol-file" ? 8 : 14;
+  }
+  return 0;
+}
+
+function scoreSymbolSignal(symbol, query, profile) {
+  let score = 0;
+  const kind = String(symbol?.kind ?? "");
+  const signature = String(symbol?.metadata?.signature ?? "").toLowerCase();
+  const normalizedQuery = String(query ?? "").toLowerCase();
+
+  if (kind === "function" || kind === "class" || kind === "function-value") score += 24;
+  else if (kind === "type" || kind === "interface" || kind === "enum") score += 18;
+  else if (kind === "variable") score -= implementationFirstProfile(profile) ? 28 : 8;
+
+  if (symbol?.exported) score += 18;
+  if (normalizedQuery && String(symbol?.name ?? "").toLowerCase() === normalizedQuery) score += 16;
+  if (normalizedQuery && signature.includes(`export`) && signature.includes(normalizedQuery)) score += 10;
+
+  return score;
+}
+
+function scoreGraphFile(filePath, profile) {
+  if (isImplementationPath(filePath)) {
+    return implementationFirstProfile(profile) ? 240 : 180;
+  }
+  if (isTestPath(filePath)) {
+    return implementationFirstProfile(profile) ? 68 : 120;
+  }
+  if (isDocPath(filePath)) {
+    return implementationFirstProfile(profile) ? 32 : 74;
+  }
+  return implementationFirstProfile(profile) ? 72 : 92;
+}
+
+function scoreRelatedEntityFile(filePath, profile) {
+  if (isImplementationPath(filePath)) {
+    return implementationFirstProfile(profile) ? 84 : 48;
+  }
+  if (isTestPath(filePath)) {
+    return implementationFirstProfile(profile) ? 18 : 32;
+  }
+  return implementationFirstProfile(profile) ? 20 : 26;
+}
+
+function hasStrongReason(reasons = []) {
+  return reasons.some((reason) => [
+    "explicit-path",
+    "graph-file",
+    "graph-symbol-file",
+    "search-symbol-file",
+    "search-file",
+    "adjacent-test-file"
+  ].includes(String(reason?.kind ?? "")));
+}
+
+function clampScore(value, min, max) {
+  return Math.max(min, Math.min(max, Number(value ?? 0)));
 }
 
 function isUsefulFileCandidate(filePath) {
