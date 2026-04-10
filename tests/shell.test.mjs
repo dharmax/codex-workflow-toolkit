@@ -418,7 +418,9 @@ test("buildShellPlannerPrompt keeps first-turn runtime context minimal by defaul
   assert.doesNotMatch(system, /MISSION\.md|KANBAN\.md|GUIDELINES|Smart status here\./);
   assert.match(prompt, /## Runtime Context\ncwd: \/tmp\/example-project\nproject: example-project\nactive-ticket-count: 1/);
   assert.match(prompt, /available-providers: ollama:local@http:\/\/127\.0\.0\.1:11434/);
-  assert.doesNotMatch(prompt, /Build the future\.|## Todo|Use ESM\.|Smart status here\./);
+  assert.match(prompt, /## Guidance Highlights/);
+  assert.match(prompt, /- Project guidelines: Use ESM\./);
+  assert.doesNotMatch(prompt, /Build the future\.|## Todo|Smart status here\./);
 });
 
 test("planShellRequestWithAgent handles vague requests by asking for clarification", async (t) => {

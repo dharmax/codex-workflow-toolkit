@@ -28,6 +28,7 @@ const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesiz
 const CONTINUATION_REQUEST_RE = /^(?:continue|go deeper|branch on that|why did that fail\??|what failed\??|keep going)$/i;
 const TICKET_ID_PATTERN = "[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+";
 const WORKFLOW_GATED_MUTATIONS = new Set(["add_note", "create_ticket", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
+const TOOLKIT_ROOT = getToolkitRoot();
 
 const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
 const FAST_DIRECT_ACTIONS = new Set([
@@ -227,7 +228,7 @@ export async function buildShellContext(root = process.cwd()) {
     getSmartProjectStatus({ projectRoot: root }).catch(() => "Status unavailable.")
   ]);
 
-  const [mission, kanbanEntry, gemini, guidelines] = await Promise.all([
+  const [mission, kanbanEntry, gemini, guidelines, manual] = await Promise.all([
     readFileIfExists(path.resolve(root, "MISSION.md")),
     readFirstExistingEntry([
       path.resolve(root, ".gemini", "KANBAN.md"),
@@ -246,6 +247,10 @@ export async function buildShellContext(root = process.cwd()) {
     readFirstExisting([
       path.resolve(root, "project-guidelines.md"),
       path.resolve(root, "templates", "project-guidelines.md")
+    ]),
+    readFirstExisting([
+      path.resolve(root, "docs", "MANUAL.md"),
+      path.resolve(TOOLKIT_ROOT, "docs", "MANUAL.md")
     ])
   ]);
 
@@ -261,7 +266,8 @@ export async function buildShellContext(root = process.cwd()) {
     kanban: kanbanEntry?.content ?? null,
     kanbanPath: kanbanEntry?.path ? path.relative(root, kanbanEntry.path) : null,
     gemini,
-    guidelines
+    guidelines,
+    manual
   };
 }
 
@@ -1120,6 +1126,9 @@ function buildShellPlannerRuntimeContext(plannerContext = {}, options = {}) {
   if (providerSummary.length) {
     lines.push(`available-providers: ${providerSummary.join(", ")}`);
   }
+  if (plannerContext.manual) {
+    lines.push("manual-guidance: available");
+  }
   return lines.join("\n");
 }
 
@@ -1143,6 +1152,7 @@ export async function buildShellPlannerPrompt(inputText, options) {
   const activeGraphState = options.activeGraphState ?? null;
   const { recentMemory, longTermMemorySummary } = await summarizeHistory(history);
   const runtimeContext = buildShellPlannerRuntimeContext(options.plannerContext, options);
+  const guidanceContext = buildShellPlannerGuidanceContext(inputText, options.plannerContext);
   const notesLoreExtra = buildShellPlannerNotesLoreExtra({ recentMemory, longTermMemorySummary, activeGraphState });
   const schemaPrompt = buildShellPlannerSchemaPrompt();
 
@@ -1181,6 +1191,7 @@ export async function buildShellPlannerPrompt(inputText, options) {
   const promptSections = [
     "## Runtime Context",
     runtimeContext,
+    guidanceContext ? `\n## Guidance Highlights\n${guidanceContext}` : "",
     notesLoreExtra ? `\n${notesLoreExtra}` : "",
     "",
     "## Allowed JSON Schema:",
@@ -1193,6 +1204,119 @@ export async function buildShellPlannerPrompt(inputText, options) {
     system,
     prompt: promptSections.join("\n")
   };
+}
+
+function buildShellPlannerGuidanceContext(inputText, plannerContext = {}) {
+  const sections = [];
+  const guidelines = summarizePlannerGuidance(plannerContext.guidelines, inputText, { limit: 2, fallbackLimit: 1 });
+  const manual = summarizePlannerGuidance(plannerContext.manual, inputText, { limit: 4, fallbackLimit: 2 });
+
+  if (guidelines.length) {
+    sections.push(...guidelines.map((item) => `- Project guidelines: ${item}`));
+  }
+  if (manual.length) {
+    sections.push(...manual.map((item) => `- Manual: ${item}`));
+  }
+
+  return sections.join("\n");
+}
+
+function summarizePlannerGuidance(markdown, inputText, { limit = 4, fallbackLimit = 2 } = {}) {
+  const candidates = extractPlannerGuidanceCandidates(markdown);
+  if (!candidates.length) {
+    return [];
+  }
+
+  const queryTokens = tokenizePlannerGuidance(inputText);
+  const scored = candidates.map((candidate, index) => {
+    const candidateTokens = tokenizePlannerGuidance(candidate.text);
+    const overlap = candidateTokens.filter((token) => queryTokens.includes(token)).length;
+    return {
+      ...candidate,
+      overlap,
+      score: overlap * 10 + candidate.weight - index * 0.001
+    };
+  });
+
+  let chosen = scored.filter((candidate) => candidate.overlap > 0);
+  if (!chosen.length) {
+    chosen = scored
+      .slice()
+      .sort((left, right) => right.weight - left.weight || left.line - right.line)
+      .slice(0, fallbackLimit);
+  }
+
+  return chosen
+    .slice()
+    .sort((left, right) => right.score - left.score || left.line - right.line)
+    .slice(0, limit)
+    .sort((left, right) => left.line - right.line)
+    .map((candidate) => candidate.text);
+}
+
+function extractPlannerGuidanceCandidates(markdown) {
+  const lines = String(markdown ?? "").replace(/\r\n/g, "\n").split("\n");
+  const candidates = [];
+  let inCodeFence = false;
+  let inHtmlComment = false;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (trimmed.startsWith("```")) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (trimmed.startsWith("<!--")) {
+      inHtmlComment = !trimmed.includes("-->");
+      continue;
+    }
+    if (inHtmlComment) {
+      if (trimmed.includes("-->")) {
+        inHtmlComment = false;
+      }
+      continue;
+    }
+    if (inCodeFence || !trimmed) {
+      continue;
+    }
+
+    const heading = trimmed.match(/^#{1,6}\s+(.+)$/);
+    if (heading) {
+      candidates.push({ line: index + 1, weight: 3, text: heading[1].trim() });
+      continue;
+    }
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      candidates.push({ line: index + 1, weight: 2, text: bullet[1].trim() });
+      continue;
+    }
+    const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (ordered) {
+      candidates.push({ line: index + 1, weight: 2, text: ordered[1].trim() });
+      continue;
+    }
+    if (trimmed.length <= 220) {
+      candidates.push({ line: index + 1, weight: 1, text: trimmed });
+    }
+  }
+
+  const seen = new Set();
+  return candidates.filter((candidate) => {
+    const normalized = candidate.text.toLowerCase().replace(/[`*_]/g, "").replace(/[.;:]+$/g, "");
+    if (!normalized || seen.has(normalized)) {
+      return false;
+    }
+    seen.add(normalized);
+    return true;
+  });
+}
+
+function tokenizePlannerGuidance(text) {
+  return [...new Set(
+    String(text ?? "")
+      .toLowerCase()
+      .match(/[a-z0-9][a-z0-9/_-]*/g) ?? []
+  )].filter((token) => token.length > 2 && !new Set(["the", "and", "for", "with", "that", "this", "from", "what"]).has(token));
 }
 
 export async function planShellRequestWithAgent(inputText, options) {

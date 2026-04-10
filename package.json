@@ -37,6 +37,7 @@
     "ai-workflow-audit": "./runtime/scripts/ai-workflow/workflow-audit.mjs"
   },
   "scripts": {
+    "docs:manual": "node scripts/generate-manual-html.mjs",
     "init:here": "node scripts/init-project.mjs --target .",
     "kanban": "node runtime/scripts/ai-workflow/kanban.mjs",
     "ai-workflow-ticket": "node runtime/scripts/ai-workflow/kanban-ticket.mjs",

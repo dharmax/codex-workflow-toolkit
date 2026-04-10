@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ai-workflow Manual</title>
+  <meta name="generator" content="ai-workflow docs:manual">
+  <meta name="manual-source" content="docs/MANUAL.md">
+  <meta name="manual-source-sha1" content="63256596d6f5384c62e3189830e930893cc2f9df">
+</head>
+<body>
+  <!-- generated from docs/MANUAL.md sha1:63256596d6f5384c62e3189830e930893cc2f9df -->
+  <header>
+    <h1>ai-workflow Manual</h1>
+    <p>This HTML manual is generated from the canonical Markdown manual.</p>
+    <p><a href="MANUAL.md">Canonical Markdown source</a></p>
+  </header>
+  <main>
+    <nav aria-labelledby="manual-toc-heading">
+      <h2 id="manual-toc-heading">Table of contents</h2>
+      <ol>
+        <li><a href="#what-it-is">What It Is</a></li>
+        <li><a href="#mental-model">Mental Model</a></li>
+        <li><a href="#installation-and-setup">Installation And Setup</a></li>
+        <li><a href="#toolkit-install">Toolkit Install</a></li>
+        <li><a href="#repo-bootstrap">Repo Bootstrap</a></li>
+        <li><a href="#first-day-checks">First-Day Checks</a></li>
+        <li><a href="#core-workflow">Core Workflow</a></li>
+        <li><a href="#standard-operator-loop">Standard Operator Loop</a></li>
+        <li><a href="#canonical-workflow-commands">Canonical Workflow Commands</a></li>
+        <li><a href="#shell-mode">Shell Mode</a></li>
+        <li><a href="#what-shell-mode-does">What Shell Mode Does</a></li>
+        <li><a href="#high-value-shell-patterns">High-Value Shell Patterns</a></li>
+        <li><a href="#shell-operating-rules">Shell Operating Rules</a></li>
+        <li><a href="#shell-examples">Shell Examples</a></li>
+        <li><a href="#command-reference">Command Reference</a></li>
+        <li><a href="#setup-and-bootstrap">Setup And Bootstrap</a></li>
+        <li><a href="#core-diagnostics-and-status">Core Diagnostics And Status</a></li>
+        <li><a href="#shell-and-question-surfaces">Shell And Question Surfaces</a></li>
+        <li><a href="#workflow-db-and-projection-surfaces">Workflow DB And Projection Surfaces</a></li>
+        <li><a href="#extraction-and-verification">Extraction And Verification</a></li>
+        <li><a href="#codelets-and-dynamic-behavior">Codelets And Dynamic Behavior</a></li>
+        <li><a href="#provider-and-runtime-configuration">Provider And Runtime Configuration</a></li>
+        <li><a href="#mode-config-and-observation">Mode, Config, And Observation</a></li>
+        <li><a href="#special-surfaces">Special Surfaces</a></li>
+        <li><a href="#configuration-reference">Configuration Reference</a></li>
+        <li><a href="#config-file-model">Config File Model</a></li>
+        <li><a href="#top-level-keys">Top-Level Keys</a></li>
+        <li><a href="#remote-provider-keys">Remote Provider Keys</a></li>
+        <li><a href="#session-provider-keys">Session Provider Keys</a></li>
+        <li><a href="#ollama-keys">Ollama Keys</a></li>
+        <li><a href="#routing-keys">Routing Keys</a></li>
+        <li><a href="#usage-examples-and-patterns">Usage Examples And Patterns</a></li>
+        <li><a href="#read-the-current-state">Read The Current State</a></li>
+        <li><a href="#create-a-ticket">Create A Ticket</a></li>
+        <li><a href="#extract-guidance-for-a-ticket">Extract Guidance For A Ticket</a></li>
+        <li><a href="#route-a-task-before-spending-tokens">Route A Task Before Spending Tokens</a></li>
+        <li><a href="#use-tool-dev-mode">Use Tool-Dev Mode</a></li>
+        <li><a href="#refresh-provider-discovery">Refresh Provider Discovery</a></li>
+        <li><a href="#configure-ollama-hardware">Configure Ollama Hardware</a></li>
+        <li><a href="#run-verification">Run Verification</a></li>
+        <li><a href="#troubleshooting-and-failure-modes">Troubleshooting And Failure Modes</a></li>
+        <li><a href="#ai-workflow-sync-reports-zero-indexed-files">`ai-workflow sync` Reports Zero Indexed Files</a></li>
+        <li><a href="#shell-answers-feel-weak">Shell Answers Feel Weak</a></li>
+        <li><a href="#provider-looks-configured-but-unavailable">Provider Looks Configured But Unavailable</a></li>
+        <li><a href="#dogfood-or-audit-fails">Dogfood Or Audit Fails</a></li>
+        <li><a href="#manual-maintenance">Manual Maintenance</a></li>
+      </ol>
+    </nav>
+    <article>
+      <section aria-labelledby="what-it-is" data-heading-level="2">
+      <h2 id="what-it-is">What It Is</h2>
+      <p><code>ai-workflow</code> is the repo-local operating layer for workflow, tickets, kanban, epics, codelets, provider routing, guarded execution, and shell-based planning.</p>
+      <p>The canonical operational state lives in the workflow DB. Files such as <code>kanban.md</code> and <code>epics.md</code> are controlled projections of that DB, not the source of truth.</p>
+      <p>This Markdown file is the canonical manual. <code>docs/manual.html</code> is generated from this file by code and is committed for human browsing and static consumption.</p>
+      <p>Shell guidance should treat this manual as a first-class operational reference for commands, patterns, and configuration, but it must still prioritize live workflow state, ticket state, <code>AGENTS.md</code>, <code>execution-protocol.md</code>, <code>project-guidelines.md</code>, and <code>knowledge.md</code>.</p>
+      </section>
+      <section aria-labelledby="mental-model" data-heading-level="2">
+      <h2 id="mental-model">Mental Model</h2>
+      <ul data-list-kind="unordered">
+      <li>Use <code>ai-workflow</code> first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer.</li>
+      <li>Use <code>ai-workflow</code> first for project status, ticket lookup, projections, and guideline extraction.</li>
+      <li>Prefer the cheapest capable model route when the tool can use it; if it is unavailable, say so instead of silently widening the fallback.</li>
+      <li>Treat shell mode as a planning and orchestration surface, not as permission to skip workflow discipline.</li>
+      <li>Treat the workflow DB as canonical state, and treat projections as readable outputs that must stay reconciled.</li>
+      <li>Use <code>lean-ctx</code> whenever compact context matters.</li>
+      <li>If <code>ai-workflow</code> fails, stop, identify root cause, and either fix it or report the blocker before continuing.</li>
+      </ul>
+      </section>
+      <section aria-labelledby="installation-and-setup" data-heading-level="2">
+      <h2 id="installation-and-setup">Installation And Setup</h2>
+      <section aria-labelledby="toolkit-install" data-heading-level="3">
+      <h3 id="toolkit-install">Toolkit Install</h3>
+      <ul data-list-kind="unordered">
+      <li>One-off setup into the current project:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">npx @dharmax/ai-workflow setup --project .</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Global install:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">pnpm add -g @dharmax/ai-workflow
+# or
+npm install -g @dharmax/ai-workflow</code></pre>
+      </section>
+      <section aria-labelledby="repo-bootstrap" data-heading-level="3">
+      <h3 id="repo-bootstrap">Repo Bootstrap</h3>
+      <ul data-list-kind="unordered">
+      <li>Install workflow files into the current repo:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow install --project .</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Initialize from a brief:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow init --brief ./project-brief.md</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Refresh the DB and projections:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow sync --write-projections</code></pre>
+      </section>
+      <section aria-labelledby="first-day-checks" data-heading-level="3">
+      <h3 id="first-day-checks">First-Day Checks</h3>
+      <ul data-list-kind="unordered">
+      <li>Check local tooling and providers:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow doctor</code></pre>
+      <ul data-list-kind="unordered">
+      <li>See the current operating mode:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow mode status --json</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Show current project summary:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow project summary --json</code></pre>
+      </section>
+      </section>
+      <section aria-labelledby="core-workflow" data-heading-level="2">
+      <h2 id="core-workflow">Core Workflow</h2>
+      <section aria-labelledby="standard-operator-loop" data-heading-level="3">
+      <h3 id="standard-operator-loop">Standard Operator Loop</h3>
+      <ol data-list-kind="ordered">
+      <li>Sync the project when you need fresh graph state.</li>
+      <li>Read the active ticket or current status through <code>ai-workflow</code>.</li>
+      <li>Use shell mode or direct commands to plan and execute.</li>
+      <li>Verify with targeted tests first, then broader gates when risk is higher.</li>
+      <li>Refresh projections and close the ticket truthfully.</li>
+      </ol>
+      </section>
+      <section aria-labelledby="canonical-workflow-commands" data-heading-level="3">
+      <h3 id="canonical-workflow-commands">Canonical Workflow Commands</h3>
+      <ul data-list-kind="unordered">
+      <li>Sync:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow sync --write-projections</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Read the active state:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow project summary
+ai-workflow project status project
+ai-workflow project search routing</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Extract ticket-specific context:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow extract ticket TKT-001
+ai-workflow extract guidelines --ticket TKT-001</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Run shell mode:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell
+ai-workflow shell &quot;what are we working on right now?&quot;
+ai-workflow shell &quot;extract ticket TKT-001&quot;</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Verify operator surfaces:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow dogfood --profile full --json
+node runtime/scripts/ai-workflow/workflow-audit.mjs</code></pre>
+      </section>
+      </section>
+      <section aria-labelledby="shell-mode" data-heading-level="2">
+      <h2 id="shell-mode">Shell Mode</h2>
+      <section aria-labelledby="what-shell-mode-does" data-heading-level="3">
+      <h3 id="what-shell-mode-does">What Shell Mode Does</h3>
+      <ul data-list-kind="unordered">
+      <li>Reads live workflow state before acting.</li>
+      <li>Chooses between shell-local replies, heuristic planning, and AI planning.</li>
+      <li>Uses the live model-fit matrix and current provider discovery for planner selection.</li>
+      <li>Enforces mutation discipline around ticket state and shell mode.</li>
+      </ul>
+      </section>
+      <section aria-labelledby="high-value-shell-patterns" data-heading-level="3">
+      <h3 id="high-value-shell-patterns">High-Value Shell Patterns</h3>
+      <ul data-list-kind="unordered">
+      <li>Ask for current work:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell &quot;what are we working on right now?&quot;</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Ask for ticket context:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell &quot;explain TKT-DOCS-001 with related files&quot;</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Preview a plan without execution:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell &quot;sweep bugs&quot; --plan-only</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Force heuristic-only planning:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell &quot;doctor&quot; --no-ai</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Allow immediate execution confirmation prompts:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell &quot;execute TKT-001&quot; --yes</code></pre>
+      </section>
+      <section aria-labelledby="shell-operating-rules" data-heading-level="3">
+      <h3 id="shell-operating-rules">Shell Operating Rules</h3>
+      <ul data-list-kind="unordered">
+      <li>If the request is only about shell usage or capabilities, shell may answer directly.</li>
+      <li>If the request depends on project state, shell should discover state before answering.</li>
+      <li>Mutating shell work must be blocked until the board has exactly one ticket in <code>In Progress</code>.</li>
+      <li>State-changing actions that already have a dedicated CLI command should use that command surface instead of improvised shell behavior.</li>
+      <li>Shell guidance should use this manual for commands, patterns, and configuration, but it must not override live DB state.</li>
+      </ul>
+      </section>
+      <section aria-labelledby="shell-examples" data-heading-level="3">
+      <h3 id="shell-examples">Shell Examples</h3>
+      <ul data-list-kind="unordered">
+      <li>Current-work read:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell &quot;tell me what we're working on and which files matter&quot;</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Readiness path:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell &quot;is this ready for beta testing?&quot;
+ai-workflow shell &quot;make it ready&quot;</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Guidance extraction:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell &quot;extract guidelines for TKT-DOCS-001&quot;</code></pre>
+      <ul data-list-kind="unordered">
+      <li>Provider diagnostics:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow shell &quot;doctor&quot;
+ai-workflow shell &quot;show provider status&quot;</code></pre>
+      </section>
+      </section>
+      <section aria-labelledby="command-reference" data-heading-level="2">
+      <h2 id="command-reference">Command Reference</h2>
+      <section aria-labelledby="setup-and-bootstrap" data-heading-level="3">
+      <h3 id="setup-and-bootstrap">Setup And Bootstrap</h3>
+      <ul data-list-kind="unordered">
+      <li><code>ai-workflow setup [--project &lt;path&gt;]</code></li>
+      <li><code>ai-workflow install [--project &lt;path&gt;]</code></li>
+      <li><code>ai-workflow init [options]</code></li>
+      <li><code>ai-workflow onboard &lt;brief-file&gt; [--json]</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="core-diagnostics-and-status" data-heading-level="3">
+      <h3 id="core-diagnostics-and-status">Core Diagnostics And Status</h3>
+      <ul data-list-kind="unordered">
+      <li><code>ai-workflow doctor [--json] [--refresh-models]</code></li>
+      <li><code>ai-workflow version [--json]</code></li>
+      <li><code>ai-workflow --version</code></li>
+      <li><code>ai-workflow metrics [--json]</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="shell-and-question-surfaces" data-heading-level="3">
+      <h3 id="shell-and-question-surfaces">Shell And Question Surfaces</h3>
+      <ul data-list-kind="unordered">
+      <li><code>ai-workflow shell [request...] [--yes] [--plan-only] [--no-ai] [--json]</code></li>
+      <li><code>ai-workflow ask [request...] [--mode &lt;default|tool-dev&gt;] [--root &lt;path&gt;] [--evidence-root &lt;path&gt;] [--json]</code></li>
+      <li><code>ai-workflow consult</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="workflow-db-and-projection-surfaces" data-heading-level="3">
+      <h3 id="workflow-db-and-projection-surfaces">Workflow DB And Projection Surfaces</h3>
+      <ul data-list-kind="unordered">
+      <li><code>ai-workflow sync [--write-projections] [--json]</code></li>
+      <li><code>ai-workflow project summary [--json]</code></li>
+      <li><code>ai-workflow project status &lt;selector&gt; [--type &lt;type&gt;] [--json]</code></li>
+      <li><code>ai-workflow project status related &lt;selector&gt; [--type &lt;type&gt;] [--json]</code></li>
+      <li><code>ai-workflow project status types</code></li>
+      <li><code>ai-workflow project search &lt;text&gt; [--json]</code></li>
+      <li><code>ai-workflow project readiness --goal &lt;goal-type&gt; --question &lt;text&gt; [--mode &lt;default|tool-dev&gt;] [--root &lt;path&gt;] [--evidence-root &lt;path&gt;] [--json]</code></li>
+      <li><code>ai-workflow project epic &lt;list|show|search&gt; [...]</code></li>
+      <li><code>ai-workflow project story &lt;list|search&gt; [...]</code></li>
+      <li><code>ai-workflow project codelet &lt;list|show|search&gt; [...]</code></li>
+      <li><code>ai-workflow project ticket create --id &lt;id&gt; --title &lt;title&gt; [--lane &lt;lane&gt;] [--epic &lt;epic-id&gt;] [--summary &lt;text&gt;] [--json]</code></li>
+      <li><code>ai-workflow project note add --type &lt;NOTE|TODO|FIXME|HACK|BUG|RISK&gt; --body &lt;text&gt; [--file &lt;path&gt;] [--line &lt;n&gt;] [--symbol &lt;name&gt;] [--json]</code></li>
+      <li><code>ai-workflow project review-candidates [--json]</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="extraction-and-verification" data-heading-level="3">
+      <h3 id="extraction-and-verification">Extraction And Verification</h3>
+      <ul data-list-kind="unordered">
+      <li><code>ai-workflow extract ticket &lt;id&gt; [options]</code></li>
+      <li><code>ai-workflow extract guidelines [options]</code></li>
+      <li><code>ai-workflow verify &lt;workflow|guidelines&gt; [options]</code></li>
+      <li><code>ai-workflow audit architecture [--json]</code></li>
+      <li><code>ai-workflow dogfood [--surface &lt;id[,id...]&gt;] [--profile &lt;bootstrap|full&gt;] [--json]</code></li>
+      <li><code>ai-workflow reprofile [--json]</code></li>
+      <li><code>ai-workflow route &lt;task-class&gt; [--json]</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="codelets-and-dynamic-behavior" data-heading-level="3">
+      <h3 id="codelets-and-dynamic-behavior">Codelets And Dynamic Behavior</h3>
+      <ul data-list-kind="unordered">
+      <li><code>ai-workflow list [--json]</code></li>
+      <li><code>ai-workflow info &lt;codelet&gt;</code></li>
+      <li><code>ai-workflow run &lt;codelet&gt; [args]</code></li>
+      <li><code>ai-workflow add &lt;codelet&gt; &lt;file&gt;</code></li>
+      <li><code>ai-workflow update &lt;codelet&gt; &lt;file&gt;</code></li>
+      <li><code>ai-workflow remove &lt;codelet&gt;</code></li>
+      <li><code>ai-workflow forge codelet &lt;name&gt;</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="provider-and-runtime-configuration" data-heading-level="3">
+      <h3 id="provider-and-runtime-configuration">Provider And Runtime Configuration</h3>
+      <ul data-list-kind="unordered">
+      <li><code>ai-workflow provider connect &lt;provider-id&gt;</code></li>
+      <li><code>ai-workflow provider setup [--global]</code></li>
+      <li><code>ai-workflow provider quota refresh [provider-id|all] [--global] [--json]</code></li>
+      <li><code>ai-workflow provider refresh [models|all] [--global] [--json]</code></li>
+      <li><code>ai-workflow set-provider-key &lt;provider-id&gt; [--global]</code></li>
+      <li><code>ai-workflow set-ollama-hw [options]</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="mode-config-and-observation" data-heading-level="3">
+      <h3 id="mode-config-and-observation">Mode, Config, And Observation</h3>
+      <ul data-list-kind="unordered">
+      <li><code>ai-workflow mode set &lt;default|tool-dev&gt; [--global]</code></li>
+      <li><code>ai-workflow mode status [--json]</code></li>
+      <li><code>ai-workflow config get [key]</code></li>
+      <li><code>ai-workflow config set &lt;key&gt; &lt;value&gt;</code></li>
+      <li><code>ai-workflow config unset &lt;key&gt; [--global]</code></li>
+      <li><code>ai-workflow config clear [--global]</code></li>
+      <li><code>ai-workflow knowledge update-remote [--url &lt;remote-url&gt;] [--json]</code></li>
+      <li><code>ai-workflow tool observe [--complaint &lt;text&gt;] [--json]</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="special-surfaces" data-heading-level="3">
+      <h3 id="special-surfaces">Special Surfaces</h3>
+      <ul data-list-kind="unordered">
+      <li><code>ai-workflow ingest &lt;file&gt; [--json]</code></li>
+      <li><code>ai-workflow kanban &lt;new|move|next|archive|migrate&gt; [...]</code></li>
+      <li><code>ai-workflow telegram preview [--json]</code></li>
+      <li><code>ai-workflow web tutorial [--port &lt;n&gt;] [--host &lt;host&gt;] [--json]</code></li>
+      </ul>
+      </section>
+      </section>
+      <section aria-labelledby="configuration-reference" data-heading-level="2">
+      <h2 id="configuration-reference">Configuration Reference</h2>
+      <section aria-labelledby="config-file-model" data-heading-level="3">
+      <h3 id="config-file-model">Config File Model</h3>
+      <ul data-list-kind="unordered">
+      <li>Project config path: <code>.ai-workflow/config.json</code></li>
+      <li>Global config path: <code>~/.ai-workflow/config.json</code></li>
+      <li>Project config overrides global config where both define the same key</li>
+      <li><code>ai-workflow config set</code> accepts dot-path keys and JSON-like values</li>
+      </ul>
+      </section>
+      <section aria-labelledby="top-level-keys" data-heading-level="3">
+      <h3 id="top-level-keys">Top-Level Keys</h3>
+      <section aria-labelledby="mode" data-heading-level="4">
+      <h4 id="mode"><code>mode</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: default operating mode for the current scope</li>
+      <li>Allowed values: <code>default</code>, <code>tool-dev</code></li>
+      <li>Typical command:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow mode set tool-dev</code></pre>
+      </section>
+      <section aria-labelledby="providers" data-heading-level="4">
+      <h4 id="providers"><code>providers</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: provider-specific connection, quota, model, and routing hints</li>
+      <li>Shape: object keyed by provider id</li>
+      </ul>
+      </section>
+      <section aria-labelledby="routing" data-heading-level="4">
+      <h4 id="routing"><code>routing</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: advanced routing-policy overrides merged into discovered routing policy</li>
+      <li>Use only when the default route policy is wrong for your environment</li>
+      </ul>
+      </section>
+      </section>
+      <section aria-labelledby="remote-provider-keys" data-heading-level="3">
+      <h3 id="remote-provider-keys">Remote Provider Keys</h3>
+      <p>These keys apply to configured remote providers such as <code>openai</code>, <code>anthropic</code>, and <code>google</code>.</p>
+      <section aria-labelledby="providers-provider-apikey" data-heading-level="4">
+      <h4 id="providers-provider-apikey"><code>providers.&lt;provider&gt;.apiKey</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: API key used for completions and discovery</li>
+      <li>Typical command:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow config set providers.openai.apiKey sk-...</code></pre>
+      </section>
+      <section aria-labelledby="providers-provider-baseurl" data-heading-level="4">
+      <h4 id="providers-provider-baseurl"><code>providers.&lt;provider&gt;.baseUrl</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: alternate API base URL</li>
+      <li>Use when targeting a compatible gateway or proxy</li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-provider-enabled" data-heading-level="4">
+      <h4 id="providers-provider-enabled"><code>providers.&lt;provider&gt;.enabled</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: explicit provider enable or disable switch</li>
+      <li>Default behavior: enabled unless set to <code>false</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-provider-quota-freeusdremaining" data-heading-level="4">
+      <h4 id="providers-provider-quota-freeusdremaining"><code>providers.&lt;provider&gt;.quota.freeUsdRemaining</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: remaining free quota in USD</li>
+      <li>Used by routing when <code>quotaStrategy</code> prefers free remote usage</li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-provider-quota-monthlyfreeusd" data-heading-level="4">
+      <h4 id="providers-provider-quota-monthlyfreeusd"><code>providers.&lt;provider&gt;.quota.monthlyFreeUsd</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: monthly free quota budget in USD</li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-provider-quota-resetat" data-heading-level="4">
+      <h4 id="providers-provider-quota-resetat"><code>providers.&lt;provider&gt;.quota.resetAt</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: quota reset date in <code>YYYY-MM-DD</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-provider-paidallowed" data-heading-level="4">
+      <h4 id="providers-provider-paidallowed"><code>providers.&lt;provider&gt;.paidAllowed</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: whether routing may continue onto paid usage after free quota is exhausted</li>
+      <li>Default behavior: <code>true</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-provider-models" data-heading-level="4">
+      <h4 id="providers-provider-models"><code>providers.&lt;provider&gt;.models</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: configured model registry overrides or supplements builtin knowledge</li>
+      <li>Use when a provider exposes custom or newly available model ids</li>
+      </ul>
+      </section>
+      </section>
+      <section aria-labelledby="session-provider-keys" data-heading-level="3">
+      <h3 id="session-provider-keys">Session Provider Keys</h3>
+      <section aria-labelledby="providers-session-token" data-heading-level="4">
+      <h4 id="providers-session-token"><code>providers.session.token</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: browser-login session token for the session provider surface</li>
+      </ul>
+      </section>
+      </section>
+      <section aria-labelledby="ollama-keys" data-heading-level="3">
+      <h3 id="ollama-keys">Ollama Keys</h3>
+      <section aria-labelledby="providers-ollama-enabled" data-heading-level="4">
+      <h4 id="providers-ollama-enabled"><code>providers.ollama.enabled</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: explicit Ollama enable or disable switch</li>
+      <li>Default behavior: enabled unless set to <code>false</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-ollama-host" data-heading-level="4">
+      <h4 id="providers-ollama-host"><code>providers.ollama.host</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: primary Ollama host URL</li>
+      <li>Example:</li>
+      </ul>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow config set providers.ollama.host http://127.0.0.1:11434</code></pre>
+      </section>
+      <section aria-labelledby="providers-ollama-endpoints" data-heading-level="4">
+      <h4 id="providers-ollama-endpoints"><code>providers.ollama.endpoints</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: additional Ollama hosts to merge into discovery</li>
+      <li>Shape: JSON array of URLs</li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-ollama-models" data-heading-level="4">
+      <h4 id="providers-ollama-models"><code>providers.ollama.models</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: configured model registry fallback when live probing is unavailable</li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-ollama-hardwareclass" data-heading-level="4">
+      <h4 id="providers-ollama-hardwareclass"><code>providers.ollama.hardwareClass</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: coarse local hardware hint</li>
+      <li>Allowed values: <code>tiny</code>, <code>small</code>, <code>medium</code>, <code>large</code></li>
+      <li>Used by shell planner selection and default local size limits</li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-ollama-maxmodelsizeb" data-heading-level="4">
+      <h4 id="providers-ollama-maxmodelsizeb"><code>providers.ollama.maxModelSizeB</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: maximum local model size in billions of parameters for non-shell-planning routing</li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-ollama-plannermodel" data-heading-level="4">
+      <h4 id="providers-ollama-plannermodel"><code>providers.ollama.plannerModel</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: explicit shell planner override model id</li>
+      <li>Important: manual override only, not the normal default routing path</li>
+      </ul>
+      </section>
+      <section aria-labelledby="providers-ollama-plannermaxquality" data-heading-level="4">
+      <h4 id="providers-ollama-plannermaxquality"><code>providers.ollama.plannerMaxQuality</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: quality cap for shell planner selection</li>
+      <li>Typical values: <code>low</code>, <code>medium</code>, <code>high</code></li>
+      </ul>
+      </section>
+      </section>
+      <section aria-labelledby="routing-keys" data-heading-level="3">
+      <h3 id="routing-keys">Routing Keys</h3>
+      <section aria-labelledby="routing-preferlocalfor" data-heading-level="4">
+      <h4 id="routing-preferlocalfor"><code>routing.preferLocalFor</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: array of task classes or capabilities that should prefer local models</li>
+      <li>Example values: <code>[&quot;shell-planning&quot;, &quot;data&quot;, &quot;summarization&quot;]</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="routing-quotastrategy" data-heading-level="4">
+      <h4 id="routing-quotastrategy"><code>routing.quotaStrategy</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: remote quota policy</li>
+      <li>Current meaningful value: <code>prefer-free-remote</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="routing-contextcompression" data-heading-level="4">
+      <h4 id="routing-contextcompression"><code>routing.contextCompression</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: context compression policy override</li>
+      <li>Normal value: <code>lean-ctx</code></li>
+      </ul>
+      </section>
+      <section aria-labelledby="routing-minimumquality" data-heading-level="4">
+      <h4 id="routing-minimumquality"><code>routing.minimumQuality</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: per-task minimum quality overrides</li>
+      <li>Shape: object keyed by task class</li>
+      </ul>
+      </section>
+      <section aria-labelledby="routing-capabilitymapping" data-heading-level="4">
+      <h4 id="routing-capabilitymapping"><code>routing.capabilityMapping</code></h4>
+      <ul data-list-kind="unordered">
+      <li>Meaning: per-task capability remapping</li>
+      <li>Shape: object keyed by task class</li>
+      <li>Use only for advanced routing correction</li>
+      </ul>
+      </section>
+      </section>
+      </section>
+      <section aria-labelledby="usage-examples-and-patterns" data-heading-level="2">
+      <h2 id="usage-examples-and-patterns">Usage Examples And Patterns</h2>
+      <section aria-labelledby="read-the-current-state" data-heading-level="3">
+      <h3 id="read-the-current-state">Read The Current State</h3>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow project summary
+ai-workflow project status project
+ai-workflow project status related TKT-DOCS-001</code></pre>
+      </section>
+      <section aria-labelledby="create-a-ticket" data-heading-level="3">
+      <h3 id="create-a-ticket">Create A Ticket</h3>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow project ticket create \
+  --id TKT-123 \
+  --title &quot;Document the shell planner&quot; \
+  --lane &quot;Todo&quot; \
+  --epic EPIC-DOCS-001 \
+  --summary &quot;Add a clear operator-facing planner section.&quot;</code></pre>
+      </section>
+      <section aria-labelledby="extract-guidance-for-a-ticket" data-heading-level="3">
+      <h3 id="extract-guidance-for-a-ticket">Extract Guidance For A Ticket</h3>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow extract guidelines --ticket TKT-DOCS-001</code></pre>
+      </section>
+      <section aria-labelledby="route-a-task-before-spending-tokens" data-heading-level="3">
+      <h3 id="route-a-task-before-spending-tokens">Route A Task Before Spending Tokens</h3>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow route shell-planning --json
+ai-workflow route review --json</code></pre>
+      </section>
+      <section aria-labelledby="use-tool-dev-mode" data-heading-level="3">
+      <h3 id="use-tool-dev-mode">Use Tool-Dev Mode</h3>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow mode set tool-dev
+ai-workflow ask &quot;is this project ready?&quot; --mode tool-dev --evidence-root /path/to/project --json</code></pre>
+      </section>
+      <section aria-labelledby="refresh-provider-discovery" data-heading-level="3">
+      <h3 id="refresh-provider-discovery">Refresh Provider Discovery</h3>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow doctor --refresh-models
+ai-workflow provider refresh models --json</code></pre>
+      </section>
+      <section aria-labelledby="configure-ollama-hardware" data-heading-level="3">
+      <h3 id="configure-ollama-hardware">Configure Ollama Hardware</h3>
+      <pre data-block-kind="code"><code class="language-bash">ai-workflow set-ollama-hw --hardware-class medium --max-model-size-b 14</code></pre>
+      </section>
+      <section aria-labelledby="run-verification" data-heading-level="3">
+      <h3 id="run-verification">Run Verification</h3>
+      <pre data-block-kind="code"><code class="language-bash">node --test tests/*.test.mjs
+ai-workflow dogfood --profile full --json
+node runtime/scripts/ai-workflow/workflow-audit.mjs</code></pre>
+      </section>
+      </section>
+      <section aria-labelledby="troubleshooting-and-failure-modes" data-heading-level="2">
+      <h2 id="troubleshooting-and-failure-modes">Troubleshooting And Failure Modes</h2>
+      <section aria-labelledby="ai-workflow-sync-reports-zero-indexed-files" data-heading-level="3">
+      <h3 id="ai-workflow-sync-reports-zero-indexed-files"><code>ai-workflow sync</code> Reports Zero Indexed Files</h3>
+      <ul data-list-kind="unordered">
+      <li>First check whether the project snapshot is unchanged and the DB already has state.</li>
+      <li>Use <code>ai-workflow project summary --json</code> to confirm real DB contents before assuming the graph is empty.</li>
+      <li>If both sync and summary are empty, investigate ignore rules, path resolution, or DB initialization.</li>
+      </ul>
+      </section>
+      <section aria-labelledby="shell-answers-feel-weak" data-heading-level="3">
+      <h3 id="shell-answers-feel-weak">Shell Answers Feel Weak</h3>
+      <ul data-list-kind="unordered">
+      <li>Run <code>ai-workflow doctor --refresh-models</code></li>
+      <li>Check <code>ai-workflow route shell-planning --json</code></li>
+      <li>Check <code>ai-workflow config get providers</code></li>
+      <li>Check whether the active ticket and <code>kanban.md</code> are truthful</li>
+      <li>Re-run sync if the graph is stale</li>
+      </ul>
+      </section>
+      <section aria-labelledby="provider-looks-configured-but-unavailable" data-heading-level="3">
+      <h3 id="provider-looks-configured-but-unavailable">Provider Looks Configured But Unavailable</h3>
+      <ul data-list-kind="unordered">
+      <li>Run <code>ai-workflow doctor</code></li>
+      <li>Check host reachability for Ollama</li>
+      <li>Check <code>apiKey</code>, <code>enabled</code>, quota values, and <code>paidAllowed</code> for remote providers</li>
+      <li>For malformed config files, read the doctor warning and fix the JSON first</li>
+      </ul>
+      </section>
+      <section aria-labelledby="dogfood-or-audit-fails" data-heading-level="3">
+      <h3 id="dogfood-or-audit-fails">Dogfood Or Audit Fails</h3>
+      <ul data-list-kind="unordered">
+      <li>Re-run <code>ai-workflow dogfood --profile full --json</code></li>
+      <li>Re-run <code>node runtime/scripts/ai-workflow/workflow-audit.mjs</code></li>
+      <li>If dogfood is stale, regenerate it instead of editing the report manually</li>
+      <li>If the manual HTML is stale, run the manual generator instead of editing HTML manually</li>
+      </ul>
+      </section>
+      </section>
+      <section aria-labelledby="manual-maintenance" data-heading-level="2">
+      <h2 id="manual-maintenance">Manual Maintenance</h2>
+      <ul data-list-kind="unordered">
+      <li>Canonical source: <code>docs/MANUAL.md</code></li>
+      <li>Generated output: <code>docs/manual.html</code></li>
+      <li>Generator script: <code>pnpm docs:manual</code> or <code>npm run docs:manual</code></li>
+      <li>Do not hand-edit <code>docs/manual.html</code></li>
+      </ul>
+      </section>
+    </article>
+  </main>
+  <footer>
+    <p>Generated by <code>pnpm docs:manual</code>.</p>
+  </footer>
+</body>
+</html>

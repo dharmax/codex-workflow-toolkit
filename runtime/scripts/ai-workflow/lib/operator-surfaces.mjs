@@ -7,7 +7,8 @@ export const OPERATOR_SURFACES = {
   shell: {
     description: "Interactive and non-interactive shell routing, planner selection, and mutation control.",
     exact: [
-      "cli/lib/shell.mjs"
+      "cli/lib/shell.mjs",
+      "docs/MANUAL.md"
     ]
   },
   provider: {
@@ -58,7 +59,9 @@ export const OPERATOR_SURFACES = {
       "runtime/scripts/ai-workflow/lib/dogfood-utils.mjs",
       "runtime/scripts/ai-workflow/lib/operator-surfaces.mjs",
       "runtime/scripts/ai-workflow/workflow-audit.mjs",
+      "scripts/generate-manual-html.mjs",
       "scripts/init-project.mjs",
+      "docs/manual.html",
       "scripts/ai-workflow/dogfood.mjs",
       "scripts/ai-workflow/workflow-audit.mjs"
     ],

@@ -5,6 +5,7 @@ import { parseArgs, printAndExit, splitCsv } from "./lib/cli.mjs";
 import { isWorkflowStatePath, normalizePath, readText } from "./lib/fs-utils.mjs";
 import { compactGuidanceItems, deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
 import { getChanges, isGitRepo } from "./lib/git-utils.mjs";
+import { getToolkitRoot } from "./lib/toolkit-root.mjs";
 import { inferTicketWorkingSet, loadTicketContext } from "./lib/workflow-store-utils.mjs";
 
 const HELP = `Usage:
@@ -27,6 +28,7 @@ if (args.help) {
 }
 
 const root = path.resolve(String(args.root ?? process.cwd()));
+const toolkitRoot = getToolkitRoot();
 const fileInputs = splitCsv(args.files);
 const files = [...fileInputs];
 let ticket = null;
@@ -61,12 +63,13 @@ const inferredWorkingSet = uniqueFiles.length
 const workingSetFiles = [...new Set([...uniqueFiles, ...inferredWorkingSet.files].filter(Boolean).map(normalizePath))];
 const ticketText = ticket ? `${ticket.heading}\n${ticket.body}` : "";
 const keywords = deriveKeywords({ ticketText, files: workingSetFiles });
-const [agents, contributing, executionProtocol, enforcement, guidelines, knowledge] = await Promise.all([
+const [agents, contributing, executionProtocol, enforcement, guidelines, manual, knowledge] = await Promise.all([
   readText(path.resolve(root, "AGENTS.md")),
   readText(path.resolve(root, "CONTRIBUTING.md")),
   readText(path.resolve(root, "execution-protocol.md")),
   readText(path.resolve(root, "enforcement.md")),
   readText(path.resolve(root, "project-guidelines.md")),
+  readText(path.resolve(root, "docs", "MANUAL.md"), await readText(path.resolve(toolkitRoot, "docs", "MANUAL.md"))),
   readText(path.resolve(root, "knowledge.md"))
 ]);
 
@@ -76,6 +79,7 @@ const guidanceSlices = compactGuidanceItems([
   ...summarizeGuidance(executionProtocol, keywords, { limit: 3, fallbackLimit: 2 }),
   ...summarizeGuidance(enforcement, keywords, { limit: 2, fallbackLimit: 1 }),
   ...summarizeGuidance(guidelines, keywords, { limit: 3, fallbackLimit: 2 }),
+  ...summarizeGuidance(manual, keywords, { limit: 4, fallbackLimit: 2 }),
   ...summarizeGuidance(knowledge, keywords, { limit: 2, fallbackLimit: 1 })
 ], { limit: 10 });
 

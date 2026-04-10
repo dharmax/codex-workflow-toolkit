@@ -69,7 +69,8 @@ ai-workflow sync --write-projections
 
 ### Documentation
 
-- [Technical manual](docs/MANUAL.md)
+- [Technical manual, canonical Markdown](docs/MANUAL.md)
+- [Technical manual, generated semantic HTML](docs/manual.html)
 
 ### 🧭 Core Workflow
 

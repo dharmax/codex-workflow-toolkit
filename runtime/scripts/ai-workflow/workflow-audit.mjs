@@ -7,6 +7,7 @@ import { DEFAULT_DOGFOOD_REPORT_PATH, readDogfoodReport } from "./lib/dogfood-ut
 import { readText } from "./lib/fs-utils.mjs";
 import { collectOperatorSurfaceState, compareSurfaceHashes } from "./lib/operator-surfaces.mjs";
 import { parseKanban } from "./lib/kanban-utils.mjs";
+import { renderManualHtml } from "../../../scripts/generate-manual-html.mjs";
 
 const HELP = `Usage:
   node scripts/ai-workflow/workflow-audit.mjs
@@ -26,6 +27,9 @@ const REQUIRED_DOCS = [
   "kanban.md",
   "kanban-archive.md",
   "epics.md"
+];
+const OPTIONAL_DOCS = [
+  "docs/MANUAL.md"
 ];
 
 const DOC_SNIPPETS = {
@@ -51,6 +55,14 @@ const DOC_SNIPPETS = {
     "## Test Strategy"
   ],
   "knowledge.md": ["## Durable Lessons"]
+  ,
+  "docs/MANUAL.md": [
+    "## What It Is",
+    "## Shell Mode",
+    "## Command Reference",
+    "## Configuration Reference",
+    "## Troubleshooting And Failure Modes"
+  ]
 };
 
 const KANBAN_SECTIONS = [
@@ -98,6 +110,12 @@ for (const relativePath of REQUIRED_DOCS) {
   activeDocs.push(relativePath);
 }
 
+for (const relativePath of OPTIONAL_DOCS) {
+  if (await fileExistsRelative(root, relativePath)) {
+    activeDocs.push(relativePath);
+  }
+}
+
 let packageScripts = new Set();
 if (await fileExistsRelative(root, "package.json")) {
   try {
@@ -109,6 +127,29 @@ if (await fileExistsRelative(root, "package.json")) {
       file: "package.json",
       message: `invalid JSON (${error.message})`
     }));
+  }
+}
+
+if (activeDocs.includes("docs/MANUAL.md")) {
+  const manualMarkdown = await readText(path.resolve(root, "docs", "MANUAL.md"));
+  const manualHtmlPath = path.resolve(root, "docs", "manual.html");
+  const expectedHtml = renderManualHtml(manualMarkdown, { sourcePath: "docs/MANUAL.md" });
+
+  if (!(await fileExistsRelative(root, "docs/manual.html"))) {
+    findings.push(createFinding({
+      category: "workflow-docs",
+      file: "docs/manual.html",
+      message: "missing generated semantic HTML manual"
+    }));
+  } else {
+    const actualHtml = await readText(manualHtmlPath);
+    if (actualHtml !== expectedHtml) {
+      findings.push(createFinding({
+        category: "workflow-docs",
+        file: "docs/manual.html",
+        message: "generated semantic HTML manual is stale; run pnpm docs:manual"
+      }));
+    }
   }
 }
 

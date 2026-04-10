@@ -5,6 +5,7 @@ import { parseArgs, printAndExit, splitCsv } from "./lib/cli.mjs";
 import { exists, isWorkflowStatePath, normalizePath, readText } from "./lib/fs-utils.mjs";
 import { compactGuidanceItems, deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
 import { getChanges, isGitRepo } from "./lib/git-utils.mjs";
+import { getToolkitRoot } from "./lib/toolkit-root.mjs";
 import { loadTicketContext } from "./lib/workflow-store-utils.mjs";
 
 const HELP = `Usage:
@@ -28,6 +29,7 @@ if (args.help) {
 }
 
 const root = path.resolve(String(args.root ?? process.cwd()));
+const toolkitRoot = getToolkitRoot();
 const fileInputs = splitCsv(args.files);
 const files = [...fileInputs];
 let ticket = null;
@@ -62,13 +64,16 @@ const contributingPath = path.resolve(root, "CONTRIBUTING.md");
 const executionProtocolPath = path.resolve(root, "execution-protocol.md");
 const enforcementPath = path.resolve(root, "enforcement.md");
 const guidelinesPath = path.resolve(root, "project-guidelines.md");
+const manualPath = path.resolve(root, "docs", "MANUAL.md");
+const toolkitManualPath = path.resolve(toolkitRoot, "docs", "MANUAL.md");
 const knowledgePath = path.resolve(root, "knowledge.md");
-const [agents, contributing, executionProtocol, enforcement, guidelines, knowledge] = await Promise.all([
+const [agents, contributing, executionProtocol, enforcement, guidelines, manual, knowledge] = await Promise.all([
   readText(agentsPath),
   readText(contributingPath),
   readText(executionProtocolPath),
   readText(enforcementPath),
   readText(guidelinesPath),
+  readText(manualPath, await readText(toolkitManualPath)),
   readText(knowledgePath)
 ]);
 
@@ -86,6 +91,7 @@ const summary = {
     executionProtocol: compactGuidanceItems(summarizeGuidance(executionProtocol, keywords, { limit: 4, fallbackLimit: 3 }), { seenNormalized: seenGuidance }),
     enforcement: compactGuidanceItems(summarizeGuidance(enforcement, keywords, { limit: 3, fallbackLimit: 2 }), { seenNormalized: seenGuidance }),
     projectGuidelines: compactGuidanceItems(summarizeGuidance(guidelines, keywords, { limit: 4, fallbackLimit: 3 }), { seenNormalized: seenGuidance }),
+    manual: compactGuidanceItems(summarizeGuidance(manual, keywords, { limit: 4, fallbackLimit: 3 }), { seenNormalized: seenGuidance }),
     knowledge: compactGuidanceItems(summarizeGuidance(knowledge, keywords, { limit: 3, fallbackLimit: 2 }), { seenNormalized: seenGuidance })
   }
 };
@@ -154,6 +160,12 @@ for (const item of summary.sections.enforcement) {
 lines.push("");
 lines.push("Project Guidelines");
 for (const item of summary.sections.projectGuidelines) {
+  lines.push(`- ${item}`);
+}
+
+lines.push("");
+lines.push("Manual");
+for (const item of summary.sections.manual) {
   lines.push(`- ${item}`);
 }
 
