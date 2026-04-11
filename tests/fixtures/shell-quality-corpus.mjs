@@ -173,6 +173,33 @@ export const SHELL_QUALITY_BUG_CORPUS = [
     replyPattern: /Design direction:/i
   },
   {
+    id: "BUG-SHELL-HUMAN-076",
+    batch: 2,
+    title: "Answer shell-quality checks from active shell work instead of stale surface status",
+    prompt: "are you really better now?",
+    expectedKind: "reply",
+    expectedCapability: "project-planning",
+    replyPattern: /Not finished|Active shell work|Next step:/i
+  },
+  {
+    id: "BUG-SHELL-HUMAN-077",
+    batch: 2,
+    title: "Turn Telegram epic kickoff paragraphs into safe discovery plans",
+    prompt: "on a new branch, start working on the Telegram epic and tickets in the right order",
+    expectedKind: "plan",
+    expectedCapability: "project-planning",
+    replyPattern: /telegram|branch in plan-only mode|matching epic or ticket/i
+  },
+  {
+    id: "BUG-SHELL-HUMAN-078",
+    batch: 2,
+    title: "Answer workplan-next prompts directly from current active tickets",
+    prompt: "what's next on the workplan?",
+    expectedKind: "reply",
+    expectedCapability: "project-planning",
+    replyPattern: /Start with TKT-SHELL-NL-001/i
+  },
+  {
     id: "BUG-SHELL-HUMAN-066",
     batch: 3,
     title: "Continue prior coding work from a bare imperative follow-up",

@@ -381,7 +381,7 @@ test("human-like shell corpus avoids the generic planner apology and picks a sen
   }
 });
 
-test("shell ignores a planner reply that regresses to the generic apology and recovers into a real plan", { concurrency: false }, async () => {
+test("shell ignores a planner reply that regresses to the generic apology and recovers into a grounded answer", { concurrency: false }, async () => {
   const root = await createShellHumanFixture();
   const providerId = `mock-shell-generic-fallback-${Date.now()}`;
 
@@ -414,8 +414,9 @@ test("shell ignores a planner reply that regresses to the generic apology and re
       shellMode: "plan"
     });
 
-    assert.equal(plan.kind, "plan");
-    assert.equal(plan.actions[0]?.type, "status_query");
+    assert.equal(plan.kind, "reply");
+    assert.doesNotMatch(String(plan.reply ?? ""), BANNED_FALLBACK_RE);
+    assert.match(String(plan.reply ?? ""), /shell work|Not finished|Next step:/i);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

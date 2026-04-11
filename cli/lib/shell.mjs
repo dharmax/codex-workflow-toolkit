@@ -858,14 +858,6 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     };
   }
 
-  if (looksLikeGenericStatusQuery(text, plannerContext)) {
-    return actionPlan([{
-      type: "status_query",
-      query: text,
-      entityType: inferStatusEntityType(text)
-    }], 0.95, "Generic status-style request routed to the deterministic status resolver.");
-  }
-
   if (routing.mode === "staged-core") {
     const stagedPlan = buildGoalDirectedShellPlan(intent, plannerContext);
     if (stagedPlan) {
@@ -876,6 +868,19 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
   const contextualReply = buildContextualShellReply(text, plannerContext);
   if (contextualReply) {
     return contextualReply;
+  }
+
+  const kickoffPlan = buildWorkflowKickoffShellPlan(text, plannerContext);
+  if (kickoffPlan) {
+    return kickoffPlan;
+  }
+
+  if (looksLikeGenericStatusQuery(text, plannerContext)) {
+    return actionPlan([{
+      type: "status_query",
+      query: text,
+      entityType: inferStatusEntityType(text)
+    }], 0.95, "Generic status-style request routed to the deterministic status resolver.");
   }
 
   if (["exit", "quit", "/exit", "/quit"].includes(lower)) {
@@ -1090,6 +1095,16 @@ function inferShellFollowUpMode({ inputText = "", activeGraphState = null, plann
   const asksRevision = /\b(shorter|longer|brief|briefly|one sentence|single sentence|bullets|bullet points|rephrase|rewrite|reformat|format|more detail|detailed|absolute paths)\b/.test(normalized);
   const asksContinuationWork = /\b(do|fix|implement|apply|patch|change|continue|keep|make|take|branch|focus|inspect|review|debug|use)\b/.test(normalized);
   const shortElliptical = words.length <= 8;
+  const strongStandaloneIntent = standaloneTarget && (
+    looksLikeStrategicProductQuestion(text)
+    || looksLikeShellAssessmentQuestion(text)
+    || looksLikeWorkplanQuestion(text)
+    || looksLikeEpicKickoffRequest(text)
+  );
+
+  if (strongStandaloneIntent && !shortElliptical) {
+    return "new-request";
+  }
 
   if (asksRevision) {
     return "revise-prior-answer";
@@ -1115,6 +1130,9 @@ function hasStandaloneShellTarget(inputText, plannerContext = {}) {
     return true;
   }
   if (looksLikeShellUsageQuestion(trimmed) || looksLikeRepoExplainerQuestion(trimmed) || extractReadinessGoal(trimmed)) {
+    return true;
+  }
+  if (looksLikeShellAssessmentQuestion(trimmed) || looksLikeWorkplanQuestion(trimmed) || looksLikeStrategicProductQuestion(trimmed) || looksLikeEpicKickoffRequest(trimmed)) {
     return true;
   }
   return Boolean(
@@ -1195,6 +1213,8 @@ function buildHeuristicSemanticFallbackPlan(inputText, plannerContext = {}) {
     && /\b(project|repo|workflow|current)\b/.test(normalized);
   const asksStatusLikeQuestion = /\b(status|state|shape|health|healthy|good|bad|doing|what is up with|whats up with|tell me about|what do you think about|explain|describe|what is|whats|what are|do we have|is there|anything called|named|called)\b/.test(normalized);
   const asksSearchLikeQuestion = /\b(search|find|look for|grep|scan for)\b/.test(normalized);
+  const imperativeWorkflowRequest = looksLikeEpicKickoffRequest(text) || looksLikeImperativeWorkflowRequest(text);
+  const safeStatusTarget = isSafeShellStatusTarget(subject, { inputText, entityType });
 
   if (asksProjectHealth || asksWorkflowBrief) {
     return {
@@ -1203,7 +1223,7 @@ function buildHeuristicSemanticFallbackPlan(inputText, plannerContext = {}) {
     };
   }
 
-  if (subject && asksStatusLikeQuestion) {
+  if (subject && asksStatusLikeQuestion && safeStatusTarget && !imperativeWorkflowRequest) {
     return {
       ...actionPlan([{
         type: "status_query",
@@ -1221,7 +1241,7 @@ function buildHeuristicSemanticFallbackPlan(inputText, plannerContext = {}) {
     };
   }
 
-  if (subject) {
+  if (subject && safeStatusTarget && !imperativeWorkflowRequest) {
     return {
       ...actionPlan([
         {
@@ -1235,6 +1255,14 @@ function buildHeuristicSemanticFallbackPlan(inputText, plannerContext = {}) {
         }
       ], 0.64, "Semantic fallback is probing the most likely project target."),
       presentation: "assistant-first"
+    };
+  }
+
+  if (imperativeWorkflowRequest) {
+    return {
+      ...actionPlan(buildEpicKickoffActions(text), 0.68, "Semantic fallback chose a safer discovery plan for an imperative workflow request."),
+      presentation: "assistant-first",
+      strategy: "Inspect the requested product area first, then rank matching tickets before mutating anything."
     };
   }
 
@@ -1492,7 +1520,103 @@ function extractShellFallbackSubject(inputText, plannerContext = {}) {
     return "";
   }
   const subject = tokens.slice(0, 6).join(" ");
+  if (!isSafeShellStatusTarget(subject, { inputText })) {
+    return "";
+  }
   return genericPronouns.has(subject) ? "" : subject;
+}
+
+function looksLikeWorkplanQuestion(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  return /\b(next on (?:the )?workplan|next on (?:the )?work plan|workplan|work plan|roadmap|todo lane)\b/.test(normalized);
+}
+
+function looksLikeShellAssessmentQuestion(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  return /\b(are you really better now|are you better now|is the shell better now|would i be happy with the shell now|how good is the shell|how good is shell|is the shell good now)\b/.test(normalized);
+}
+
+function looksLikeStrategicProductQuestion(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  return /\b(fork|spawn a fork|free[- ]open[- ]source|open[- ]source|paid solution|paid product|commercial|separate product|separate repo)\b/.test(normalized)
+    && /\b(telegram|tickets|workflow|shell|application|app)\b/.test(normalized);
+}
+
+function looksLikeEpicKickoffRequest(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  return /\b(start|begin|kick off|work on|start working|start work)\b/.test(normalized)
+    && /\b(epic|tickets?|in the right order|right order)\b/.test(normalized)
+    && /\b(telegram|shell|workflow|feature)\b/.test(normalized);
+}
+
+function looksLikeImperativeWorkflowRequest(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  return /\b(start|begin|work on|handle|execute|fix|resolve|finish|implement)\b/.test(normalized)
+    && /\b(ticket|tickets|epic|branch|order|priority|prioritize)\b/.test(normalized);
+}
+
+function isSafeShellStatusTarget(subject, { inputText = "", entityType = null } = {}) {
+  const normalizedSubject = normalizeConversationText(subject);
+  if (!normalizedSubject) {
+    return false;
+  }
+  if (normalizedSubject.split(/\s+/).length > 6) {
+    return false;
+  }
+  if (/\b(on a new branch|new branch|start working|start work|work on|in the right order|right order|keep going|continue)\b/.test(normalizedSubject)) {
+    return false;
+  }
+  if (/(?:^|\s)(start|begin|work|working|create|branch|order|prioritize|reprioritize|execute|handle|fix|resolve|finish)(?:\s|$)/.test(normalizedSubject)
+    && !(new RegExp(`\\b${TICKET_ID_PATTERN}\\b`, "i")).test(normalizedSubject)) {
+    return false;
+  }
+  if ((entityType === "epic" || entityType === "ticket") && /\b(project|workflow|workplan)\b/.test(normalizedSubject)) {
+    return false;
+  }
+  const normalizedInput = normalizeConversationText(inputText);
+  if (!normalizedSubject.includes("telegram") && /\btelegram\b/.test(normalizedInput) && /\b(fork|branch|start work|right order)\b/.test(normalizedInput)) {
+    return false;
+  }
+  return true;
+}
+
+function buildEpicKickoffActions(inputText) {
+  const topic = extractEpicKickoffTopic(inputText);
+  return [
+    { type: "search", query: topic },
+    { type: "list_tickets" }
+  ];
+}
+
+function extractEpicKickoffTopic(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  if (/\btelegram\b/.test(normalized)) {
+    return "telegram";
+  }
+  if (/\bshell\b/.test(normalized)) {
+    return "shell";
+  }
+  if (/\bworkflow\b/.test(normalized)) {
+    return "workflow";
+  }
+  return extractOperationalSearchQuery(inputText) || "workflow";
+}
+
+function buildWorkflowKickoffShellPlan(inputText, plannerContext = {}) {
+  const text = String(inputText ?? "").trim();
+  if (!looksLikeEpicKickoffRequest(text)) {
+    return null;
+  }
+  const topic = extractEpicKickoffTopic(text);
+  return {
+    ...actionPlan(buildEpicKickoffActions(text), 0.9, "Imperative workflow request routed to targeted discovery before any mutation."),
+    presentation: "assistant-first",
+    strategy: [
+      `First inspect the ${topic} surface and matching workflow items.`,
+      /new branch/i.test(text) ? "Do not create a branch in plan-only mode; confirm the implementation slice after discovery." : null,
+      "Then rank the matching tickets in execution order before starting code changes."
+    ].filter(Boolean).join(" ")
+  };
 }
 
 function extractShellGoal(text) {
@@ -3229,6 +3353,10 @@ function renderCapabilityNextStep(intent = {}, hasTargets = false) {
 
 function renderGoalDirectedFallbackReply({ inputText, plan, graphExecutions, plannerContext }) {
   const actions = Array.isArray(plan?.actions) ? plan.actions : [];
+  const kickoffReply = renderEpicKickoffFallbackReply({ inputText, actions, graphExecutions, plannerContext });
+  if (kickoffReply) {
+    return kickoffReply;
+  }
   if (!actions.some((action) => action.type === "list_tickets")) {
     return null;
   }
@@ -3265,6 +3393,34 @@ function renderGoalDirectedFallbackReply({ inputText, plan, graphExecutions, pla
     lines.push(renderedExecutions.join("\n\n"));
   }
   return lines.join("\n");
+}
+
+function renderEpicKickoffFallbackReply({ inputText, actions, graphExecutions, plannerContext }) {
+  if (!looksLikeEpicKickoffRequest(inputText)) {
+    return null;
+  }
+  const hasSearch = actions.some((action) => action.type === "search");
+  const hasListTickets = actions.some((action) => action.type === "list_tickets");
+  if (!hasSearch || !hasListTickets) {
+    return null;
+  }
+  const topic = extractEpicKickoffTopic(inputText);
+  const searchExecution = graphExecutions.find((item) => item.action.type === "search");
+  const topMatches = String(searchExecution?.stdout ?? "")
+    .split(/\r?\n/)
+    .filter((line) => /^- /.test(line))
+    .slice(0, 3);
+  const matchingTickets = rankTicketsAgainstGoal(plannerContext?.summary?.activeTickets, {
+    goal: { keywords: [topic], type: null, text: topic }
+  }).filter((ticket) => ticket.score > 0).slice(0, 3);
+  return [
+    `First inspect the ${topic} surface and the matching workflow items.`,
+    /new branch/i.test(inputText) ? "I did not create a branch in plan-only mode." : null,
+    topMatches.length ? `Relevant repo targets: ${topMatches.map((line) => line.replace(/^- /, "")).join("; ")}.` : null,
+    matchingTickets.length
+      ? `Suggested ticket order: ${matchingTickets.map((ticket) => `${ticket.id} (${ticket.lane})`).join(", ")}.`
+      : `I did not find an obvious ${topic}-specific ticket in the current summary, so the next step is to confirm or create the matching epic or ticket before coding.`
+  ].filter(Boolean).join("\n");
 }
 
 function validateShellAction(action, plannerContext) {
@@ -5535,7 +5691,7 @@ function buildContextualShellReply(inputText, plannerContext) {
   const asksWhere = /\b(where)\b/.test(normalized)
     || /\bwhich project\b/.test(normalized)
     || /\bwhat (?:project|repo|repository)\b/.test(normalized);
-  const asksNext = /\b(work on|do next|focus on|start with|next task|next thing)\b/.test(normalized)
+  const asksNext = /\b(work on|do next|focus on|start with|next task|next thing|next on the workplan|next on workplan|work plan|workplan|roadmap)\b/.test(normalized)
     || /what should i (work on|do) next/.test(normalized)
     || /what do you think we should do next/.test(normalized)
     || /what should we do next/.test(normalized)
@@ -5560,6 +5716,9 @@ function buildContextualShellReply(inputText, plannerContext) {
     /\b(shell work|shell changes|shell update|last shell work|recent shell work|shell effort)\b/.test(normalized)
       || (((/\b(summary|summarize|operator update|operator brief|what changed)\b/.test(normalized) || responseStyle.detail !== "normal") && /\bshell\b/.test(normalized))
   ));
+  const asksShellAssessment = looksLikeShellAssessmentQuestion(text);
+  const asksWorkplan = looksLikeWorkplanQuestion(text);
+  const asksStrategicProductQuestion = looksLikeStrategicProductQuestion(text);
 
   if (asksCapabilities || ["what can you do here", "what can you do"].includes(normalized)) {
     return replyPlan([
@@ -5628,6 +5787,24 @@ function buildContextualShellReply(inputText, plannerContext) {
     }), 0.92, "Shell work summary reply.");
   }
 
+  if (asksShellAssessment) {
+    const topShell = shellTickets[0] ?? activeTickets[0] ?? null;
+    const statusLine = shellTickets.length
+      ? `Not finished. Active shell work is still centered on ${shellTickets.slice(0, 3).map((ticket) => `${ticket.id}: ${ticket.title}`).join("; ")}.`
+      : "Not finished. I still need current shell tickets or a fresh sync to prove parity.";
+    const nextLine = topShell ? `Next step: ${topShell.id}: ${topShell.title}.` : null;
+    return replyPlan([statusLine, nextLine].filter(Boolean).join("\n"), 0.91, "Shell-quality assessment grounded in active shell work.");
+  }
+
+  if (asksStrategicProductQuestion) {
+    const shellPressure = shellTickets[0] ? `${shellTickets[0].id}: ${shellTickets[0].title}` : "the current shell hardening work";
+    return replyPlan([
+      "Split it only if the paid Telegram product needs different trust boundaries, release controls, or licensing than the open-source workflow shell.",
+      "If it mostly reuses the same shell/runtime/operator surfaces, keep it here and isolate the paid layer behind clear modules or deployment boundaries instead of forking early.",
+      `Ground the decision against ${shellPressure} and the Telegram-related surfaces before you commit to a repo split.`
+    ].join("\n"), 0.84, "Strategic product-split reply grounded in current shell/workflow context.");
+  }
+
   if (asksModules || ["what are my modules", "what modules do i have"].includes(normalized)) {
     if (!modules.length) {
       return replyPlan("I do not have module data yet. Run `sync` first if the index is stale.", 0.82, "Module summary unavailable.");
@@ -5656,11 +5833,11 @@ function buildContextualShellReply(inputText, plannerContext) {
     ].join("\n"), 0.9, "Compound project grounding reply.");
   }
 
-  if (asksNext || ["what should i work on next", "what should i do next", "what is next"].includes(normalized)) {
+  if (asksWorkplan || asksNext || ["what should i work on next", "what should i do next", "what is next"].includes(normalized)) {
     if (!activeTickets.length) {
       return replyPlan("I do not see an obvious active ticket yet. Run `sync` if the board may be stale, or ask me to inspect the project state.", 0.82, "No active tickets in summary.");
     }
-    const top = activeTickets[0];
+    const top = asksWorkplan ? selectNextWorkplanTicket(activeTickets) : activeTickets[0];
     return replyPlan(`Start with ${top.id}: ${top.title}. It is currently in ${top.lane}.`, 0.88, "Suggested next work from active tickets.");
   }
 
@@ -5714,6 +5891,7 @@ function buildContextualShellReply(inputText, plannerContext) {
     if (Number.isFinite(summary.noteCount)) counts.push(`${summary.noteCount} notes`);
     const countHint = counts.length ? `Indexed state: ${counts.join(", ")}.` : null;
     return replyPlan([
+      "Project status:",
       `You are in \`${projectName}\`.`,
       ...(countHint ? [countHint] : []),
       ticketHint,
@@ -5728,6 +5906,25 @@ function extractShellFocusedTickets(activeTickets) {
   return (Array.isArray(activeTickets) ? activeTickets : [])
     .filter((ticket) => /\bshell\b/i.test(`${ticket.id ?? ""} ${ticket.title ?? ""}`))
     .slice(0, 8);
+}
+
+function selectNextWorkplanTicket(activeTickets) {
+  const tickets = Array.isArray(activeTickets) ? activeTickets : [];
+  const scored = tickets
+    .map((ticket, index) => {
+      const lane = String(ticket.lane ?? "").toLowerCase();
+      const id = String(ticket.id ?? "");
+      const ticketNumber = Number(id.match(/(\d+)(?!.*\d)/)?.[1] ?? Number.NaN);
+      let score = 0;
+      if (/todo/.test(lane)) score += 30;
+      else if (/in progress/.test(lane)) score += 20;
+      else if (/backlog|candidate|suggestion/.test(lane)) score += 10;
+      if (/bugs p1|bugs p2|bugs/.test(lane)) score -= 20;
+      if (/^TKT-/i.test(id)) score += 5;
+      return { ticket, score, index, ticketNumber };
+    })
+    .sort((a, b) => b.score - a.score || (Number.isFinite(a.ticketNumber) && Number.isFinite(b.ticketNumber) ? a.ticketNumber - b.ticketNumber : 0) || a.index - b.index);
+  return scored[0]?.ticket ?? tickets[0];
 }
 
 function renderShellWorkSummaryReply({ plannerContext, responseStyle, shellTickets, inputText }) {
@@ -6028,7 +6225,7 @@ async function attemptShellRecovery({ inputText, plan, failed, options, planner 
     history: options.history
   });
 
-  if (correctedAction) {
+  if (correctedAction && isSafeShellRecoveryAction(correctedAction, failed.action, inputText, options.plannerContext)) {
     if (!options.json) {
       const compiled = compileShellAction(correctedAction);
       output.write(`Corrected to: ${compiled.display}. Running...\n`);
@@ -6042,6 +6239,30 @@ async function attemptShellRecovery({ inputText, plan, failed, options, planner 
   }
 
   return { kind: "reply", reply: "Automatic correction could not find a safe alternative." };
+}
+
+function isSafeShellRecoveryAction(candidate, failedAction, inputText, plannerContext = {}) {
+  if (!candidate || typeof candidate !== "object") {
+    return false;
+  }
+  try {
+    validateShellAction(candidate, plannerContext);
+  } catch {
+    return false;
+  }
+  const failedType = String(failedAction?.type ?? "");
+  const candidateType = String(candidate.type ?? "");
+  if (candidateType === failedType) {
+    const failedQuery = normalizeConversationText(failedAction?.query ?? "");
+    const candidateQuery = normalizeConversationText(candidate.query ?? "");
+    if (candidateQuery && (candidateQuery === failedQuery || failedQuery.includes(candidateQuery) || candidateQuery.includes(failedQuery))) {
+      return false;
+    }
+  }
+  if (candidateType === "status_query" && !isSafeShellStatusTarget(candidate.query, { inputText, entityType: candidate.entityType })) {
+    return false;
+  }
+  return true;
 }
 
 function renderRecovery(recovery) {

@@ -40,7 +40,13 @@ export async function attemptActionCorrection({ failedAction, error, options, hi
       elapsedMs: Date.now() - start
     });
     const parsed = JSON.parse(completion.response);
-    return parsed.action || null;
+    if (parsed?.action && typeof parsed.action === "object") {
+      return parsed.action;
+    }
+    if (parsed?.type && typeof parsed === "object") {
+      return parsed;
+    }
+    return null;
   } catch (error) {
     if (typeof options?.traceAi === "function") {
       options.traceAi({

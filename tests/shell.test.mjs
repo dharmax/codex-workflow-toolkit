@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { chooseShellPlannerModel, compileShellAction, handleShellCommand, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, buildShellPlannerPrompt, planShellRequestWithAgent, resolveShellPlanners, runShellTurn } from "../cli/lib/shell.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
+import { attemptActionCorrection } from "../core/lib/self-correction.mjs";
 import { syncProject } from "../core/services/sync.mjs";
 
 const defaultShellTestFetch = async (url) => {
@@ -1286,6 +1287,88 @@ test("heuristic shell planner routes generic surface status questions to the sta
     query: "what's the status of shell and what did the tests cover?",
     entityType: "surface"
   }]);
+});
+
+test("heuristic shell planner answers shell-quality checks from active shell work instead of stale surface status", () => {
+  const plan = planShellRequestHeuristically("are you really better now?", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [
+        { id: "BUG-SHELL-HUMAN-076", title: "Fix shell evaluative and workplan routing", lane: "Bugs P1" },
+        { id: "BUG-SHELL-HUMAN-077", title: "Fix shell Telegram kickoff planning", lane: "Bugs P1" }
+      ]
+    }
+  });
+  assert.equal(plan.kind, "reply");
+  assert.match(plan.reply, /Not finished/i);
+  assert.match(plan.reply, /BUG-SHELL-HUMAN-076/);
+});
+
+test("heuristic shell planner answers workplan-next prompts directly from active tickets", () => {
+  const plan = planShellRequestHeuristically("what's next on the workplan?", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [
+        { id: "TKT-SHELL-NL-001", title: "Enforce a mandatory structured intent envelope", lane: "Todo" },
+        { id: "TKT-SHELL-NL-002", title: "Add multi-step execution graphs", lane: "Todo" }
+      ]
+    }
+  });
+  assert.equal(plan.kind, "reply");
+  assert.match(plan.reply, /Start with TKT-SHELL-NL-001/i);
+});
+
+test("heuristic shell planner turns Telegram epic kickoff paragraphs into safe discovery steps", () => {
+  const plan = planShellRequestHeuristically("on a new branch, start working on the Telegram epic and tickets in the right order", plannerContext);
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [
+    { type: "search", query: "telegram" },
+    { type: "list_tickets" }
+  ]);
+  assert.match(plan.strategy, /Do not create a branch in plan-only mode/i);
+});
+
+test("heuristic shell planner treats strategic split questions as new grounded requests instead of stale graph continuation", () => {
+  const plan = planShellRequestHeuristically("can you estimate: would it be better to add the Telegram tickets to this application or spawn a fork, so I could make this ai-workflow free open-source and the other a paid solution?", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [
+        { id: "BUG-SHELL-HUMAN-076", title: "Fix shell evaluative and workplan routing", lane: "Bugs P1" }
+      ]
+    }
+  }, {
+    activeGraphState: {
+      graph: {
+        nodes: [{ id: "n1", kind: "action", type: "status_query", status: "ok" }]
+      }
+    }
+  });
+  assert.equal(plan.kind, "reply");
+  assert.doesNotMatch(plan.reply, /last graph has already been executed/i);
+  assert.match(plan.reply, /Split it only if|forking early/i);
+});
+
+test("attemptActionCorrection accepts top-level action payloads from the correction model", async () => {
+  const providerId = `mock-correction-top-level-${Date.now()}`;
+  registerProvider(providerId, {
+    generate: async () => ({
+      response: JSON.stringify({ type: "status_query", query: "telegram", entityType: "surface" })
+    })
+  });
+
+  const corrected = await attemptActionCorrection({
+    failedAction: { type: "status_query", query: "start working on new branch", entityType: "epic" },
+    error: { message: "No status target matched." },
+    options: {
+      planner: { providerId, modelId: "brain-v1" }
+    },
+    history: []
+  });
+
+  assert.deepEqual(corrected, { type: "status_query", query: "telegram", entityType: "surface" });
 });
 
 test("heuristic shell planner turns 'make it ready' into execution against the latest readiness blockers", () => {
