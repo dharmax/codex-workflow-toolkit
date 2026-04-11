@@ -1414,6 +1414,42 @@ test("one-shot shell request still works when boolean flags come before natural 
   assert.match(result.stdout, /inspect project state/i);
 });
 
+test("one-shot shell in no-ai mode reports heuristic planning for workplan prompts", async () => {
+  const targetRoot = await createShellFixtureProject();
+
+  try {
+    const result = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "shell",
+      "what's next on the workplan?",
+      "--no-ai"
+    ], { cwd: targetRoot });
+
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Start with REF-APP-SHELL-01/i);
+    assert.match(result.stderr, /\[progress\] planning and running -> heuristic-forced/i);
+    assert.doesNotMatch(result.stderr, /\[progress\] planning and running -> (google|openai|ollama):/i);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("one-shot shell in no-ai mode keeps Telegram kickoff prompts on safe discovery", async () => {
+  const result = await runNode([
+    path.join(repoRoot, "cli", "ai-workflow.mjs"),
+    "shell",
+    "on a new branch, start working on the Telegram epic and tickets in the right order",
+    "--no-ai"
+  ], { cwd: repoRoot });
+
+  assert.equal(result.code, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /First inspect the telegram surface/i);
+  assert.match(result.stdout, /Suggested ticket order:/i);
+  assert.doesNotMatch(result.stdout, /No status target matched/i);
+  assert.match(result.stderr, /\[progress\] planning and running -> heuristic-forced/i);
+  assert.doesNotMatch(result.stderr, /\[progress\] planning and running -> (google|openai|ollama):/i);
+});
+
 test("one-shot shell can answer current-work questions with related artifacts", async () => {
   const targetRoot = await createShellFixtureProject();
 

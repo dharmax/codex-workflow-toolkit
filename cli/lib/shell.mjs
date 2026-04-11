@@ -209,7 +209,7 @@ export async function handleShell(rest, { cliPath } = {}) {
       processingIndicator.update("refreshing context");
       options.plannerContext = await buildShellContext(root);
       options.planners = await resolveShellPlanners(root, { providerState: options.plannerContext.providerState });
-      processingIndicator.update("planning and running", { planner: options.planners.planners[0] ?? options.planners.heuristic });
+      processingIndicator.update("planning and running", { planner: getShellProgressPlanner(prompt, options) });
       const result = await runShellTurn(prompt, options);
       processingIndicator.clear();
       return emitShellResult(result, options);
@@ -321,6 +321,31 @@ function parseShellArgs(argv) {
     args._.push(value);
   }
   return args;
+}
+
+function getActiveShellPlanner(options) {
+  if (options?.noAi) {
+    return {
+      ...(options.planners?.heuristic ?? { mode: "heuristic" }),
+      mode: "heuristic-forced",
+      reason: "AI planning disabled for this shell session."
+    };
+  }
+  return options?.planners?.planners?.[0] ?? options?.planners?.heuristic ?? null;
+}
+
+function getShellProgressPlanner(inputText, options) {
+  if (options?.noAi) {
+    return getActiveShellPlanner(options);
+  }
+  if (shouldForceHeuristicShellTurn(inputText)) {
+    return {
+      ...(options?.planners?.heuristic ?? { mode: "heuristic" }),
+      mode: "heuristic",
+      reason: "Deterministic shell routing handled locally."
+    };
+  }
+  return getActiveShellPlanner(options);
 }
 
 export async function buildShellContext(root = process.cwd()) {
@@ -567,10 +592,11 @@ async function planSingleRequest(inputText, options) {
   const heuristic = planShellRequestHeuristically(inputText, options.plannerContext, {
     activeGraphState: options.activeGraphState ?? null
   });
+  const forceHeuristic = shouldForceHeuristicShellTurn(inputText);
   const useHeuristicOnly = options.noAi || !options.planners.planners.length;
   const preferAiPlanner = !useHeuristicOnly && shouldPreferAiPlannerForTurn(inputText, options, heuristic, routing);
 
-  if (!preferAiPlanner && (useHeuristicOnly || heuristic.confidence >= 0.92)) {
+  if (!preferAiPlanner && (useHeuristicOnly || heuristic.confidence >= 0.92 || forceHeuristic)) {
     return normalizeShellPlanEnvelope({
       ...heuristic,
       planner: {
@@ -642,6 +668,10 @@ function shouldPreferAiPlannerForTurn(inputText, options, heuristic, routing) {
     return false;
   }
 
+  if (shouldForceHeuristicShellTurn(inputText)) {
+    return false;
+  }
+
   if (routing.mode === "staged-core") {
     return true;
   }
@@ -678,6 +708,13 @@ function shouldPreferAiPlannerForTurn(inputText, options, heuristic, routing) {
   }
 
   return heuristic.confidence < 0.92;
+}
+
+function shouldForceHeuristicShellTurn(inputText) {
+  return looksLikeShellAssessmentQuestion(inputText)
+    || looksLikeWorkplanQuestion(inputText)
+    || looksLikeStrategicProductQuestion(inputText)
+    || looksLikeEpicKickoffRequest(inputText);
 }
 
 function isDeterministicShellSurfaceRequest(inputText) {
@@ -3601,7 +3638,9 @@ export async function runShellTurn(inputText, options) {
   }
 
   const executed = [];
-  const executedGraph = plan.graph ? await executeActionGraph(plan.graph, options) : { nodes: [], executions: [], branchPath: [] };
+  const executedGraph = plan.graph
+    ? await executeActionGraph(plan.graph, { ...options, currentInputText: inputText })
+    : { nodes: [], executions: [], branchPath: [] };
   for (const node of executedGraph.nodes) {
     if (node.execution) {
       executed.push(node.execution);
@@ -3918,7 +3957,7 @@ export async function runInteractiveShell(options) {
     }
 
     const primary = options.noAi
-      ? { ...options.planners.heuristic, mode: "heuristic-forced", reason: "AI planning disabled for this shell session." }
+      ? getActiveShellPlanner(options)
       : options.planners.planners[0] ?? options.planners.heuristic;
     output.write(`ai-workflow shell\n${renderPlannerLine(primary)}\n${renderShellModeLine(options)}\nType 'help' for examples. Type 'plan', 'mutate', 'trace on', 'trace off', or 'exit' to quit.\n\n`);
 
@@ -4003,7 +4042,7 @@ export async function runInteractiveShell(options) {
         options.plannerContext = await buildShellContext(options.root);
         options.planners = await resolveShellPlanners(options.root, { providerState: options.plannerContext.providerState });
 
-        processingIndicator.update("planning and running", { planner: options.planners.planners[0] ?? options.planners.heuristic });
+        processingIndicator.update("planning and running", { planner: getShellProgressPlanner(line, options) });
         const result = await runShellTurn(line, options);
         processingIndicator.clear();
         options.activeGraphState = result.continuationState ?? null;
@@ -4744,7 +4783,7 @@ async function recoverGraphNode({ node, execution }, options) {
     options: { ...options, planner },
     history: options.history
   }).catch(() => null);
-  if (!correctedAction) {
+  if (!correctedAction || !isSafeShellRecoveryAction(correctedAction, node.action, options.currentInputText ?? "", options.plannerContext)) {
     return execution;
   }
   const correctedExecution = await executeShellAction(correctedAction, options);

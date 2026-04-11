@@ -1320,6 +1320,49 @@ test("heuristic shell planner answers workplan-next prompts directly from active
   assert.match(plan.reply, /Start with TKT-SHELL-NL-001/i);
 });
 
+test("planShellRequest bypasses AI planners for deterministic shell assessment prompts", async () => {
+  const plan = await planShellRequest("are you really better now?", {
+    root: plannerContext.root,
+    plannerContext: {
+      ...plannerContext,
+      summary: {
+        ...plannerContext.summary,
+        activeTickets: [
+          { id: "BUG-SHELL-HUMAN-076", title: "Fix shell evaluative and workplan routing", lane: "Bugs P1" }
+        ]
+      }
+    },
+    planners: {
+      planners: [{ providerId: "fake", modelId: "broken", reason: "should not be called" }],
+      heuristic: { mode: "heuristic", reason: "unit test heuristic" }
+    },
+    noAi: false
+  });
+
+  assert.equal(plan.kind, "reply");
+  assert.equal(plan.planner.mode, "heuristic");
+  assert.match(plan.reply, /BUG-SHELL-HUMAN-076/);
+});
+
+test("planShellRequest bypasses AI planners for deterministic Telegram kickoff prompts", async () => {
+  const plan = await planShellRequest("on a new branch, start working on the Telegram epic and tickets in the right order", {
+    root: plannerContext.root,
+    plannerContext,
+    planners: {
+      planners: [{ providerId: "fake", modelId: "broken", reason: "should not be called" }],
+      heuristic: { mode: "heuristic", reason: "unit test heuristic" }
+    },
+    noAi: false
+  });
+
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.planner.mode, "heuristic");
+  assert.deepEqual(plan.actions, [
+    { type: "search", query: "telegram" },
+    { type: "list_tickets" }
+  ]);
+});
+
 test("heuristic shell planner turns Telegram epic kickoff paragraphs into safe discovery steps", () => {
   const plan = planShellRequestHeuristically("on a new branch, start working on the Telegram epic and tickets in the right order", plannerContext);
   assert.equal(plan.kind, "plan");
