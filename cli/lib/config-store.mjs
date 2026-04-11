@@ -97,16 +97,20 @@ export function getConfigValue(config, keyPath) {
 export async function updateConfig(filePath, updater) {
   const config = await readConfig(filePath);
   const nextConfig = await updater(config) ?? config;
-  await writeConfigFile(filePath, nextConfig);
+  await replaceConfig(filePath, nextConfig);
   return nextConfig;
 }
 
-async function writeConfigFile(filePath, config) {
+export async function replaceConfig(filePath, config) {
   await ensureDir(path.dirname(filePath));
   const payload = `${JSON.stringify(config, null, 2)}\n`;
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(tempPath, payload, "utf8");
   await rename(tempPath, filePath);
+}
+
+export function isConfigWriteAccessError(error) {
+  return ["EACCES", "EPERM", "EROFS"].includes(error?.code);
 }
 
 function splitKeyPath(keyPath) {

@@ -1026,7 +1026,7 @@ test("one-shot shell handles doctor locally without calling the AI planner", asy
     await writeFile(
       preloadPath,
       [
-        "globalThis.fetch = async (url) => {",
+        "globalThis.fetch = async (url, init) => {",
         "  const text = String(url);",
         "  if (text.endsWith('/api/tags')) {",
         "    return {",
@@ -1071,7 +1071,7 @@ test("one-shot shell handles project-status questions locally without planner fe
     await writeFile(
       preloadPath,
       [
-        "globalThis.fetch = async (url) => {",
+        "globalThis.fetch = async (url, init) => {",
         "  throw new Error(`Unexpected fetch URL: ${String(url)}`);",
         "};"
       ].join("\n"),
@@ -1257,7 +1257,7 @@ test("one-shot AI shell falls back cleanly after a bounded Ollama timeout", asyn
 
     assert.equal(result.code, 0, result.stderr || result.stdout);
     const payload = JSON.parse(result.stdout);
-    assert.equal(payload.plan.planner.mode, "heuristic-fallback");
+    assert.equal(payload.plan.planner.mode, "ai-fallback-to-heuristic");
     assert.match(result.stderr, /planner timed out after 25ms/);
     assert.equal((result.stderr.match(/\[trace\] planner request ->/g) ?? []).length, 1);
 
@@ -1731,7 +1731,7 @@ test("dogfood full shell profile uses the local Ollama path for the soft shell s
     await writeFile(
       preloadPath,
       [
-        "globalThis.fetch = async (url) => {",
+        "globalThis.fetch = async (url, init) => {",
         "  const text = String(url);",
         "  if (text.includes('duckduckgo')) {",
         "    return { ok: true, async text() { return '<html><body></body></html>'; } };",
@@ -1745,9 +1745,13 @@ test("dogfood full shell profile uses the local Ollama path for the soft shell s
         "    };",
         "  }",
         "  if (text.endsWith('/api/generate')) {",
+        "    const body = JSON.parse(init?.body ?? '{}');",
         "    return {",
         "      ok: true,",
         "      async json() {",
+        "        if (String(body.system ?? '').includes('strict artifact judge') || String(body.system ?? '').includes('strict shell transcript judge') || String(body.prompt ?? '').includes('Judge the supplied shell transcripts')) {",
+        "          return { response: JSON.stringify({ status: 'pass', score: 93, confidence: 0.97, summary: 'Transcript satisfies the rubric.', findings: ['Grounded operator-facing answer'], recommendations: [], artifacts: [{ path: 'scenario.txt', status: 'pass', score: 93, findings: ['Transcript stayed grounded'] }], needs_human_review: false }) };",
+        "        }",
         "        return { response: JSON.stringify({ kind: 'reply', confidence: 0.94, reason: 'soft dogfood', reply: 'Operator brief: keep shell checks local-first.' }) };",
         "      }",
         "    };",
@@ -1778,10 +1782,10 @@ test("dogfood full shell profile uses the local Ollama path for the soft shell s
     assert.equal(result.code, 0, result.stderr || result.stdout);
     const report = JSON.parse(result.stdout);
     const scenario = report.surfaces.shell.scenarios.find((item) => item.id === "ai-planning-read");
-    assert.equal(scenario.ok, true);
     assert.equal(scenario.code, 0);
     assert.equal(scenario.timedOut, false);
     assert.equal(scenario.model, "ollama:hermes3:8b @ http://127.0.0.1:11434");
+    assert.equal(scenario.semanticJudgment?.status, "pass");
   } finally {
     await cleanup(targetRoot);
   }

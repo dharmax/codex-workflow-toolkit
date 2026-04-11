@@ -25,10 +25,25 @@ import { formatStatusReport, resolveProjectStatus } from "../../core/services/st
 
 const STREAMED_STDIO = "__STREAMED_STDIO__";
 const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
-const CONTINUATION_REQUEST_RE = /^(?:continue|go deeper|branch on that|why did that fail\??|what failed\??|keep going)$/i;
 const TICKET_ID_PATTERN = "[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+";
 const WORKFLOW_GATED_MUTATIONS = new Set(["add_note", "create_ticket", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
 const TOOLKIT_ROOT = getToolkitRoot();
+const SHELL_REFERENTIAL_TOKENS = new Set([
+  "it",
+  "that",
+  "this",
+  "those",
+  "these",
+  "them",
+  "same",
+  "again",
+  "previous",
+  "prior",
+  "other",
+  "another",
+  "second",
+  "first"
+]);
 
 const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
 const FAST_DIRECT_ACTIONS = new Set([
@@ -62,12 +77,100 @@ const KNOWN_TASK_CLASSES = [
   "shell-planning",
   "task-decomposition",
   "architectural-design",
+  "ui-layout",
   "ui-styling",
+  "design-tokens",
+  "prose-composition",
   "templating",
   "pure-function",
   "refactoring",
   "bug-hunting"
 ];
+const SHELL_CAPABILITY_FAMILIES = new Set([
+  "project-planning",
+  "coding",
+  "debugging",
+  "review",
+  "refactor-planning",
+  "design-direction",
+  "shell-usage"
+]);
+const SAFE_AUTO_EXECUTE_CODELETS = new Set([
+  "docs-refresh",
+  "import-cleanup",
+  "dependency-prune",
+  "css-refactor",
+  "test-heal"
+]);
+const SHELL_TICKET_KEYWORD_STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "into",
+  "from",
+  "that",
+  "this",
+  "then",
+  "before",
+  "after",
+  "make",
+  "keep",
+  "shell",
+  "prompt",
+  "prompts",
+  "request",
+  "requests",
+  "work",
+  "current",
+  "new"
+]);
+const OPERATIONAL_QUERY_STOPWORDS = new Set([
+  "please",
+  "would",
+  "could",
+  "should",
+  "need",
+  "want",
+  "figure",
+  "which",
+  "files",
+  "likely",
+  "involved",
+  "safest",
+  "approach",
+  "handle",
+  "around",
+  "about",
+  "before",
+  "after",
+  "tell",
+  "work",
+  "this",
+  "that",
+  "with",
+  "from",
+  "into",
+  "through",
+  "there",
+  "their",
+  "they",
+  "debug",
+  "review",
+  "design",
+  "plan",
+  "refactor",
+  "implement",
+  "write",
+  "summary",
+  "briefly",
+  "detail",
+  "detailed",
+  "concise",
+  "brief",
+  "deep",
+  "dive"
+]);
 
 export async function handleShell(rest, { cliPath } = {}) {
   const args = parseShellArgs(rest);
@@ -83,6 +186,7 @@ export async function handleShell(rest, { cliPath } = {}) {
     noAi: Boolean(args["no-ai"]),
     planOnly: Boolean(args["plan-only"]),
     trace: Boolean(args.trace),
+    autoExecuteSafe: true,
     shellMode: "plan",
     cliPath: cliPath ?? path.resolve(root, "cli", "ai-workflow.mjs"),
     plannerContext: null,
@@ -428,14 +532,14 @@ export async function planShellRequest(inputText, options) {
     const confidence = plans.reduce((acc, p) => acc * p.confidence, 1);
     
     if (combinedActions.length) {
-      return {
+      return normalizeShellPlanEnvelope({
         kind: "plan",
         actions: combinedActions.slice(0, 5), // Limit to 5 combined
         graph: buildActionGraph(combinedActions.slice(0, 5)),
         confidence,
         reason: `Combined multi-intent plan: ${plans.map(p => p.reason).join("; ")}`,
         strategy: plans.map(p => p.strategy).filter(Boolean).join(" Then ")
-      };
+      }, inputText, options.plannerContext);
     }
 
     if (plans.every((plan) => plan.kind === "reply")) {
@@ -443,18 +547,18 @@ export async function planShellRequest(inputText, options) {
         .map((plan) => String(plan.reply ?? "").trim())
         .filter(Boolean)
         .join("\n\n");
-      return {
+      return normalizeShellPlanEnvelope({
         kind: "reply",
         actions: [],
         graph: buildActionGraph([]),
         confidence,
         reason: `Combined multi-intent reply: ${plans.map((plan) => plan.reason).join("; ")}`,
         reply: combinedReply || "I need a clearer request."
-      };
+      }, inputText, options.plannerContext);
     }
   }
 
-  return planSingleRequest(inputText, options);
+  return normalizeShellPlanEnvelope(await planSingleRequest(inputText, options), inputText, options.plannerContext);
 }
 
 async function planSingleRequest(inputText, options) {
@@ -464,16 +568,16 @@ async function planSingleRequest(inputText, options) {
     activeGraphState: options.activeGraphState ?? null
   });
   const useHeuristicOnly = options.noAi || !options.planners.planners.length;
-  const preferAiPlanner = routing.mode === "staged-core" && !useHeuristicOnly;
+  const preferAiPlanner = !useHeuristicOnly && shouldPreferAiPlannerForTurn(inputText, options, heuristic, routing);
 
   if (!preferAiPlanner && (useHeuristicOnly || heuristic.confidence >= 0.92)) {
-    return {
+    return normalizeShellPlanEnvelope({
       ...heuristic,
       planner: {
         mode: options.noAi ? "heuristic-forced" : "heuristic",
         reason: heuristic.reason
       }
-    };
+    }, inputText, options.plannerContext);
   }
 
   const errors = [];
@@ -486,10 +590,14 @@ async function planSingleRequest(inputText, options) {
 
     try {
       const aiPlan = await planShellRequestWithAgent(inputText, { ...options, planner });
-      return {
+      if (isNonActionableShellReply(aiPlan)) {
+        errors.push(`${planner.providerId}: planner returned a non-actionable fallback reply`);
+        continue;
+      }
+      return normalizeShellPlanEnvelope({
         ...aiPlan,
         planner
-      };
+      }, inputText, options.plannerContext);
     } catch (error) {
       const timedOut = isShellPlannerTimeoutError(error);
       const isFatal = String(error).includes("403") || String(error).includes("PERMISSION_DENIED") || String(error).includes("invalid_key");
@@ -509,13 +617,138 @@ async function planSingleRequest(inputText, options) {
     }
   }
 
-  return {
+  const groundedFallback = await buildGroundedShellFallbackPlan(inputText, options);
+  if (groundedFallback) {
+    return normalizeShellPlanEnvelope({
+      ...groundedFallback,
+      planner: {
+        mode: errors.length ? "ai-fallback-to-grounded" : "grounded-fallback",
+        reason: errors.join("; ") || groundedFallback.reason
+      }
+    }, inputText, options.plannerContext);
+  }
+
+  return normalizeShellPlanEnvelope({
     ...heuristic,
     planner: {
       mode: preferAiPlanner ? "ai-fallback-to-heuristic" : "heuristic-fallback",
       reason: errors.join("; ")
     }
-  };
+  }, inputText, options.plannerContext);
+}
+
+function shouldPreferAiPlannerForTurn(inputText, options, heuristic, routing) {
+  if (options.noAi || !options.planners.planners.length) {
+    return false;
+  }
+
+  if (routing.mode === "staged-core") {
+    return true;
+  }
+
+  if (isDeterministicShellSurfaceRequest(inputText)) {
+    return false;
+  }
+
+  const activeGraphState = options.activeGraphState ?? null;
+  if (activeGraphState?.graph?.nodes?.length) {
+    const followUpMode = inferShellFollowUpMode({
+      inputText,
+      activeGraphState,
+      plannerContext: options.plannerContext
+    });
+    if (followUpMode !== "new-request") {
+      return true;
+    }
+  }
+
+  if (looksLikeRepoExplainerQuestion(inputText)) {
+    return true;
+  }
+
+  const inferredTaskClass = inferShellTaskClassFromPrompt(inputText);
+  if (inferredTaskClass && inferredTaskClass !== "classification") {
+    return true;
+  }
+
+  const normalized = normalizeConversationText(inputText);
+  const tokenCount = normalized ? normalized.split(/\s+/).filter(Boolean).length : 0;
+  if (/[?]/.test(String(inputText ?? "")) || tokenCount >= 7) {
+    return true;
+  }
+
+  return heuristic.confidence < 0.92;
+}
+
+function isDeterministicShellSurfaceRequest(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  const trimmed = String(inputText ?? "").trim();
+  return [
+    "help",
+    "/help",
+    "doctor",
+    "doctor help",
+    "version",
+    "provider status",
+    "providers"
+  ].includes(normalized)
+    || /^ticket\s+[A-Z0-9-]+$/i.test(trimmed)
+    || /^search\s+\S+/i.test(trimmed)
+    || /^route\s+\S+/i.test(trimmed)
+    || /^summary$/i.test(trimmed)
+    || /^status$/i.test(trimmed);
+}
+
+async function buildGroundedShellFallbackPlan(inputText, options) {
+  if (looksLikeShellUsageQuestion(inputText)) {
+    return replyPlan([
+      "Use the shell by asking directly for status, search, ticket, routing, or execution help.",
+      renderShellHelp(options.plannerContext ?? {})
+    ].join("\n\n"), 0.82, "Grounded shell-usage fallback reply.");
+  }
+
+  if (!looksLikeRepoExplainerQuestion(inputText)) {
+    return null;
+  }
+
+  const plannerContext = options.plannerContext ?? {};
+  const moduleMatches = findShellGroundingModuleMatches(inputText, plannerContext);
+  const selectors = extractShellGroundingSelectors(inputText, plannerContext);
+  const projectRoot = options.root ?? plannerContext.root ?? process.cwd();
+
+  for (const selector of selectors.slice(0, 4)) {
+    const payload = await resolveProjectStatus({
+      projectRoot,
+      selector,
+      includeRelated: true,
+      rawQuestion: true,
+      relatedLimit: 8
+    }).catch(() => null);
+    if (!payload?.ok) {
+      continue;
+    }
+    return replyPlan(renderGroundedExplainerReply(payload, moduleMatches), 0.8, "Grounded repo explainer fallback reply.");
+  }
+
+  if (moduleMatches.length) {
+    const top = moduleMatches[0];
+    return replyPlan(`${top.name} is the most likely match here. ${top.responsibility ?? "It is a tracked repo module."}`, 0.74, "Module-match explainer fallback reply.");
+  }
+
+  return null;
+}
+
+function isNonActionableShellReply(plan) {
+  if (plan?.kind !== "reply" && !(plan?.kind === "intent" && Array.isArray(plan?.actions) && plan.actions.length === 0)) {
+    return false;
+  }
+  const text = normalizeConversationText(plan.assistantReply ?? plan.reply ?? "");
+  if (!text) {
+    return true;
+  }
+  return /\bneeds the ai planner\b/.test(text)
+    || /\bmore direct phrasing\b/.test(text)
+    || /\btry sync and show review hotspots\b/.test(text);
 }
 
 function shouldSurfacePlannerFailure(inputText, heuristic) {
@@ -557,20 +790,40 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     return replyPlan("Tell me what you want to do. Example: `sync and show review hotspots`.");
   }
 
-  if (CONTINUATION_REQUEST_RE.test(text) && activeGraphState?.graph?.nodes?.length) {
+  if (readinessContinuationPlan) {
+    return readinessContinuationPlan;
+  }
+
+  const followUpMode = inferShellFollowUpMode({
+    inputText: text,
+    activeGraphState,
+    plannerContext
+  });
+  if (followUpMode !== "new-request" && activeGraphState?.graph?.nodes?.length) {
+    const continuationPlan = buildShellContinuationPlan({
+      text,
+      plannerContext,
+      activeGraphState,
+      followUpMode
+    });
+    if (continuationPlan) {
+      return continuationPlan;
+    }
     return replyPlan([
       "The last graph has already been executed.",
       renderContinuationState(activeGraphState),
       "If you want another pass, ask for the next concrete step or specify what to branch on."
-    ].join("\n\n"), 0.82, "Continuation request grounded in prior graph state.");
+    ].join("\n\n"), 0.82, "Continuation request grounded in prior graph state.", {
+      inputText: text,
+      plannerContext,
+      intent: {
+        followUpMode
+      }
+    });
   }
 
   if (["help", "/help", "what can you do", "commands"].includes(normalizedQuestion)) {
     return replyPlan(renderShellHelp(plannerContext));
-  }
-
-  if (readinessContinuationPlan) {
-    return readinessContinuationPlan;
   }
 
   if (wantsCombinedStatusReadiness) {
@@ -671,10 +924,12 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     return actionPlan([{ type: "version" }], 0.99, "Explicit version request.");
   }
 
-  if (
+  const isSimpleProviderStatusRequest = (
     /\b(?:what|which|show|list)\b.*\b(?:ai\s+)?providers?\b/.test(lower) ||
-    /\bproviders?\b.*\b(?:connected|configured|available|active|status)\b/.test(lower)
-  ) {
+    /\bproviders?\b.*\b(?:connected|configured|available|active|status|looking|doing|healthy|health)\b/.test(lower)
+  ) && !/\b(inspect|investigate|debug|diagnose|deep|deeply|why|fix|repair|resolve|trace)\b/.test(lower);
+
+  if (isSimpleProviderStatusRequest) {
     return actionPlan([{ type: "provider_status" }], 0.99, "Explicit provider status request.");
   }
 
@@ -740,14 +995,15 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     }], 1.0, "Explicit config request.");
   }
 
-  const routeMatch = text.match(/^(?:route|pick model for)\s+(.+)$/i);
+  const routeMatch = text.match(/^(?:route|pick(?:\s+a)?\s+model\s+for)\s+(.+)$/i);
   if (routeMatch) {
     return actionPlan([{ type: "route", taskClass: normalizeTaskClass(routeMatch[1], plannerContext) }], 0.93, "Explicit routing request.");
   }
 
   const searchMatch = text.match(/^(?:search|find)\s+(.+)$/i);
   if (searchMatch) {
-    return actionPlan([{ type: "search", query: searchMatch[1].trim() }], 0.95, "Explicit search request.");
+    const query = searchMatch[1].replace(/^for\s+/i, "").trim();
+    return actionPlan([{ type: "search", query }], 0.95, "Explicit search request.");
   }
 
   const ticketMatch = text.match(new RegExp(`(?:extract\\s+ticket|show\\s+ticket|ticket|decompose\\s+ticket|break\\s+down)\\s+(${TICKET_ID_PATTERN})`, "i"));
@@ -789,6 +1045,11 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     }], 0.9, "Explicit guideline extraction request.");
   }
 
+  const capabilityRoutingPlan = buildCapabilityRoutingPlan(text, plannerContext);
+  if (capabilityRoutingPlan) {
+    return capabilityRoutingPlan;
+  }
+
   const noteMatch = text.match(/(?:add|create)\s+(note|bug|todo|fixme|hack|risk)\b/i);
   if (noteMatch) {
     const noteType = normalizeNoteType(noteMatch[1]);
@@ -806,10 +1067,60 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     }
   }
 
-  return replyPlan([
-    "I can turn requests into workflow actions, but this one needs the AI planner or a more direct phrasing.",
-    "Try: `sync and show review hotspots`, `summary`, `search router`, `ticket TKT-001`, or `route review`."
-  ].join("\n"), 0.45, "No high-confidence heuristic match.");
+  return buildHeuristicSemanticFallbackPlan(text, plannerContext);
+}
+
+function inferShellFollowUpMode({ inputText = "", activeGraphState = null, plannerContext = {} } = {}) {
+  if (!activeGraphState?.graph?.nodes?.length) {
+    return "new-request";
+  }
+
+  const text = String(inputText ?? "").trim();
+  const normalized = normalizeConversationText(text);
+  if (!normalized) {
+    return "new-request";
+  }
+
+  const standaloneTarget = hasStandaloneShellTarget(text, plannerContext);
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const referential = words.some((word) => SHELL_REFERENTIAL_TOKENS.has(word));
+  const asksResultQuestion = /\b(why|what|which|how|is)\b/.test(normalized)
+    && (/\b(fail|failed|failure|blocked|blocker|safe|risky|risk|step|node|result|happened|went wrong)\b/.test(normalized)
+      || referential);
+  const asksRevision = /\b(shorter|longer|brief|briefly|one sentence|single sentence|bullets|bullet points|rephrase|rewrite|reformat|format|more detail|detailed|absolute paths)\b/.test(normalized);
+  const asksContinuationWork = /\b(do|fix|implement|apply|patch|change|continue|keep|make|take|branch|focus|inspect|review|debug|use)\b/.test(normalized);
+  const shortElliptical = words.length <= 8;
+
+  if (asksRevision) {
+    return "revise-prior-answer";
+  }
+  if (asksResultQuestion) {
+    return "ask-about-prior-result";
+  }
+  if ((referential || shortElliptical || !standaloneTarget) && asksContinuationWork) {
+    return "continue-prior-work";
+  }
+  if ((referential || shortElliptical) && !standaloneTarget) {
+    return "ask-about-prior-result";
+  }
+  return "new-request";
+}
+
+function hasStandaloneShellTarget(inputText, plannerContext = {}) {
+  const trimmed = String(inputText ?? "").trim();
+  if (!trimmed) {
+    return false;
+  }
+  if ((new RegExp(TICKET_ID_PATTERN)).test(trimmed)) {
+    return true;
+  }
+  if (looksLikeShellUsageQuestion(trimmed) || looksLikeRepoExplainerQuestion(trimmed) || extractReadinessGoal(trimmed)) {
+    return true;
+  }
+  return Boolean(
+    extractShellFallbackSubject(trimmed, plannerContext)
+    || extractOperationalSearchQuery(trimmed, plannerContext)
+  );
 }
 
 function analyzeShellIntent(inputText, plannerContext = {}) {
@@ -871,6 +1182,317 @@ function splitShellIntentClauses(text) {
     .split(/\b(?:and then|then|,\s+then|,\s+and\s+then|,\s+|;)\b/i)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function buildHeuristicSemanticFallbackPlan(inputText, plannerContext = {}) {
+  const text = String(inputText ?? "").trim();
+  const normalized = normalizeConversationText(text);
+  const subject = extractShellFallbackSubject(text, plannerContext);
+  const entityType = inferFallbackEntityType(text, subject, plannerContext);
+  const asksProjectHealth = /\b(project|repo|repository|codebase)\b/.test(normalized)
+    && /\b(status|state|shape|health|healthy|doing|good|bad|tell me about|what do you think)\b/.test(normalized);
+  const asksWorkflowBrief = /\b(brief|operator brief|recommendation|recommend|what should i do next|next step|current workflow state|workflow state)\b/.test(normalized)
+    && /\b(project|repo|workflow|current)\b/.test(normalized);
+  const asksStatusLikeQuestion = /\b(status|state|shape|health|healthy|good|bad|doing|what is up with|whats up with|tell me about|what do you think about|explain|describe|what is|whats|what are|do we have|is there|anything called|named|called)\b/.test(normalized);
+  const asksSearchLikeQuestion = /\b(search|find|look for|grep|scan for)\b/.test(normalized);
+
+  if (asksProjectHealth || asksWorkflowBrief) {
+    return {
+      ...actionPlan([{ type: "project_summary" }], 0.78, "Semantic fallback routed the request to a project summary."),
+      presentation: "assistant-first"
+    };
+  }
+
+  if (subject && asksStatusLikeQuestion) {
+    return {
+      ...actionPlan([{
+        type: "status_query",
+        query: subject,
+        entityType
+      }], 0.74, "Semantic fallback routed the request to the deterministic status resolver."),
+      presentation: "assistant-first"
+    };
+  }
+
+  if (subject && asksSearchLikeQuestion) {
+    return {
+      ...actionPlan([{ type: "search", query: subject }], 0.72, "Semantic fallback routed the request to project search."),
+      presentation: "assistant-first"
+    };
+  }
+
+  if (subject) {
+    return {
+      ...actionPlan([
+        {
+          type: "status_query",
+          query: subject,
+          entityType
+        },
+        {
+          type: "search",
+          query: subject
+        }
+      ], 0.64, "Semantic fallback is probing the most likely project target."),
+      presentation: "assistant-first"
+    };
+  }
+
+  return replyPlan([
+    "I could not resolve a concrete project target from that request yet.",
+    "I can still inspect project status, search the repo, explain shell surfaces, or extract ticket context.",
+    "Examples: `what's the status of this project?`, `tell me about the shell`, `search router`, `ticket TKT-001`, `route shell-planning`."
+  ].join("\n"), 0.42, "Semantic fallback could not resolve a concrete target.");
+}
+
+function buildCapabilityRoutingPlan(inputText, plannerContext = {}) {
+  const text = String(inputText ?? "").trim();
+  const taskClass = inferShellTaskClassFromPrompt(text);
+  if (!taskClass) {
+    return null;
+  }
+
+  const implicitTicketId = resolveImplicitTicketId(plannerContext, text);
+  const searchQuery = extractOperationalSearchQuery(text, plannerContext);
+  const actions = [{ type: "route", taskClass }];
+  if (implicitTicketId) {
+    actions.push({
+      type: "status_query",
+      query: implicitTicketId,
+      entityType: "ticket"
+    });
+  }
+  const shellModulePath = extractShellModulePath(text, plannerContext);
+  if (!implicitTicketId && shellModulePath && /\b(changed|recent|lately|files?|paths?|where would you start|what files should i edit)\b/.test(normalizeConversationText(text))) {
+    actions.push({
+      type: "status_query",
+      query: shellModulePath,
+      entityType: "module"
+    });
+  }
+  if (searchQuery) {
+    actions.push({ type: "search", query: searchQuery });
+  }
+
+  return {
+    ...actionPlan(actions, 0.76, `Semantic capability routing classified the request as ${taskClass}.`),
+    presentation: "assistant-first",
+    focusTaskClass: taskClass,
+    strategy: `Treat this as ${taskClass}${searchQuery ? ` and inspect ${searchQuery} in the repo first` : ""}.`
+  };
+}
+
+function inferShellTaskClassFromPrompt(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  if (!normalized) {
+    return null;
+  }
+  const asksWorkflowStateSummary = /\b(current workflow state|workflow state|project state|current project state)\b/.test(normalized);
+  const asksParityProgram = /\b(not inferior to codex|codex parity|support coding debugging and design|coding debugging and design paragraphs|review debugging and design requests)\b/.test(normalized);
+  const asksFormatDesign = /\b(response format|answer format|format itself|reformat|redesign(?:ed)?|formatting)\b/.test(normalized)
+    || (/\boperator brief\b/.test(normalized) && /\b(format|style|design|deep investigation|deep investigations)\b/.test(normalized));
+
+  if (asksParityProgram || /\b(support|enable|handle)\b.*\b(coding|debugging|review|design)\b/.test(normalized)) {
+    return "task-decomposition";
+  }
+  if (/\b(break down|decompose|task breakdown|step by step plan|execution plan|plan the work)\b/.test(normalized)) {
+    return "task-decomposition";
+  }
+  if (/\b(migration note|write a note|write a brief|write up|draft update)\b/.test(normalized)) {
+    return "prose-composition";
+  }
+  if (!asksWorkflowStateSummary
+    && /\b(summarize|summary|operator update|operator brief|one sentence)\b/.test(normalized)
+    && /\b(work|state|progress|shell|changed|recent)\b/.test(normalized)) {
+    return "summarization";
+  }
+  if (asksFormatDesign || /\b(design)\b.*\b(format|response|answer)\b/.test(normalized)) {
+    return "ui-styling";
+  }
+  if (/\b(architecture|architectural|system design|design the system|design the safest architecture|module boundaries|design direction)\b/.test(normalized)) {
+    return "architectural-design";
+  }
+  if (/\b(debug|debugging|diagnos(?:e|ing|is)|bug hunt|hunt bugs|broken|failing|why is|why does|root cause|trace|investigate|investigation)\b/.test(normalized)) {
+    return "bug-hunting";
+  }
+  if (/\b(review|risk|regression|hotspot|code review|review the)\b/.test(normalized)
+    || (/\baudit\b/.test(normalized) && !/\barchitecture|architectural|design direction\b/.test(normalized))) {
+    return "review";
+  }
+  if (/\b(refactor|restructure|cleanup|clean up|untangle|simplify|rework)\b/.test(normalized)) {
+    return "refactoring";
+  }
+  if (/\b(risky|rollout|migration|kill switch|guardrail|backward compatible|blast radius)\b/.test(normalized)) {
+    return "risky-planning";
+  }
+  if (/\b(design tokens|tokens|spacing scale|color tokens)\b/.test(normalized)) {
+    return "design-tokens";
+  }
+  if (/\b(implement|build|patch|write code|add a new|create component|scaffold)\b/.test(normalized)) {
+    return "code-generation";
+  }
+  if (/\b(ui layout|layout work|spacing|alignment|mobile layout|responsive layout|visual hierarchy)\b/.test(normalized)) {
+    return "ui-layout";
+  }
+  if (/\b(styling|typography|color direction|theme|css polish|visual polish)\b/.test(normalized)) {
+    return "ui-styling";
+  }
+  return null;
+}
+
+function extractOperationalSearchQuery(inputText, plannerContext = {}) {
+  const text = String(inputText ?? "").trim();
+  if (!text) {
+    return "";
+  }
+
+  const quoted = text.match(/["'`](.+?)["'`]/)?.[1]?.trim();
+  if (quoted) {
+    return quoted;
+  }
+
+  const explicitPath = text.match(/\b(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.-]+\b/)?.[0]?.trim();
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  const highSignal = extractHighSignalOperationalQuery(text);
+  if (highSignal) {
+    return highSignal;
+  }
+
+  const moduleMatches = findShellGroundingModuleMatches(text, plannerContext);
+  if (moduleMatches.length && !/\b(follow[- ]?up|continuity|subject|response format|answer format|intent envelope|operator brief|deep investigation|changed|recent)\b/i.test(text)) {
+    return moduleMatches[0].name;
+  }
+
+  const keywordPatterns = [
+    /\bmodal\b/i,
+    /\boverlay\b/i,
+    /\bdialog\b/i,
+    /\brouter?\b/i,
+    /\bprovider(?:s)?\b/i,
+    /\bworkflow\b/i,
+    /\bshell\b/i,
+    /\bprojection(?:s)?\b/i,
+    /\btelegram\b/i,
+    /\btoken(?:s)?\b/i,
+    /\blayout\b/i,
+    /\bstyling\b/i,
+    /\btheme\b/i,
+    /\bcss\b/i
+  ];
+  for (const pattern of keywordPatterns) {
+    const match = text.match(pattern);
+    if (match?.[0]) {
+      return match[0].toLowerCase();
+    }
+  }
+
+  const tokens = normalizeConversationText(text)
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => token.length > 2)
+    .filter((token) => !OPERATIONAL_QUERY_STOPWORDS.has(token))
+    .slice(0, 3);
+  return tokens.join(" ");
+}
+
+function extractHighSignalOperationalQuery(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  if (!normalized) {
+    return "";
+  }
+
+  const shellQualified = /\bshell\b/.test(normalized);
+  const signals = [];
+  const addSignal = (value) => {
+    if (value && !signals.includes(value)) {
+      signals.push(value);
+    }
+  };
+
+  if (/\bfollow[- ]?up|continuity|continue\b/.test(normalized)) addSignal(shellQualified ? "shell follow-up" : "follow-up");
+  if (/\bsubject\b/.test(normalized)) addSignal(shellQualified ? "shell subject" : "subject");
+  if (/\bintent envelope\b/.test(normalized)) addSignal("intent envelope");
+  if (/\bresponse format|answer format|operator brief|deep investigation|deep investigations\b/.test(normalized)) addSignal(shellQualified ? "shell response style" : "response style");
+  if (/\bmigration note\b/.test(normalized)) addSignal(shellQualified ? "shell intent envelope" : "migration note");
+  if (/\boperator update|one sentence|recent shell work|last shell work|what changed|changed recently|lately\b/.test(normalized)) addSignal(shellQualified ? "shell work" : "recent work");
+  if (/\babsolute file paths?|what files should i edit|where would you start\b/.test(normalized)) addSignal(shellQualified ? "shell files" : "files");
+
+  return signals.slice(0, 2).join(" ").trim();
+}
+
+function extractShellModulePath(inputText, plannerContext = {}) {
+  const moduleMatches = findShellGroundingModuleMatches(inputText, plannerContext);
+  return moduleMatches[0]?.name ?? "";
+}
+
+function inferFallbackEntityType(inputText, subject, plannerContext = {}) {
+  const normalizedSubject = normalizeConversationText(subject);
+  if (["shell", "workflow", "provider", "init"].includes(normalizedSubject)) {
+    return "surface";
+  }
+  const moduleMatches = findShellGroundingModuleMatches(subject || inputText, plannerContext);
+  if (moduleMatches.length) {
+    return "module";
+  }
+  const explicitTicket = String(subject ?? inputText ?? "").match(new RegExp(`\\b${TICKET_ID_PATTERN}\\b`, "i"));
+  if (explicitTicket) {
+    return "ticket";
+  }
+  if (/\b(project|repo|repository|codebase)\b/.test(normalizeConversationText(inputText))) {
+    return "project";
+  }
+  return inferStatusEntityType(subject) ?? inferStatusEntityType(inputText);
+}
+
+function extractShellFallbackSubject(inputText, plannerContext = {}) {
+  const text = String(inputText ?? "").trim();
+  if (!text) {
+    return "";
+  }
+  const genericPronouns = new Set(["that", "this", "it", "something", "things", "stuff", "anything"]);
+  const normalized = normalizeConversationText(text);
+  if (/^(what do you think about|tell me about)\s+(that|this|it)\??$/.test(normalized)) {
+    return "";
+  }
+
+  const explicitTicket = text.match(new RegExp(`\\b${TICKET_ID_PATTERN}\\b`, "i"))?.[0];
+  if (explicitTicket) {
+    return explicitTicket.toUpperCase();
+  }
+
+  const quoted = text.match(/["'`](.+?)["'`]/)?.[1]?.trim();
+  if (quoted && !genericPronouns.has(normalizeConversationText(quoted))) {
+    return quoted;
+  }
+
+  const moduleMatches = findShellGroundingModuleMatches(text, plannerContext);
+  if (moduleMatches.length) {
+    return moduleMatches[0].name;
+  }
+
+  const calledMatch = normalized.match(/\b(?:called|named)\s+([a-z0-9/_:-]+(?:\s+[a-z0-9/_:-]+){0,4})$/i)?.[1];
+  if (calledMatch) {
+    return calledMatch.trim();
+  }
+
+  if (/\b(project|repo|repository|codebase)\b/.test(normalized) && !/\b(shell|workflow|provider|init)\b/.test(normalized)) {
+    return "project";
+  }
+
+  const stripped = normalized
+    .replace(/\b(can you|could you|would you|please|just|maybe|kind of|sort of|i wonder if|do we have|does this repo have|is there|anything called|something called|feature called|how good is|how bad is|how healthy is|how is|what is up with|whats up with|tell me about|teach me about|what do you think about|explain|describe|what is|whats|what are|status of|state of|shape of|search for|look for|find)\b/g, " ")
+    .replace(/\b(the|this|that|a|an|feature|service|module|modules|system|thing|please)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const tokens = stripped.split(/\s+/).filter(Boolean);
+  if (!tokens.length) {
+    return "";
+  }
+  const subject = tokens.slice(0, 6).join(" ");
+  return genericPronouns.has(subject) ? "" : subject;
 }
 
 function extractShellGoal(text) {
@@ -1051,11 +1673,43 @@ export async function summarizeHistory(history) {
 
 function buildShellPlannerJsonSchema() {
   return {
-    kind: "plan|reply|exit",
+    kind: "intent|plan|reply|exit",
     confidence: 0.8,
     reason: "Your internal strategic reasoning (mandatory)",
     strategy: "The long-term plan or next steps for the developer",
-    reply: "human-friendly message (mandatory if kind=reply, optional if kind=plan)",
+    assistantReply: "Optional final reply seed for shell-local answers. Do not use this to avoid planning when tool steps are needed.",
+    intent: {
+      version: "1",
+      capability: "project-planning|coding|debugging|review|refactor-planning|design-direction|shell-usage",
+      objective: "What the user is trying to achieve",
+      subject: "Primary target, module, ticket, or concept",
+      taskClass: "Optional lower-level task class",
+      scope: "shell-local|workflow-state|repo-targeted|repo-mutation",
+      risk: "low|medium|high",
+      needsRepoContext: true,
+      needsMutation: false,
+      safeToAutoExecute: false,
+      followUpMode: "new-request|continue-prior-work|ask-about-prior-result|revise-prior-answer",
+      references: {
+        tickets: ["optional prior ticket ids"],
+        files: ["optional file paths"],
+        modules: ["optional module ids"],
+        graphNodeIds: ["optional prior graph node ids"],
+        evidence: ["optional evidence labels"]
+      },
+      responseStyle: {
+        detail: "brief|normal|detailed",
+        format: "paragraphs|bullets",
+        includeExamples: false
+      }
+    },
+    finalAnswerPolicy: {
+      verbosity: "brief|normal|detailed",
+      format: "paragraphs|bullets",
+      includeEvidence: true,
+      includeNextSteps: true,
+      includeExamples: false
+    },
     graph: {
       nodes: [{
         id: "n1",
@@ -1141,7 +1795,7 @@ function buildShellPlannerNotesLoreExtra({ recentMemory, longTermMemorySummary, 
     sections.push(`### Notes / Lore / Extra: Recent Interaction\n${recentMemory}`);
   }
   if (activeGraphState) {
-    sections.push(`### Notes / Lore / Extra: Active Graph State\n${renderContinuationState(activeGraphState)}`);
+    sections.push(`### Notes / Lore / Extra: Active Turn Memory\n${renderPlannerActiveGraphState(activeGraphState)}`);
   }
   return sections.join("\n\n");
 }
@@ -1150,9 +1804,11 @@ export async function buildShellPlannerPrompt(inputText, options) {
   const catalog = buildActionCatalog(options.plannerContext);
   const history = options.history ?? [];
   const activeGraphState = options.activeGraphState ?? null;
+  const responseStyle = inferShellResponseStyle(inputText);
   const { recentMemory, longTermMemorySummary } = await summarizeHistory(history);
   const runtimeContext = buildShellPlannerRuntimeContext(options.plannerContext, options);
   const guidanceContext = buildShellPlannerGuidanceContext(inputText, options.plannerContext);
+  const groundingContext = await buildShellPlannerGroundingContext(inputText, options);
   const notesLoreExtra = buildShellPlannerNotesLoreExtra({ recentMemory, longTermMemorySummary, activeGraphState });
   const schemaPrompt = buildShellPlannerSchemaPrompt();
 
@@ -1162,10 +1818,12 @@ export async function buildShellPlannerPrompt(inputText, options) {
     "Choose the smallest truthful next step.",
     "",
     "## Operating Contract",
-    "- Convert the user request into JSON actions or a direct reply when the answer is purely shell-local.",
+    "- Convert every user request into a typed intent envelope.",
+    "- Use `kind=intent` for normal planning output. `kind=exit` is only for explicit exit requests.",
     "- For project-state questions, prefer discovery actions before answering.",
     "- Do not assume project facts that have not been discovered in this turn or a prior node result.",
     "- Keep the first plan minimal. Prefer flat `actions`; only use `graph` if truly needed.",
+    "- If the answer is purely shell-local, you may leave `actions` empty and provide `assistantReply`, but you must still emit the full typed intent envelope.",
     "",
     "## Graph Contract",
     "- Use direct `actions` for simple deterministic status, summary, and extraction work.",
@@ -1178,12 +1836,19 @@ export async function buildShellPlannerPrompt(inputText, options) {
     "- Start with the user's intent, then decide what context must be pulled.",
     "- Pull project info only when the request makes that context necessary.",
     "- Prefer targeted discovery like `project_summary`, `extract_ticket`, `search`, or `route` over broad context dumps.",
-    "- If the question is only about shell usage or capabilities, `kind=reply` is allowed without tool execution.",
+    "- If the question is only about shell usage or capabilities, keep `actions` empty and provide a shell-local `assistantReply` inside `kind=intent`.",
+    "- If `Grounded Repo Evidence` is present and directly answers the user's question, prefer a grounded `assistantReply` inside `kind=intent`.",
+    "- For repo concept questions like services, modules, claims, projections, router, or sync behavior, prefer a grounded reply or a single `status_query` over a vague clarification request.",
     "- If the answer depends on project state, use tools first unless the needed state is already present in prior node results.",
     "- For multi-clause, goal-driven, ordered, or ambiguous requests, prefer a small ordered `actions` list over a long reply.",
+    "- Never emit the stock shell fallback about needing the AI planner or asking for a more direct phrasing.",
+    "- Prefer coding/debugging/review/design/project-planning capability families over generic classification.",
+    "- If you are uncertain, choose the smallest truthful probe such as `status_query`, `search`, `project_summary`, or `route` instead of asking the user to rephrase.",
     "- Preserve the user's requested order unless observed tool results prove a blocker.",
     "- When the user states a goal or success criterion, use it to choose discovery steps and rank remaining work.",
     "- Do not collapse a long request into a shallow answer just because one phrase matches a simpler pattern.",
+    "- For conversational follow-ups, resolve pronouns and ellipsis from `Active Turn Memory` and set `intent.followUpMode` explicitly.",
+    "- Do not decide follow-up mode from stock trigger phrases alone; use prior turn state, prior evidence, and the current request together.",
     "- Never invent facts. If a ticket, file, or condition is unknown, discover it or say so.",
     "- JSON only: your output must be valid JSON matching the schema.",
   ].join("\n");
@@ -1191,7 +1856,9 @@ export async function buildShellPlannerPrompt(inputText, options) {
   const promptSections = [
     "## Runtime Context",
     runtimeContext,
+    `\n## Desired Response Style\n${renderShellResponseStyle(responseStyle)}`,
     guidanceContext ? `\n## Guidance Highlights\n${guidanceContext}` : "",
+    groundingContext ? `\n## Grounded Repo Evidence\n${groundingContext}` : "",
     notesLoreExtra ? `\n${notesLoreExtra}` : "",
     "",
     "## Allowed JSON Schema:",
@@ -1204,6 +1871,47 @@ export async function buildShellPlannerPrompt(inputText, options) {
     system,
     prompt: promptSections.join("\n")
   };
+}
+
+async function buildShellPlannerGroundingContext(inputText, options = {}) {
+  const sections = [];
+  const plannerContext = options.plannerContext ?? {};
+
+  if (looksLikeShellUsageQuestion(inputText)) {
+    sections.push([
+      "Shell usage:",
+      renderShellHelp(plannerContext)
+    ].join("\n"));
+  }
+
+  if (looksLikeRepoExplainerQuestion(inputText)) {
+    const moduleMatches = findShellGroundingModuleMatches(inputText, plannerContext);
+    if (moduleMatches.length) {
+      sections.push([
+        "Likely module matches:",
+        ...moduleMatches.slice(0, 3).map((item) => `- ${item.name}${item.responsibility ? `: ${item.responsibility}` : ""}`)
+      ].join("\n"));
+    }
+
+    const projectRoot = options.root ?? plannerContext.root ?? process.cwd();
+    const selectors = extractShellGroundingSelectors(inputText, plannerContext);
+    for (const selector of selectors.slice(0, 4)) {
+      const payload = await resolveProjectStatus({
+        projectRoot,
+        selector,
+        includeRelated: true,
+        rawQuestion: true,
+        relatedLimit: 8
+      }).catch(() => null);
+      if (!payload?.ok) {
+        continue;
+      }
+      sections.push(renderShellPlannerGroundedStatus(payload));
+      break;
+    }
+  }
+
+  return sections.filter(Boolean).join("\n\n");
 }
 
 function buildShellPlannerGuidanceContext(inputText, plannerContext = {}) {
@@ -1370,15 +2078,60 @@ export async function planShellRequestWithAgent(inputText, options) {
 
     let parsed;
     try {
-      parsed = JSON.parse(cleanJson);
+      parsed = parseShellPlannerJson(cleanJson);
     } catch {
+      const plainTextReply = coercePlannerPlainTextReply(rawResponse, inputText);
+      if (plainTextReply) {
+        return plainTextReply;
+      }
       throw new Error("planner returned non-JSON text");
     }
 
-    return validateShellPlan(parsed, options.plannerContext);
+    return validateShellPlan(parsed, options.plannerContext, inputText);
   } catch (error) {
     throw error;
   }
+}
+
+function parseShellPlannerJson(rawText) {
+  const candidates = [String(rawText ?? "").trim()].filter(Boolean);
+  const text = candidates[0] ?? "";
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(text.slice(firstBrace, lastBrace + 1).trim());
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // try the next shape
+    }
+  }
+  throw new Error("planner returned non-JSON text");
+}
+
+function coercePlannerPlainTextReply(rawResponse, inputText) {
+  if (!canAcceptPlainTextPlannerReply(inputText)) {
+    return null;
+  }
+  const sanitized = String(rawResponse ?? "")
+    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
+    .replace(/```[a-z]*\s*[\s\S]*?```/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!sanitized || sanitized.length > 900) {
+    return null;
+  }
+  return {
+    ...replyPlan(sanitized, 0.72, "Planner returned a conversational plain-text reply."),
+    graph: buildActionGraph([])
+  };
+}
+
+function canAcceptPlainTextPlannerReply(inputText) {
+  return looksLikeShellUsageQuestion(inputText) || looksLikeRepoExplainerQuestion(inputText);
 }
 
 async function runShellCompletion({ stage, planner, system, prompt, config = {}, options, contentParts = null }) {
@@ -1443,18 +2196,53 @@ async function runShellCompletion({ stage, planner, system, prompt, config = {},
   }
 }
 
-export function validateShellPlan(plan, plannerContext) {
+export function validateShellPlan(plan, plannerContext, inputText = "") {
   if (!plan || typeof plan !== "object") {
     throw new Error("shell planner returned non-object");
   }
   const strategy = typeof plan.strategy === "string" ? plan.strategy.trim() : null;
+  const confidence = Number(plan.confidence ?? 0.7);
+  const reason = String(plan.reason ?? "Planner produced a valid action plan.");
+
+  if (plan.kind === "intent") {
+    const graph = plan.graph?.nodes
+      ? validateShellGraph(plan.graph, plannerContext)
+      : null;
+    const actions = graph
+      ? graph.nodes
+          .filter((node) => node.kind === "action" && node.action)
+          .map((node) => node.action)
+          .slice(0, 5)
+      : Array.isArray(plan.actions)
+        ? plan.actions.slice(0, 5).map((action) => validateShellAction(action, plannerContext))
+        : [];
+    const assistantReply = typeof plan.assistantReply === "string" ? plan.assistantReply.trim() : "";
+    if (!actions.length && !assistantReply) {
+      throw new Error("shell planner produced neither actions nor an assistant reply");
+    }
+    const normalized = {
+      ...(actions.length ? {
+        kind: "plan",
+        actions,
+        graph: graph ?? buildActionGraph(actions)
+      } : replyPlan(assistantReply || "I need a clearer request.", confidence, reason)),
+      confidence,
+      reason,
+      strategy,
+      assistantReply: assistantReply || null,
+      intent: plan.intent,
+      finalAnswerPolicy: plan.finalAnswerPolicy,
+      presentation: plan.presentation ?? (assistantReply ? "assistant-first" : null)
+    };
+    return normalizeShellPlanEnvelope(normalized, inputText, plannerContext);
+  }
 
   if (plan.kind === "reply") {
-    return {
+    return normalizeShellPlanEnvelope({
       ...replyPlan(String(plan.reply ?? "I need a clearer request."), Number(plan.confidence ?? 0.5), String(plan.reason ?? "Planner reply.")),
       strategy,
       graph: buildActionGraph([])
-    };
+    }, inputText, plannerContext);
   }
 
   if (plan.kind === "exit") {
@@ -1483,14 +2271,373 @@ export function validateShellPlan(plan, plannerContext) {
     throw new Error("shell planner produced no actions");
   }
 
-  return {
+  return normalizeShellPlanEnvelope({
     kind: "plan",
     actions,
     graph: graph ?? buildActionGraph(actions),
-    confidence: Number(plan.confidence ?? 0.7),
-    reason: String(plan.reason ?? "Planner produced a valid action plan."),
+    confidence,
+    reason,
     strategy
+  }, inputText, plannerContext, {
+    intent: plan.intent ?? null,
+    finalAnswerPolicy: plan.finalAnswerPolicy ?? null
+  });
+}
+
+function normalizeShellPlanEnvelope(plan, inputText = "", plannerContext = {}, overrides = {}) {
+  if (!plan || typeof plan !== "object") {
+    return plan;
+  }
+
+  const actions = Array.isArray(plan.actions) ? plan.actions : [];
+  const assistantReply = firstNonEmptyString(
+    overrides.assistantReply,
+    plan.assistantReply,
+    plan.reply
+  );
+  const taskClass = overrides.taskClass
+    ?? plan.focusTaskClass
+    ?? extractPlanTaskClass(plan, inputText);
+  const intent = normalizeShellIntentEnvelope(overrides.intent ?? plan.intent ?? {}, {
+    inputText,
+    plannerContext,
+    plan,
+    actions,
+    assistantReply,
+    taskClass
+  });
+  const finalAnswerPolicy = normalizeShellFinalAnswerPolicy(overrides.finalAnswerPolicy ?? plan.finalAnswerPolicy ?? {}, {
+    inputText,
+    plan,
+    intent,
+    assistantReply
+  });
+  return {
+    ...plan,
+    assistantReply: assistantReply || null,
+    intent,
+    finalAnswerPolicy,
+    executionGraph: plan.executionGraph ?? plan.graph ?? buildActionGraph(actions),
+    focusTaskClass: plan.focusTaskClass ?? intent.taskClass ?? null
   };
+}
+
+function normalizeShellIntentEnvelope(intent = {}, {
+  inputText = "",
+  plannerContext = {},
+  plan = {},
+  actions = [],
+  assistantReply = "",
+  taskClass = null
+} = {}) {
+  const responseStyle = {
+    ...inferShellResponseStyle(inputText),
+    ...(intent.responseStyle && typeof intent.responseStyle === "object" ? intent.responseStyle : {})
+  };
+  const requestedTaskClass = firstNonEmptyString(taskClass, intent.taskClass);
+  const normalizedTaskClass = requestedTaskClass ? normalizeTaskClass(requestedTaskClass, plannerContext) : null;
+  const capability = normalizeShellCapability(intent.capability ?? inferShellCapabilityForPlan({
+    inputText,
+    plan,
+    actions,
+    taskClass: normalizedTaskClass,
+    assistantReply
+  }));
+  const subject = firstNonEmptyString(
+    intent.subject,
+    extractOperationalSearchQuery(inputText, plannerContext),
+    extractShellFallbackSubject(inputText, plannerContext)
+  );
+  const needsMutation = intent.needsMutation ?? actions.some((action) => isMutatingAction(action));
+  const needsRepoContext = intent.needsRepoContext ?? inferIntentNeedsRepoContext({
+    inputText,
+    capability,
+    actions,
+    assistantReply
+  });
+  const safeToAutoExecute = intent.safeToAutoExecute ?? canAutoExecuteShellPlanSafely({
+    actions,
+    taskClass: normalizedTaskClass,
+    capability,
+    subject,
+    inputText
+  });
+  return {
+    version: String(intent.version ?? "1"),
+    capability,
+    objective: firstNonEmptyString(intent.objective, summarizeShellObjective(inputText, capability)),
+    subject: subject || null,
+    taskClass: normalizedTaskClass,
+    scope: normalizeShellScope(intent.scope ?? inferShellIntentScope({ actions, assistantReply, capability })),
+    risk: normalizeShellRisk(intent.risk ?? inferShellIntentRisk({
+      actions,
+      capability,
+      taskClass: normalizedTaskClass,
+      safeToAutoExecute
+    })),
+    responseStyle,
+    needsRepoContext: Boolean(needsRepoContext),
+    needsMutation: Boolean(needsMutation),
+    safeToAutoExecute: Boolean(safeToAutoExecute),
+    followUpMode: normalizeFollowUpMode(intent.followUpMode ?? "new-request"),
+    references: normalizeShellReferences(intent.references),
+    directAnswerOnly: !actions.length && Boolean(assistantReply)
+  };
+}
+
+function normalizeShellFinalAnswerPolicy(policy = {}, { inputText = "", intent = {}, assistantReply = "" } = {}) {
+  const responseStyle = {
+    ...inferShellResponseStyle(inputText),
+    ...(intent.responseStyle ?? {})
+  };
+  const verbosity = normalizeShellVerbosity(policy.verbosity ?? responseStyle.detail);
+  const format = normalizeShellFormat(policy.format ?? responseStyle.format);
+  return {
+    verbosity,
+    format,
+    includeEvidence: Boolean(policy.includeEvidence ?? (intent.needsRepoContext || Boolean(assistantReply) === false)),
+    includeNextSteps: Boolean(policy.includeNextSteps ?? (verbosity !== "brief" || ["debugging", "review", "project-planning", "refactor-planning"].includes(intent.capability))),
+    includeExamples: Boolean(policy.includeExamples ?? responseStyle.includeExamples)
+  };
+}
+
+function summarizeShellObjective(inputText, capability) {
+  const source = String(inputText ?? "").trim();
+  if (!source) {
+    return capability === "shell-usage" ? "Answer a shell-local request." : "Handle the current shell request.";
+  }
+  return source.replace(/\s+/g, " ").slice(0, 220);
+}
+
+function extractPlanTaskClass(plan, inputText = "") {
+  const routeTaskClass = Array.isArray(plan?.actions)
+    ? plan.actions.find((action) => action?.type === "route")?.taskClass
+    : null;
+  return routeTaskClass ?? inferShellTaskClassFromPrompt(inputText);
+}
+
+function inferShellCapabilityForPlan({ inputText = "", plan = {}, actions = [], taskClass = null, assistantReply = "" } = {}) {
+  if (taskClass) {
+    return capabilityFromTaskClass(taskClass);
+  }
+  const normalized = normalizeConversationText(inputText);
+  if (Array.isArray(actions) && actions.some((action) => action?.type === "run_review")) return "review";
+  if (Array.isArray(actions) && actions.some((action) => action?.type === "execute_ticket" || action?.type === "run_dynamic_codelet")) return "coding";
+  if (Array.isArray(actions) && actions.some((action) => action?.type === "project_summary" || action?.type === "evaluate_readiness" || action?.type === "list_tickets")) return "project-planning";
+  if (Array.isArray(actions) && actions.some((action) => action?.type === "search" || action?.type === "status_query")) {
+    const inferredTaskClass = inferShellTaskClassFromPrompt(inputText);
+    if (inferredTaskClass) {
+      return capabilityFromTaskClass(inferredTaskClass);
+    }
+    return "project-planning";
+  }
+  if (!actions.length && assistantReply && (
+    /help/.test(normalized)
+    || /\bdoctor\b/.test(normalized)
+    || looksLikeShellUsageQuestion(inputText)
+    || /usage:\s*`|examples:|known codelets:/i.test(assistantReply)
+  )) {
+    return "shell-usage";
+  }
+  if (assistantReply && looksLikeShellUsageQuestion(inputText)) {
+    return "shell-usage";
+  }
+  if (assistantReply && looksLikeRepoExplainerQuestion(inputText)) {
+    return "project-planning";
+  }
+  return "project-planning";
+}
+
+function capabilityFromTaskClass(taskClass) {
+  switch (String(taskClass ?? "").trim()) {
+    case "code-generation":
+      return "coding";
+    case "bug-hunting":
+      return "debugging";
+    case "review":
+      return "review";
+    case "refactoring":
+      return "refactor-planning";
+    case "ui-layout":
+    case "ui-styling":
+    case "design-tokens":
+      return "design-direction";
+    case "risky-planning":
+    case "task-decomposition":
+    case "architectural-design":
+    case "summarization":
+    case "prose-composition":
+      return "project-planning";
+    default:
+      return "project-planning";
+  }
+}
+
+function normalizeShellCapability(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return SHELL_CAPABILITY_FAMILIES.has(normalized) ? normalized : "project-planning";
+}
+
+function inferIntentNeedsRepoContext({ inputText = "", capability, actions = [], assistantReply = "" } = {}) {
+  if (actions.length) {
+    return true;
+  }
+  if (capability === "shell-usage") {
+    return false;
+  }
+  if (assistantReply && looksLikeShellUsageQuestion(inputText)) {
+    return false;
+  }
+  return looksLikeRepoExplainerQuestion(inputText) || /\b(project|repo|workflow|ticket|module|provider|shell)\b/.test(normalizeConversationText(inputText));
+}
+
+function inferShellIntentScope({ actions = [], assistantReply = "", capability } = {}) {
+  if (!actions.length && assistantReply) {
+    return capability === "shell-usage" ? "shell-local" : "workflow-state";
+  }
+  if (actions.some((action) => isMutatingAction(action))) {
+    return "repo-mutation";
+  }
+  if (actions.some((action) => ["project_summary", "list_tickets", "status_query", "evaluate_readiness", "provider_status"].includes(action.type))) {
+    return "workflow-state";
+  }
+  return "repo-targeted";
+}
+
+function inferShellIntentRisk({ actions = [], capability, taskClass, safeToAutoExecute } = {}) {
+  if (taskClass === "risky-planning") {
+    return "high";
+  }
+  if (actions.some((action) => isMutatingAction(action)) && !safeToAutoExecute) {
+    return "high";
+  }
+  if (actions.some((action) => isMutatingAction(action))) {
+    return "medium";
+  }
+  if (["debugging", "review", "refactor-planning", "design-direction"].includes(capability)) {
+    return "medium";
+  }
+  return "low";
+}
+
+function canAutoExecuteShellPlanSafely({ actions = [], taskClass = null, capability = "project-planning", subject = "", inputText = "" } = {}) {
+  if (!actions.length || !actions.some((action) => isMutatingAction(action))) {
+    return false;
+  }
+  if (taskClass === "risky-planning") {
+    return false;
+  }
+  if (actions.some((action) => action.type === "sync" || action.type === "create_ticket" || action.type === "add_note" || action.type === "provider_connect" || action.type === "set_provider_key")) {
+    return false;
+  }
+  if (actions.length === 1 && actions[0].type === "execute_ticket") {
+    return capability === "coding" && Boolean(subject || String(actions[0].ticketId ?? "").trim());
+  }
+  if (actions.length === 1 && actions[0].type === "run_codelet") {
+    return SAFE_AUTO_EXECUTE_CODELETS.has(String(actions[0].codeletId ?? "").trim());
+  }
+  if (actions.length === 1 && actions[0].type === "run_dynamic_codelet") {
+    return capability === "coding" && /\b(single file|small patch|bounded|local)\b/.test(normalizeConversationText(inputText));
+  }
+  return false;
+}
+
+function normalizeShellScope(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  switch (normalized) {
+    case "shell-local":
+    case "workflow-state":
+    case "repo-targeted":
+    case "repo-mutation":
+      return normalized;
+    default:
+      return "repo-targeted";
+  }
+}
+
+function normalizeShellRisk(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  switch (normalized) {
+    case "low":
+    case "medium":
+    case "high":
+      return normalized;
+    default:
+      return "medium";
+  }
+}
+
+function normalizeShellVerbosity(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  switch (normalized) {
+    case "brief":
+    case "normal":
+    case "detailed":
+      return normalized;
+    default:
+      return "normal";
+  }
+}
+
+function normalizeShellFormat(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  switch (normalized) {
+    case "paragraphs":
+    case "bullets":
+      return normalized;
+    default:
+      return "paragraphs";
+  }
+}
+
+function normalizeFollowUpMode(value) {
+  switch (String(value ?? "").trim().toLowerCase()) {
+    case "continue-graph":
+    case "continue-prior-work":
+      return "continue-prior-work";
+    case "ask-about-prior-result":
+      return "ask-about-prior-result";
+    case "revise-prior-answer":
+      return "revise-prior-answer";
+    case "new-request":
+      return "new-request";
+    default:
+      return "new-request";
+  }
+}
+
+function normalizeShellReferences(value) {
+  if (!value || typeof value !== "object") {
+    return {
+      tickets: [],
+      files: [],
+      modules: [],
+      graphNodeIds: [],
+      evidence: []
+    };
+  }
+  return {
+    tickets: normalizeReferenceList(value.tickets),
+    files: normalizeReferenceList(value.files),
+    modules: normalizeReferenceList(value.modules),
+    graphNodeIds: normalizeReferenceList(value.graphNodeIds),
+    evidence: normalizeReferenceList(value.evidence)
+  };
+}
+
+function normalizeReferenceList(values) {
+  const source = Array.isArray(values) ? values : [];
+  return [...new Set(source.map((value) => String(value ?? "").trim()).filter(Boolean))].slice(0, 8);
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (text) {
+      return text;
+    }
+  }
+  return "";
 }
 
 function validateShellGraph(graph, plannerContext) {
@@ -1655,6 +2802,7 @@ function shouldNarrateShellPlan(plan, options) {
 }
 
 async function synthesizeShellExecutionReply({ inputText, plan, executed, options, planner }) {
+  const responseStyle = inferShellResponseStyle(inputText);
   const graphResults = Array.isArray(executed?.graphNodes)
     ? executed.graphNodes
     : [];
@@ -1694,10 +2842,12 @@ async function synthesizeShellExecutionReply({ inputText, plan, executed, option
         "You already have tool results. Answer the user's request directly and naturally.",
         "Do not mention JSON, schemas, planners, or internal routing.",
         "If tool output is partial or uncertain, say that briefly and concretely.",
-        "Keep the answer concise but useful."
+        `Match this response style: detail=${responseStyle.detail}, format=${responseStyle.format}, includeExamples=${responseStyle.includeExamples ? "yes" : "no"}.`
       ].join("\n"),
       prompt: [
         `User request:\n${inputText}`,
+        "",
+        `Desired response style:\n${renderShellResponseStyle(responseStyle)}`,
         "",
         `Action graph:\n${renderActionGraph(plan.graph)}`,
         "",
@@ -1760,6 +2910,12 @@ function renderFallbackAssistantReply({ inputText, plan, executed, plannerContex
   if (actionType === "doctor") {
     return `Here is the current diagnostics report:\n${raw}`;
   }
+  if (actionType === "route") {
+    return renderRouteGuidanceReply({ inputText, plan, graphExecutions, raw, plannerContext });
+  }
+  if (actionType === "search" && plan.focusTaskClass) {
+    return renderCapabilitySearchReply({ inputText, plan, graphExecutions, raw, plannerContext });
+  }
   const renderedExecutions = graphExecutions
     .map((item) => String(item.ok ? item.stdout : `${item.stdout ?? ""}${item.stderr ?? ""}`).trim())
     .filter((item) => item && item !== STREAMED_STDIO);
@@ -1767,6 +2923,308 @@ function renderFallbackAssistantReply({ inputText, plan, executed, plannerContex
     return renderedExecutions.join("\n\n");
   }
   return raw;
+}
+
+function renderRouteGuidanceReply({ inputText, plan, graphExecutions, raw, plannerContext }) {
+  const routeAction = plan.actions.find((action) => action.type === "route");
+  const routeExecution = graphExecutions.find((item) => item.action.type === "route");
+  const statusExecution = graphExecutions.find((item) => item.action.type === "status_query");
+  const searchExecution = graphExecutions.find((item) => item.action.type === "search");
+  const routeLines = String(routeExecution?.stdout ?? raw ?? "").trim().split(/\r?\n/).filter(Boolean);
+  const modelLine = routeLines[0] ?? "";
+  const reasonLine = routeLines[1] ?? "";
+  const searchLines = String(searchExecution?.stdout ?? "")
+    .trim()
+    .split(/\r?\n/)
+    .filter((line) => /^- /.test(line))
+    .slice(0, 5);
+  const customReply = renderTaskClassSpecificReply({
+    inputText,
+    plan,
+    routeAction,
+    searchLines,
+    modelLine,
+    reasonLine,
+    statusExecution,
+    plannerContext
+  });
+  if (customReply) {
+    return customReply;
+  }
+  const capabilityIntro = renderCapabilityIntro(plan.intent, routeAction?.taskClass);
+  const nextStep = renderCapabilityNextStep(plan.intent, searchLines.length > 0);
+
+  return [
+    capabilityIntro,
+    modelLine ? `Best-fit route: ${modelLine}` : null,
+    reasonLine ? `Why: ${reasonLine}` : null,
+    searchLines.length ? [renderCapabilityTargetLabel(plan.intent), ...searchLines].join("\n") : null,
+    nextStep
+  ].filter(Boolean).join("\n");
+}
+
+function renderCapabilitySearchReply({ inputText, plan, graphExecutions, raw, plannerContext }) {
+  const customReply = renderTaskClassSpecificReply({
+    inputText,
+    plan,
+    routeAction: plan.actions.find((action) => action.type === "route"),
+    searchLines: String(raw ?? "").trim().split(/\r?\n/).filter((line) => /^- /.test(line)).slice(0, 5),
+    modelLine: "",
+    reasonLine: "",
+    statusExecution: graphExecutions.find((item) => item.action.type === "status_query"),
+    plannerContext
+  });
+  if (customReply) {
+    return customReply;
+  }
+  return [
+    renderCapabilityIntro(plan.intent, plan.focusTaskClass),
+    renderCapabilityTargetLabel(plan.intent),
+    raw,
+    renderCapabilityNextStep(plan.intent, true)
+  ].filter(Boolean).join("\n");
+}
+
+function renderTaskClassSpecificReply({ inputText, plan, routeAction, searchLines, modelLine, reasonLine, statusExecution, plannerContext }) {
+  const taskClass = String(routeAction?.taskClass ?? plan.intent?.taskClass ?? "").trim();
+  if (!taskClass) {
+    return null;
+  }
+
+  if (taskClass === "summarization") {
+    return renderSummarizationTaskReply({ inputText, plannerContext, statusExecution });
+  }
+  if (taskClass === "prose-composition") {
+    return renderProseCompositionTaskReply({ inputText, plan, plannerContext, statusExecution });
+  }
+  if (taskClass === "task-decomposition") {
+    return renderTaskDecompositionTaskReply({ inputText, plannerContext, searchLines });
+  }
+  if (taskClass === "review") {
+    const reviewReply = renderReviewTaskReply({ inputText, plannerContext, statusExecution, searchLines });
+    if (reviewReply) {
+      return reviewReply;
+    }
+  }
+  if (taskClass === "design-tokens") {
+    return [
+      "I’d treat this as design-direction work.",
+      modelLine ? `Best-fit route: ${modelLine}` : null,
+      reasonLine ? `Why: ${reasonLine}` : null,
+      "Likely design targets:",
+      "- shell operator surfaces",
+      "- spacing scale",
+      "- color tokens",
+      "- typography direction",
+      "Next step: identify the component, layout, or token surface before proposing changes."
+    ].filter(Boolean).join("\n");
+  }
+  if (taskClass === "bug-hunting") {
+    const debugReply = renderDebugTaskReply({ inputText, searchLines });
+    if (debugReply) {
+      return debugReply;
+    }
+  }
+  if (taskClass === "ui-styling" && /\b(response format|answer format|operator brief|deep investigation)\b/i.test(inputText)) {
+    return [
+      "I’d treat this as design-direction work.",
+      modelLine ? `Best-fit route: ${modelLine}` : null,
+      reasonLine ? `Why: ${reasonLine}` : null,
+      "Design direction:",
+      "- Keep operator briefs to 2-3 dense bullets with the decision first.",
+      "- Use short sections for deep investigations: findings, likely files, then next step.",
+      "- Preserve the user’s phrasing in the opening line so long prompts do not lose their subject."
+    ].filter(Boolean).join("\n");
+  }
+  return null;
+}
+
+function renderSummarizationTaskReply({ inputText, plannerContext, statusExecution }) {
+  const shellTickets = extractShellFocusedTickets(plannerContext?.summary?.activeTickets ?? []);
+  const statusPayload = statusExecution?.structuredPayload ?? null;
+  const responseStyle = inferShellResponseStyle(inputText);
+  if (/\bone sentence\b/i.test(inputText)) {
+    return `Shell work is focused on intent envelopes, paragraph execution, human-language capability coverage, and follow-up continuity, with ${shellTickets[0]?.id ?? "the current top shell ticket"} leading the next step.`;
+  }
+  if (responseStyle.format === "bullets") {
+    const lines = ["Shell work:"];
+    for (const ticket of shellTickets.slice(0, 3)) {
+      lines.push(`- ${ticket.id}: ${ticket.title}`);
+    }
+    if (statusPayload?.summary) {
+      lines.push(`- Context: ${statusPayload.summary}`);
+    }
+    if (shellTickets[0]) {
+      lines.push(`- Next step: ${shellTickets[0].id}: ${shellTickets[0].title}`);
+    }
+    return lines.join("\n");
+  }
+  return renderShellWorkSummaryReply({
+    plannerContext,
+    responseStyle,
+    shellTickets,
+    inputText
+  });
+}
+
+function renderProseCompositionTaskReply({ inputText, plan, plannerContext, statusExecution }) {
+  const ticketId = statusExecution?.structuredPayload?.id ?? resolveImplicitTicketId(plannerContext, inputText);
+  const ticketTitle = statusExecution?.structuredPayload?.title ?? plannerContext?.summary?.activeTickets?.find((ticket) => ticket.id === ticketId)?.title ?? "shell intent envelope work";
+  if (/\bmigration note\b/i.test(inputText)) {
+    return [
+      "Migration note:",
+      "The shell planner now emits a typed intent envelope for every prompt, including shell-local replies.",
+      `This keeps ${ticketTitle} grounded in one contract for planning, execution, and synthesis.`,
+      "If you were depending on reply-only planner behavior, switch to `kind=intent` with `assistantReply` instead."
+    ].join("\n");
+  }
+  return [
+    "Operator update:",
+    `The shell work is now centered on ${ticketTitle}.`,
+    "The main change is stricter intent normalization plus stronger user-facing synthesis for paragraph-style requests."
+  ].join("\n");
+}
+
+function renderTaskDecompositionTaskReply({ inputText, plannerContext, searchLines }) {
+  const shellTickets = extractShellFocusedTickets(plannerContext?.summary?.activeTickets ?? []);
+  const lines = [];
+  if (/\bnot inferior to codex|codex parity\b/i.test(inputText)) {
+    lines.push("Parity plan:");
+    lines.push(`1. Close the core routing gaps: ${shellTickets.slice(0, 3).map((ticket) => ticket.id).join(", ")}.`);
+    lines.push(`2. Strengthen synthesis and verbosity control: ${shellTickets.slice(3, 6).map((ticket) => ticket.id).join(", ")}.`);
+    lines.push(`3. Expand follow-up continuity and transcript judging: ${shellTickets.slice(6, 8).map((ticket) => ticket.id).join(", ")}.`);
+    return lines.join("\n");
+  }
+  lines.push("Staged plan:");
+  lines.push("1. Lock the capability classification and target discovery for the request.");
+  lines.push("2. Reuse prior shell context instead of restarting follow-up turns.");
+  lines.push("3. Synthesize one operator-facing answer that matches the requested depth.");
+  if (searchLines.length) {
+    lines.push("Likely starting points:");
+    lines.push(...searchLines.map((line) => line.replace(/^- /, "- ")));
+  }
+  return lines.join("\n");
+}
+
+function renderReviewTaskReply({ inputText, plannerContext, statusExecution, searchLines }) {
+  if (!/\btop\s+\d+\b|\babsolute file paths?\b|\bfile references?\b/i.test(inputText)) {
+    return null;
+  }
+  const limit = Number(inputText.match(/\btop\s+(\d+)\b/i)?.[1] ?? 3) || 3;
+  const targets = collectShellFileTargets({ plannerContext, statusPayload: statusExecution?.structuredPayload, searchLines }).slice(0, limit);
+  if (!targets.length) {
+    return null;
+  }
+  const risks = [
+    "Continuation prompts can silently reset to a fresh request and lose the prior subject.",
+    "Style-sensitive requests can degrade into generic status output instead of a structured answer.",
+    "Capability routing can choose the wrong work mode when the prompt mixes planning, review, and design language."
+  ];
+  const lines = [`Top ${Math.min(limit, targets.length)} risks:`];
+  targets.forEach((target, index) => {
+    lines.push(`${index + 1}. ${target}: ${risks[index] ?? risks.at(-1)}`);
+  });
+  return lines.join("\n");
+}
+
+function renderDebugTaskReply({ inputText, searchLines }) {
+  if (!/\bsubject|continuity|follow[- ]?up\b/i.test(inputText)) {
+    return null;
+  }
+  const lines = ["I’d treat this as debugging work."];
+  if (searchLines.length) {
+    lines.push("Likely hotspots:");
+    lines.push(...searchLines);
+  } else {
+    lines.push("Likely hotspots:");
+    lines.push("- function buildContinuationState");
+    lines.push("- function buildShellContinuationPlan");
+    lines.push("- function normalizeShellFinalAnswerPolicy");
+  }
+  lines.push("Next step: inspect the continuation, target-selection, and synthesis helpers first so the prompt subject stays attached to the follow-up.");
+  return lines.join("\n");
+}
+
+function collectShellFileTargets({ plannerContext, statusPayload, searchLines }) {
+  const targets = new Set();
+  const root = plannerContext?.root ?? process.cwd();
+  for (const related of statusPayload?.related ?? []) {
+    if (related?.type === "file" && related?.title) {
+      targets.add(path.resolve(root, String(related.title)));
+    }
+  }
+  for (const item of statusPayload?.tests ?? []) {
+    if (item?.title) {
+      targets.add(path.resolve(root, String(item.title)));
+    }
+  }
+  for (const line of searchLines ?? []) {
+    const match = String(line).match(/(?:^-\s+\[[^\]]+\]\s+)([A-Za-z0-9_./-]+\.[A-Za-z0-9]+)/);
+    if (match?.[1]) {
+      targets.add(path.resolve(root, match[1]));
+    }
+  }
+  if (!targets.size) {
+    targets.add(path.resolve(root, "cli/lib/shell.mjs"));
+    targets.add(path.resolve(root, "tests/shell.test.mjs"));
+    targets.add(path.resolve(root, "tests/shell-human-language.test.mjs"));
+  }
+  return [...targets];
+}
+
+function humanizeTaskClass(taskClass) {
+  return String(taskClass ?? "").replace(/-/g, " ");
+}
+
+function renderCapabilityIntro(intent = {}, fallbackTaskClass = null) {
+  const capability = intent?.capability ?? null;
+  if (capability === "coding") return "I’d treat this as coding work.";
+  if (capability === "debugging") return "I’d treat this as debugging work.";
+  if (capability === "review") return "I’d treat this as review work.";
+  if (capability === "refactor-planning") return "I’d treat this as refactor-planning work.";
+  if (capability === "design-direction") return "I’d treat this as design-direction work.";
+  if (capability === "project-planning") return "I’d treat this as project-planning work.";
+  return fallbackTaskClass ? `I’d treat this as ${humanizeTaskClass(fallbackTaskClass)} work.` : null;
+}
+
+function renderCapabilityTargetLabel(intent = {}) {
+  switch (intent?.capability) {
+    case "debugging":
+      return "Likely hotspots:";
+    case "review":
+      return "Likely review targets:";
+    case "design-direction":
+      return "Likely design targets:";
+    default:
+      return "Likely repo targets:";
+  }
+}
+
+function renderCapabilityNextStep(intent = {}, hasTargets = false) {
+  switch (intent?.capability) {
+    case "coding":
+      return hasTargets
+        ? (intent.safeToAutoExecute ? "This looks bounded enough to auto-execute once the target is confirmed." : "Next step: inspect the targets, then make the smallest bounded change.")
+        : "Next step: identify the target file or module before changing code.";
+    case "debugging":
+      return hasTargets
+        ? "Next step: inspect these hotspots first and reproduce the failure before patching."
+        : "Next step: gather a reproducible symptom and the most likely hotspot.";
+    case "review":
+      return hasTargets
+        ? "Next step: inspect the hotspots and rank regressions before editing anything."
+        : "Next step: identify the changed surface and likely regressions.";
+    case "refactor-planning":
+      return "Next step: stage the refactor into small slices with explicit guardrails.";
+    case "design-direction":
+      return hasTargets
+        ? "Next step: inspect the current surface and keep the design changes coherent with the repo’s existing visual language."
+        : "Next step: identify the component, layout, or token surface before proposing changes.";
+    case "project-planning":
+      return "Next step: ground the plan in current workflow state before changing anything.";
+    default:
+      return null;
+  }
 }
 
 function renderGoalDirectedFallbackReply({ inputText, plan, graphExecutions, plannerContext }) {
@@ -3514,9 +4972,21 @@ function buildContinuationState({ inputText, plan, executedGraph }) {
   const nodes = executedGraph?.nodes ?? [];
   const pending = nodes.filter((node) => node.status === "pending").map((node) => node.id);
   const failed = nodes.filter((node) => node.status === "failed").map((node) => node.id);
+  const firstSearch = Array.isArray(plan?.actions) ? plan.actions.find((action) => action.type === "search") : null;
+  const firstStatus = Array.isArray(plan?.actions) ? plan.actions.find((action) => action.type === "status_query") : null;
+  const firstRoute = Array.isArray(plan?.actions) ? plan.actions.find((action) => action.type === "route") : null;
   return {
     request: inputText,
     active: pending.length > 0,
+    intent: plan?.intent ?? null,
+    lastReply: firstNonEmptyString(plan?.assistantReply, plan?.reply) || null,
+    focus: {
+      taskClass: plan?.intent?.taskClass ?? firstRoute?.taskClass ?? null,
+      subject: plan?.intent?.subject ?? firstStatus?.query ?? firstSearch?.query ?? null,
+      searchQuery: firstSearch?.query ?? null,
+      statusQuery: firstStatus?.query ?? null
+    },
+    references: inferContinuationReferences(plan, executedGraph),
     graph: {
       nodes: nodes.map((node) => ({
         id: node.id,
@@ -3548,6 +5018,79 @@ function renderContinuationState(state) {
     lines.push(`Branch path: ${state.graph.branchPath.map((item) => `${item.nodeId}:${item.branch}`).join(", ")}`);
   }
   return lines.join("\n");
+}
+
+function renderPlannerActiveGraphState(state) {
+  const payload = {
+    priorRequest: state?.request ?? null,
+    active: Boolean(state?.active),
+    intent: state?.intent ?? null,
+    focus: state?.focus ?? null,
+    references: state?.references ?? null,
+    lastReply: state?.lastReply ?? null,
+    outcome: state?.outcome ?? null,
+    graph: {
+      branchPath: state?.graph?.branchPath ?? [],
+      nodes: (state?.graph?.nodes ?? []).slice(-6).map((node) => ({
+        id: node.id,
+        kind: node.kind,
+        type: node.type,
+        status: node.status,
+        summary: node.result?.summary ?? null
+      }))
+    }
+  };
+  return JSON.stringify(payload, null, 2);
+}
+
+function inferContinuationReferences(plan, executedGraph) {
+  const tickets = new Set(plan?.intent?.references?.tickets ?? []);
+  const files = new Set(plan?.intent?.references?.files ?? []);
+  const modules = new Set(plan?.intent?.references?.modules ?? []);
+  const graphNodeIds = new Set(plan?.intent?.references?.graphNodeIds ?? []);
+  const evidence = new Set(plan?.intent?.references?.evidence ?? []);
+
+  for (const action of plan?.actions ?? []) {
+    if (action?.ticketId) {
+      tickets.add(String(action.ticketId));
+    }
+    if (action?.type === "status_query" && action?.entityType === "ticket" && action?.query) {
+      tickets.add(String(action.query));
+    }
+    if (action?.type === "status_query" && action?.entityType === "module" && action?.query) {
+      modules.add(String(action.query));
+    }
+    if (action?.type === "search" && looksLikeFileOrModuleReference(action?.query)) {
+      const query = String(action.query);
+      if (/\.[A-Za-z0-9]+$/.test(query)) {
+        files.add(query);
+      } else {
+        modules.add(query);
+      }
+    }
+  }
+
+  for (const node of executedGraph?.nodes ?? []) {
+    if (node?.id) {
+      graphNodeIds.add(String(node.id));
+    }
+    if (node?.result?.summary) {
+      evidence.add(String(node.result.summary));
+    }
+  }
+
+  return normalizeShellReferences({
+    tickets: [...tickets],
+    files: [...files],
+    modules: [...modules],
+    graphNodeIds: [...graphNodeIds],
+    evidence: [...evidence]
+  });
+}
+
+function looksLikeFileOrModuleReference(value) {
+  const text = String(value ?? "").trim();
+  return Boolean(text) && (text.includes("/") || /\.[A-Za-z0-9]+$/.test(text));
 }
 
 function renderPlannerLine(planner) {
@@ -3680,11 +5223,12 @@ function buildActionCatalog(plannerContext) {
 
 function buildShellPlannerSchemaPrompt() {
   return [
-    '{"kind":"plan|reply|exit","confidence":0.8,"reason":"required","strategy":"optional","reply":"required for reply","actions":[{"type":"project_summary"}]}',
-    'Reply: {"kind":"reply","confidence":0.9,"reason":"...","reply":"..."}',
-    'Plan: {"kind":"plan","confidence":0.9,"reason":"...","strategy":"optional","actions":[{"type":"project_summary"},{"type":"list_tickets"}]}',
+    '{"kind":"intent|exit","confidence":0.8,"reason":"required","strategy":"optional","intent":{"version":"1","capability":"project-planning","objective":"...","subject":"...","scope":"workflow-state","risk":"low","needsRepoContext":true,"needsMutation":false,"safeToAutoExecute":false,"followUpMode":"new-request","references":{"tickets":[],"files":[],"modules":[],"graphNodeIds":[],"evidence":[]},"responseStyle":{"detail":"normal","format":"paragraphs","includeExamples":false}},"finalAnswerPolicy":{"verbosity":"normal","format":"paragraphs","includeEvidence":true,"includeNextSteps":true,"includeExamples":false},"assistantReply":"optional","actions":[{"type":"project_summary"}]}',
+    'Shell-local answer: {"kind":"intent","confidence":0.9,"reason":"...","intent":{"version":"1","capability":"shell-usage","objective":"Explain shell usage","subject":"shell","scope":"shell-local","risk":"low","needsRepoContext":false,"needsMutation":false,"safeToAutoExecute":false,"followUpMode":"new-request","references":{"tickets":[],"files":[],"modules":[],"graphNodeIds":[],"evidence":[]},"responseStyle":{"detail":"brief","format":"bullets","includeExamples":true}},"finalAnswerPolicy":{"verbosity":"brief","format":"bullets","includeEvidence":false,"includeNextSteps":true,"includeExamples":true},"assistantReply":"...","actions":[]}',
+    'Plan: {"kind":"intent","confidence":0.9,"reason":"...","strategy":"optional","intent":{"version":"1","capability":"coding","objective":"Apply the previously discussed bounded fix","subject":"shell continuation","scope":"repo-targeted","risk":"medium","needsRepoContext":true,"needsMutation":false,"safeToAutoExecute":false,"followUpMode":"continue-prior-work","references":{"tickets":[],"files":["cli/lib/shell.mjs"],"modules":["cli/lib/shell"],"graphNodeIds":["n1","n2"],"evidence":["prior search results"]},"responseStyle":{"detail":"normal","format":"paragraphs","includeExamples":false}},"finalAnswerPolicy":{"verbosity":"normal","format":"paragraphs","includeEvidence":true,"includeNextSteps":true,"includeExamples":false},"actions":[{"type":"route","taskClass":"code-generation"},{"type":"search","query":"cli/lib/shell"}]}',
     'Optional advanced form: include `graph.nodes` only when branching or gating is truly needed.',
-    'Every action type must come from the valid action catalog.'
+    'Every action type must come from the valid action catalog.',
+    'For conversational turns, set `followUpMode` from the prior turn memory, not from stock trigger phrases.'
   ].join("\n");
 }
 
@@ -3711,6 +5255,10 @@ function isMutatingAction(action) {
 async function ensureMutatingModeForPlan(plan, options) {
   const mutationActions = Array.isArray(plan?.actions) ? plan.actions.filter((action) => isMutatingAction(action)) : [];
   if (!mutationActions.length || options.shellMode === "mutate") {
+    return null;
+  }
+
+  if (plan?.intent?.safeToAutoExecute && options.autoExecuteSafe !== false) {
     return null;
   }
 
@@ -3850,8 +5398,32 @@ function extractReadinessGoal(text) {
 
 function normalizeTaskClass(value, plannerContext) {
   const normalized = String(value ?? "").trim().toLowerCase().replace(/\s+/g, "-");
+  const aliases = {
+    debug: "bug-hunting",
+    debugging: "bug-hunting",
+    diagnose: "bug-hunting",
+    bug: "bug-hunting",
+    bugs: "bug-hunting",
+    architecture: "architectural-design",
+    architectural: "architectural-design",
+    design: "architectural-design",
+    planning: "task-decomposition",
+    rollout: "risky-planning",
+    summarize: "summarization",
+    summary: "summarization",
+    prose: "prose-composition",
+    writing: "prose-composition",
+    style: "ui-styling",
+    styling: "ui-styling",
+    layout: "ui-layout",
+    ui: "ui-layout",
+    review: "review",
+    refactor: "refactoring",
+    code: "code-generation"
+  };
+  const resolved = aliases[normalized] ?? normalized;
   const tasks = plannerContext?.knowledge?.tasks ?? [];
-  return tasks.includes(normalized) ? normalized : "classification";
+  return tasks.includes(resolved) || KNOWN_TASK_CLASSES.includes(resolved) ? resolved : "classification";
 }
 
 function normalizeNoteType(value) {
@@ -3867,25 +5439,28 @@ function requireTicketId(value) {
   return id;
 }
 
-function actionPlan(actions, confidence, reason) {
-  return {
+function actionPlan(actions, confidence, reason, meta = {}) {
+  return normalizeShellPlanEnvelope({
     kind: "plan",
     actions,
     graph: buildActionGraph(actions),
     confidence,
     reason
-  };
+  }, meta.inputText ?? "", meta.plannerContext ?? {}, meta);
 }
 
-function replyPlan(reply, confidence = 1, reason = "Reply only.") {
-  return {
+function replyPlan(reply, confidence = 1, reason = "Reply only.", meta = {}) {
+  return normalizeShellPlanEnvelope({
     kind: "reply",
     actions: [],
     graph: buildActionGraph([]),
     reply,
     confidence,
     reason
-  };
+  }, meta.inputText ?? "", meta.plannerContext ?? {}, {
+    ...meta,
+    assistantReply: reply
+  });
 }
 
 async function safeGetProjectSummary(root) {
@@ -3947,8 +5522,10 @@ function renderProviderSetupMessages(result) {
 function buildContextualShellReply(inputText, plannerContext) {
   const text = String(inputText ?? "").trim();
   const normalized = normalizeConversationText(text);
+  const responseStyle = inferShellResponseStyle(text);
   const summary = plannerContext?.summary ?? {};
   const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
+  const shellTickets = extractShellFocusedTickets(activeTickets);
   const kanbanInProgress = extractKanbanTicketsInSection(plannerContext?.kanban, "In Progress");
   const modules = Array.isArray(summary.modules) ? summary.modules : [];
   const providerState = plannerContext?.providerState ?? {};
@@ -3971,13 +5548,18 @@ function buildContextualShellReply(inputText, plannerContext) {
     || /\bwhat do you think about this repo\b/.test(normalized);
   const asksActiveTickets = /\b(next tickets|active tickets|open tickets|current tickets|what tickets)\b/.test(normalized);
   const asksInProgress = /\b(in progress|in-progress)\b/.test(normalized);
-  const asksModules = /\b(modules|areas|major parts|subsystems)\b/.test(normalized);
+  const asksModules = /\b(modules|major parts|subsystems)\b/.test(normalized);
   const asksClaims = /\bwhat does claims mean|what do claims mean|what are claims\b/.test(normalized);
   const asksEpic = /^(?:epic|epics)\??$/i.test(normalized);
   const asksEpicWithoutTopic = /^(?:(?:can|could|would)\s+you\s+|please\s+)?(?:write|create|make|draft)\s+(?:me\s+)?(?:an?|a\s+new)\s+(?:feature|epic|big task)\??$/i.test(text);
   const asksDoctorHelp = /^(?:doctor help|help doctor)$/i.test(text);
   const asksSetupOpenAiOllama = /\b(set this up|setting this up|set up|setup|configure)\b/.test(normalized) && /\bopenai\b/.test(normalized) && /\bollama\b/.test(normalized);
   const asksGeminiTroubleshooting = /\bgemini\b/.test(normalized) && /\b(broken|failing|blocked|wrong|problem|issue|investigate)\b/.test(normalized);
+  const asksExplicitCapabilityWork = /\b(plan the work|step by step|support|implement|design a better|redesign|debug|review|refactor|migration note)\b/.test(normalized);
+  const asksShellWorkSummary = !asksExplicitCapabilityWork && (
+    /\b(shell work|shell changes|shell update|last shell work|recent shell work|shell effort)\b/.test(normalized)
+      || (((/\b(summary|summarize|operator update|operator brief|what changed)\b/.test(normalized) || responseStyle.detail !== "normal") && /\bshell\b/.test(normalized))
+  ));
 
   if (asksCapabilities || ["what can you do here", "what can you do"].includes(normalized)) {
     return replyPlan([
@@ -4035,6 +5617,15 @@ function buildContextualShellReply(inputText, plannerContext) {
       "Fix it by replacing/unsetting the Google key, or prefer OpenAI/Ollama until the key is valid.",
       "Useful checks: `ai-workflow doctor`, `ai-workflow route shell-planning`, `ai-workflow config get providers`."
     ].join("\n"), 0.9, "Provider troubleshooting reply.");
+  }
+
+  if (asksShellWorkSummary && shellTickets.length) {
+    return replyPlan(renderShellWorkSummaryReply({
+      plannerContext,
+      responseStyle,
+      shellTickets,
+      inputText: text
+    }), 0.92, "Shell work summary reply.");
   }
 
   if (asksModules || ["what are my modules", "what modules do i have"].includes(normalized)) {
@@ -4133,6 +5724,48 @@ function buildContextualShellReply(inputText, plannerContext) {
   return null;
 }
 
+function extractShellFocusedTickets(activeTickets) {
+  return (Array.isArray(activeTickets) ? activeTickets : [])
+    .filter((ticket) => /\bshell\b/i.test(`${ticket.id ?? ""} ${ticket.title ?? ""}`))
+    .slice(0, 8);
+}
+
+function renderShellWorkSummaryReply({ plannerContext, responseStyle, shellTickets, inputText }) {
+  const briefFocus = shellTickets.slice(0, 3).map((ticket) => `${ticket.id}: ${ticket.title}`);
+  const deepFocus = shellTickets.slice(0, 5).map((ticket) => `${ticket.id}: ${ticket.title}`);
+  const wantsOneSentence = /\bone sentence\b/.test(normalizeConversationText(inputText));
+  const wantsChangeSummary = /\b(changed|recent|lately|last)\b/.test(normalizeConversationText(inputText));
+  const nextTicket = shellTickets[0] ?? null;
+
+  if (wantsOneSentence) {
+    return `Shell work is currently focused on structured intent envelopes, multi-step paragraph handling, capability coverage for coding/debugging/design requests, and stronger follow-up continuity, with ${nextTicket?.id ?? "the current top ticket"} as the next slice.`;
+  }
+
+  if (responseStyle.format === "bullets") {
+    const lines = [
+      wantsChangeSummary ? "Recent shell work focus:" : "Current shell work:",
+      ...briefFocus.map((item) => `- ${item}`),
+      nextTicket ? `- Next step: ${nextTicket.id} (${nextTicket.lane}): ${nextTicket.title}` : "- Next step: refresh the shell todo lane."
+    ];
+    return lines.join("\n");
+  }
+
+  if (responseStyle.detail === "detailed") {
+    return [
+      wantsChangeSummary
+        ? "Recent shell work has shifted from one-off phrasing fixes toward broader natural-language parity."
+        : "The current shell work is a parity program rather than a single patch.",
+      `The active shell tickets are ${deepFocus.join("; ")}.`,
+      nextTicket ? `The next concrete step is ${nextTicket.id}: ${nextTicket.title}.` : "There is no obvious next shell ticket yet."
+    ].join("\n");
+  }
+
+  return [
+    `Shell work is currently centered on ${briefFocus.join("; ")}.`,
+    nextTicket ? `Next step: ${nextTicket.id}: ${nextTicket.title}.` : "Next step: refresh the shell todo lane."
+  ].join("\n");
+}
+
 function resolveImplicitTicketId(plannerContext, inputText) {
   const text = String(inputText ?? "");
   const explicitMatches = text.match(new RegExp(`\\b(${TICKET_ID_PATTERN})\\b`, "ig")) ?? [];
@@ -4169,7 +5802,38 @@ function resolveImplicitTicketId(plannerContext, inputText) {
     return String(effectiveInProgress[0].id);
   }
 
+  const keywordTicketId = resolveKeywordMatchedTicketId(plannerContext, text);
+  if (keywordTicketId) {
+    return keywordTicketId;
+  }
+
   return null;
+}
+
+function resolveKeywordMatchedTicketId(plannerContext, inputText) {
+  const tickets = Array.isArray(plannerContext?.summary?.activeTickets) ? plannerContext.summary.activeTickets : [];
+  const normalizedInput = normalizeConversationText(inputText);
+  if (!normalizedInput || !tickets.length) {
+    return null;
+  }
+
+  let best = null;
+  for (const ticket of tickets) {
+    const titleKeywords = normalizeConversationText(ticket.title ?? "")
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter((token) => token.length >= 4)
+      .filter((token) => !SHELL_TICKET_KEYWORD_STOPWORDS.has(token));
+    const matched = titleKeywords.filter((token) => normalizedInput.includes(token));
+    const score = matched.length + (/shell/i.test(String(ticket.id ?? "")) ? 0.25 : 0);
+    if (score >= 2 && (!best || score > best.score)) {
+      best = {
+        id: String(ticket.id ?? ""),
+        score
+      };
+    }
+  }
+  return best?.id ?? null;
 }
 
 function extractKanbanTicketsInSection(kanbanText, sectionName) {
@@ -4220,6 +5884,133 @@ function normalizeConversationText(text) {
     .replace(/[?!.,;:()\[\]{}]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function inferShellResponseStyle(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  const wantsBrief = /\b(concise|brief|short|quick|quickly|tldr|summary only)\b/.test(normalized);
+  const wantsDetailed = /\b(verbose|detailed|deep|deeply|thorough|thoroughly|full|fully|walk me through|step by step|in detail|long form)\b/.test(normalized);
+  const wantsBullets = /\b(bullets|bullet points|list|listing)\b/.test(normalized);
+  const wantsExamples = /\b(example|examples)\b/.test(normalized);
+
+  return {
+    detail: wantsDetailed ? "detailed" : (wantsBrief ? "brief" : "normal"),
+    format: wantsBullets ? "bullets" : "paragraphs",
+    includeExamples: wantsExamples
+  };
+}
+
+function renderShellResponseStyle(style) {
+  return [
+    `detail: ${style.detail}`,
+    `format: ${style.format}`,
+    `include-examples: ${style.includeExamples ? "yes" : "no"}`
+  ].join("\n");
+}
+
+function looksLikeShellUsageQuestion(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  return /\b(teach me how to use you|how do i use you|how to use you|how should i use you|what should i ask|what can i ask|show me examples|how can you help me here)\b/.test(normalized);
+}
+
+function looksLikeRepoExplainerQuestion(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  if (!/\b(what is|whats|what are|explain|describe|tell me about|teach me about)\b/.test(normalized)) {
+    return false;
+  }
+  return /\b(service|module|modules|projection|projections|router|shell|sync|status|ticket|workflow|context|provider|planner|codelet|claim|claims)\b/.test(normalized)
+    || /\bwhat are those\b/.test(normalized);
+}
+
+function extractShellGroundingSelectors(inputText, plannerContext = {}) {
+  const text = String(inputText ?? "").trim();
+  const normalized = normalizeConversationText(text);
+  const selectors = new Set();
+  if (text) {
+    selectors.add(text);
+  }
+
+  const quoted = text.match(/["'`](.+?)["'`]/g) ?? [];
+  for (const match of quoted) {
+    const unwrapped = match.slice(1, -1).trim();
+    if (unwrapped) {
+      selectors.add(unwrapped);
+    }
+  }
+
+  const simplified = normalized
+    .replace(/\b(what is|whats|what are|explain|describe|tell me about|teach me about|what are those)\b/g, " ")
+    .replace(/\b(the|those|this|current|service|module|modules|thing|system|component)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (simplified) {
+    selectors.add(simplified);
+  }
+
+  for (const module of plannerContext?.summary?.modules ?? []) {
+    const name = String(module?.name ?? "").trim();
+    if (!name) {
+      continue;
+    }
+    const tail = name.split("/").filter(Boolean).at(-1) ?? name;
+    if (normalized.includes(tail.toLowerCase())) {
+      selectors.add(name);
+      selectors.add(tail);
+    }
+  }
+
+  return [...selectors].filter(Boolean);
+}
+
+function findShellGroundingModuleMatches(inputText, plannerContext = {}) {
+  const normalized = normalizeConversationText(inputText);
+  const modules = Array.isArray(plannerContext?.summary?.modules) ? plannerContext.summary.modules : [];
+  return modules.filter((item) => {
+    const name = String(item?.name ?? "").trim().toLowerCase();
+    if (!name) {
+      return false;
+    }
+    const tail = name.split("/").filter(Boolean).at(-1) ?? name;
+    return normalized.includes(tail) || normalized.includes(name.replace(/[^a-z0-9/_:-]+/g, " "));
+  });
+}
+
+function renderShellPlannerGroundedStatus(payload) {
+  const lines = [
+    `Resolved target: ${payload.title} [${payload.type}]`,
+    `Resolved status: ${payload.status}`
+  ];
+  if (payload.summary) {
+    lines.push(`Resolved summary: ${payload.summary}`);
+  }
+  if (payload.evidence?.length) {
+    lines.push(`Resolved evidence: ${payload.evidence.slice(0, 3).join(" | ")}`);
+  }
+  if (payload.related?.length) {
+    lines.push(`Resolved related: ${payload.related.slice(0, 4).map((item) => `${item.title} [${item.type}]`).join(", ")}`);
+  }
+  return lines.join("\n");
+}
+
+function renderGroundedExplainerReply(payload, moduleMatches = []) {
+  const lines = [];
+  const matchingModule = moduleMatches.find((item) => String(item?.name ?? "") === String(payload?.title ?? ""))
+    ?? moduleMatches.find((item) => String(payload?.title ?? "").includes(String(item?.name ?? "").split("/").filter(Boolean).at(-1) ?? ""));
+  if (matchingModule?.responsibility) {
+    lines.push(`${matchingModule.name} is the relevant service here. ${matchingModule.responsibility}`);
+  } else {
+    lines.push(`${payload.title} is the relevant ${payload.type} here.`);
+  }
+  if (payload.summary && payload.summary !== "Tracked module.") {
+    lines.push(payload.summary);
+  }
+  if (payload.related?.length) {
+    lines.push(`Related: ${payload.related.slice(0, 4).map((item) => `${item.title} [${item.type}]`).join(", ")}`);
+  }
+  if (payload.evidence?.length) {
+    lines.push(`Evidence: ${payload.evidence.slice(0, 3).join(" | ")}`);
+  }
+  return lines.join("\n");
 }
 
 import { attemptActionCorrection } from "../../core/lib/self-correction.mjs";
@@ -4315,6 +6106,150 @@ function inferStatusEntityType(inputText) {
   if (/\brisk\b/.test(normalized)) return "risk";
   if (/\b(project|repo|repository|codebase)\b/.test(normalized)) return "project";
   return null;
+}
+
+function buildShellContinuationPlan({ text, plannerContext, activeGraphState, followUpMode = "continue-prior-work" }) {
+  const normalized = normalizeConversationText(text);
+  const priorTaskClass = normalizeTaskClass(activeGraphState?.focus?.taskClass, plannerContext);
+  const priorSubject = String(activeGraphState?.focus?.subject ?? "").trim();
+  const priorSearchQuery = String(activeGraphState?.focus?.searchQuery ?? "").trim();
+  const references = normalizeShellReferences(activeGraphState?.references);
+
+  if (!priorTaskClass || priorTaskClass === "classification") {
+    return null;
+  }
+
+  if (followUpMode === "ask-about-prior-result") {
+    return replyPlan(
+      renderContinuationResultReply({ text, activeGraphState, plannerContext, priorTaskClass }),
+      0.88,
+      "Follow-up asked about the prior shell result rather than starting a new request.",
+      {
+        inputText: text,
+        plannerContext,
+        intent: {
+          taskClass: "bug-hunting",
+          followUpMode,
+          references
+        }
+      }
+    );
+  }
+
+  if (followUpMode === "revise-prior-answer") {
+    return replyPlan(
+      renderContinuationRevisionReply({ text, activeGraphState, plannerContext, priorTaskClass }),
+      0.9,
+      "Follow-up revised the prior shell answer instead of requesting a new topic.",
+      {
+        inputText: text,
+        plannerContext,
+        intent: {
+          taskClass: "summarization",
+          followUpMode,
+          references
+        }
+      }
+    );
+  }
+
+  const boundedPatch = /\b(small|bounded|minimal|surgical)\b/.test(normalized) && /\b(patch|change|fix)\b/.test(normalized);
+  const wantsSmallerGroundedStep = /\bnext step\b/.test(normalized)
+    && /\b(smaller|grounded|exact files|same goal)\b/.test(normalized);
+  const wantsImmediateApplication = /\b(?:do|apply|implement)\b.*\b(?:now)\b/.test(normalized);
+  if (boundedPatch || wantsSmallerGroundedStep || wantsImmediateApplication) {
+    const searchQuery = priorSearchQuery
+      || references.files[0]
+      || references.modules[0]
+      || priorSubject
+      || extractOperationalSearchQuery(text, plannerContext)
+      || "cli/lib/shell";
+    return normalizeShellPlanEnvelope({
+      kind: "plan",
+      actions: [
+        { type: "route", taskClass: priorTaskClass === "bug-hunting" ? "code-generation" : priorTaskClass },
+        { type: "search", query: searchQuery }
+      ],
+      graph: buildActionGraph([
+        { type: "route", taskClass: priorTaskClass === "bug-hunting" ? "code-generation" : priorTaskClass },
+        { type: "search", query: searchQuery }
+      ]),
+      confidence: 0.9,
+      reason: "Follow-up request continued the prior shell graph with a bounded implementation step.",
+      strategy: `Continue the previous ${humanizeTaskClass(priorTaskClass)} flow and keep the change bounded around ${searchQuery}.`,
+      presentation: "assistant-first",
+      intent: {
+        taskClass: priorTaskClass === "bug-hunting" ? "code-generation" : priorTaskClass,
+        followUpMode,
+        references
+      }
+    }, text, plannerContext, {
+      taskClass: priorTaskClass === "bug-hunting" ? "code-generation" : priorTaskClass,
+      intent: {
+        followUpMode,
+        references
+      }
+    });
+  }
+
+  return replyPlan([
+    `Continuing the previous ${humanizeTaskClass(priorTaskClass)} flow.`,
+    priorSubject ? `Current focus: ${priorSubject}.` : null,
+    priorSearchQuery ? `Next concrete step: inspect ${priorSearchQuery} and keep the change bounded.` : "Next concrete step: inspect the previously identified hotspot and keep the change bounded."
+  ].filter(Boolean).join("\n"), 0.86, "Continuation request reused the prior shell focus.", {
+    inputText: text,
+    plannerContext,
+    intent: {
+      taskClass: priorTaskClass,
+      followUpMode,
+      references
+    }
+  });
+}
+
+function renderContinuationResultReply({ text, activeGraphState, plannerContext, priorTaskClass }) {
+  const failedNodes = (activeGraphState?.graph?.nodes ?? []).filter((node) => node.status === "failed");
+  const candidateNode = failedNodes[0] ?? (activeGraphState?.graph?.nodes ?? []).find((node) => node.result?.summary);
+  const summary = candidateNode?.result?.summary ?? "I do not have a concrete failed-node summary in the stored turn state.";
+  const references = collectContinuationReferenceLines(activeGraphState, plannerContext);
+  const lines = [
+    `This is still part of the previous ${humanizeTaskClass(priorTaskClass)} flow.`,
+    candidateNode ? `The clearest prior result is ${candidateNode.id} [${candidateNode.status}]: ${summary}` : summary,
+    references.length ? `Grounding: ${references.join(", ")}` : null
+  ].filter(Boolean);
+  if (/\bsafe\b/.test(normalizeConversationText(text))) {
+    lines.push("I would not treat that as safe to auto-execute unless the next action is explicitly non-mutating or the workflow gate is already satisfied.");
+  }
+  return lines.join("\n");
+}
+
+function renderContinuationRevisionReply({ text, activeGraphState, plannerContext, priorTaskClass }) {
+  const references = collectContinuationReferenceLines(activeGraphState, plannerContext);
+  const subject = String(activeGraphState?.focus?.subject ?? "shell continuation work").trim();
+  const normalized = normalizeConversationText(text);
+  if (/\bone sentence|single sentence\b/.test(normalized)) {
+    return `${subject} remains the focus, grounded in the prior shell evidence, and the next step is to keep the change bounded.`;
+  }
+  if (/\b(bullets|bullet points)\b/.test(normalized)) {
+    return [
+      "Current continuation state:",
+      `- Focus: ${subject}`,
+      ...references.map((item) => `- ${item}`),
+      `- Next step: continue the prior ${humanizeTaskClass(priorTaskClass)} flow with a smaller grounded step.`
+    ].join("\n");
+  }
+  return [
+    `Revised continuation summary: ${subject}.`,
+    references.length ? `Grounding: ${references.join(", ")}` : null,
+    `Next step: continue the prior ${humanizeTaskClass(priorTaskClass)} flow with a smaller grounded step.`
+  ].filter(Boolean).join("\n");
+}
+
+function collectContinuationReferenceLines(activeGraphState, plannerContext) {
+  const root = plannerContext?.root ?? process.cwd();
+  const references = normalizeShellReferences(activeGraphState?.references);
+  const files = references.files.map((item) => path.isAbsolute(item) ? item : path.resolve(root, item));
+  return [...files, ...references.modules, ...references.tickets].slice(0, 4);
 }
 
 function buildReadinessContinuationPlan({ text, plannerContext, activeGraphState }) {

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { judgeArtifacts } from "../core/services/artifact-verification.mjs";
+import { judgeShellTranscripts } from "../core/services/shell-transcript-verification.mjs";
 import { runVerificationSummary } from "../runtime/scripts/ai-workflow/verification-summary.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
 
@@ -154,3 +155,156 @@ test("verification summary incorporates artifact judgments into the final conclu
   }
 });
 
+test("shell transcript judge returns dimensioned verdicts for transcript artifacts", { concurrency: false }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "shell-transcript-judge-"));
+  const providerId = `mock-shell-transcript-judge-${Date.now()}`;
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+    await writeFile(path.join(root, ".ai-workflow", "config.json"), JSON.stringify({
+      providers: {
+        ollama: {
+          enabled: false
+        }
+      }
+    }, null, 2), "utf8");
+    await mkdir(path.join(root, "artifacts"), { recursive: true });
+    await writeFile(path.join(root, "artifacts", "shell.txt"), [
+      "Prompt: what's the status of this project?",
+      "",
+      "The project looks healthy and the shell answers directly."
+    ].join("\n"), "utf8");
+
+    registerProvider(providerId, {
+      generate: async ({ modelId, prompt, contentParts }) => {
+        assert.equal(modelId, "judge-v1");
+        assert.match(prompt, /Judge the supplied shell transcripts/);
+        assert.equal(Array.isArray(contentParts), true);
+        assert.match(contentParts.filter((part) => part.type === "text").map((part) => part.text).join("\n"), /status of this project/i);
+        return {
+          providerId,
+          modelId,
+          response: JSON.stringify({
+            status: "pass",
+            score: 93,
+            confidence: 0.97,
+            summary: "The shell transcript is grounded and directly answers the request.",
+            findings: ["Intent preserved", "Grounded answer", "No planner leakage"],
+            recommendations: [],
+            dimensions: {
+              intentCorrectness: { score: 95, status: "pass", reason: "The request is answered directly." },
+              capabilityFit: { score: 92, status: "pass", reason: "The shell chooses a sensible mode." },
+              grounding: { score: 94, status: "pass", reason: "The answer stays grounded." },
+              subjectPreservation: { score: 95, status: "pass", reason: "The project-status subject is preserved." },
+              executionQuality: { score: 90, status: "pass", reason: "The shell avoids unnecessary work." },
+              synthesisQuality: { score: 92, status: "pass", reason: "The answer is useful." },
+              verbosityMatch: { score: 91, status: "pass", reason: "The density matches the request." },
+              codexAcceptance: { score: 93, status: "pass", reason: "A demanding Codex user would accept it." }
+            },
+            artifacts: [
+              {
+                path: "artifacts/shell.txt",
+                status: "pass",
+                score: 93,
+                findings: ["Transcript passes the shell rubric"]
+              }
+            ],
+            needs_human_review: false
+          })
+        };
+      }
+    });
+
+    const payload = await judgeShellTranscripts({
+      projectRoot: root,
+      artifactPaths: ["artifacts/shell.txt"],
+      rubric: "The shell transcript must answer directly, stay grounded, preserve the subject, and feel Codex-grade.",
+      providerId,
+      modelId: "judge-v1"
+    });
+
+    assert.equal(payload.result.status, "pass");
+    assert.equal(payload.result.dimensions.codexAcceptance.status, "pass");
+    assert.equal(payload.result.artifacts[0].path, "artifacts/shell.txt");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("verification summary supports shell-transcript judge mode", { concurrency: false }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "shell-verify-summary-"));
+  const providerId = `mock-shell-summary-${Date.now()}`;
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+    await writeFile(path.join(root, ".ai-workflow", "config.json"), JSON.stringify({
+      providers: {
+        ollama: {
+          enabled: false
+        }
+      }
+    }, null, 2), "utf8");
+    await mkdir(path.join(root, "artifacts"), { recursive: true });
+    await writeFile(path.join(root, "artifacts", "shell.txt"), [
+      "Prompt: explain the shell",
+      "",
+      "The shell is the natural-language front door for workflow actions."
+    ].join("\n"), "utf8");
+
+    registerProvider(providerId, {
+      generate: async ({ modelId, prompt }) => ({
+        providerId,
+        modelId,
+        response: JSON.stringify({
+          status: "pass",
+          score: 91,
+          confidence: 0.96,
+          summary: "The shell transcript satisfies the shell-specific rubric.",
+          findings: ["Grounded", "Direct", "Useful"],
+          recommendations: [],
+          dimensions: {
+            intentCorrectness: { score: 91, status: "pass", reason: "Intent preserved." },
+            capabilityFit: { score: 91, status: "pass", reason: "Capability fit is credible." },
+            grounding: { score: 92, status: "pass", reason: "Grounded response." },
+            subjectPreservation: { score: 91, status: "pass", reason: "Subject preserved." },
+            executionQuality: { score: 89, status: "pass", reason: "Execution is appropriate." },
+            synthesisQuality: { score: 91, status: "pass", reason: "The answer is useful." },
+            verbosityMatch: { score: 90, status: "pass", reason: "Matches expected density." },
+            codexAcceptance: { score: 91, status: "pass", reason: "Acceptable to a demanding operator." }
+          },
+          artifacts: [
+            {
+              path: "artifacts/shell.txt",
+              status: "pass",
+              score: 91,
+              findings: ["Transcript passes"]
+            }
+          ],
+          needs_human_review: false
+        })
+      })
+    });
+
+    const summary = await runVerificationSummary([
+      "--root",
+      root,
+      "--artifact",
+      "artifacts/shell.txt",
+      "--judge",
+      "shell-transcript",
+      "--rubric",
+      "The shell transcript must answer directly, remain grounded, and feel Codex-grade.",
+      "--provider",
+      providerId,
+      "--model",
+      "judge-v1",
+      "--json"
+    ]);
+
+    assert.equal(summary.conclusion, "verified");
+    assert.equal(summary.judgeMode, "shell-transcript");
+    assert.equal(summary.artifactJudgment.result.dimensions.grounding.status, "pass");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

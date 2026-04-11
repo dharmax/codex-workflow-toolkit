@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { openWorkflowStore } from "../db/sqlite-store.mjs";
-import { getGlobalConfigPath, getProjectConfigPath, readConfig, readConfigSafe, updateConfig, writeConfigValue } from "../../cli/lib/config-store.mjs";
+import { getGlobalConfigPath, getProjectConfigPath, isConfigWriteAccessError, readConfig, readConfigSafe, replaceConfig, updateConfig, writeConfigValue } from "../../cli/lib/config-store.mjs";
 import { loadKnowledge } from "./knowledge.mjs";
 import { leanCtxInstallHint, probeLeanCtx } from "./lean-ctx.mjs";
 import { sha1 } from "../lib/hash.mjs";
@@ -633,18 +633,22 @@ function normalizeConfiguredModels(providerId, config, builtinModels = []) {
   );
 }
 
-export async function refreshProviderRegistry({ root = process.cwd(), scope = "global", forceRefresh = true } = {}) {
+export async function refreshProviderRegistry({
+  root = process.cwd(),
+  scope = "global",
+  forceRefresh = true,
+  ignoreWriteErrors = false
+} = {}) {
   const configPath = scope === "global" ? getGlobalConfigPath() : getProjectConfigPath(root);
   const projectConfig = await readConfigSafe(getProjectConfigPath(root));
   const globalConfig = await readConfigSafe(getGlobalConfigPath());
   const providerState = await discoverProviderState({ root, forceRefresh });
   const refreshed = [];
+  const configRead = scope === "global" ? globalConfig : projectConfig;
+  const nextConfig = structuredClone(configRead.config ?? {});
+  nextConfig.providers ??= {};
 
   const providers = providerState.providers ?? {};
-  const nextConfig = await updateConfig(configPath, (config) => {
-    config.providers ??= {};
-    return config;
-  });
   for (const [providerId, provider] of Object.entries(providers)) {
     if (!provider || !Array.isArray(provider.models) || !provider.models.length) {
       continue;
@@ -677,12 +681,25 @@ export async function refreshProviderRegistry({ root = process.cwd(), scope = "g
     }
   }
 
-  await updateConfig(configPath, () => nextConfig);
+  try {
+    await replaceConfig(configPath, nextConfig);
+  } catch (error) {
+    if (!ignoreWriteErrors || !isConfigWriteAccessError(error)) {
+      throw error;
+    }
+    return {
+      configPath,
+      refreshed,
+      providerState,
+      warning: `Could not update ${configPath}: ${error.message}`
+    };
+  }
 
   return {
     configPath,
     refreshed,
-    providerState
+    providerState,
+    warning: null
   };
 }
 

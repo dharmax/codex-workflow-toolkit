@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs, asArray, printAndExit } from "./lib/cli.mjs";
 import { judgeArtifacts } from "../../../core/services/artifact-verification.mjs";
+import { judgeShellTranscripts } from "../../../core/services/shell-transcript-verification.mjs";
 
 const HELP = `Usage:
   node scripts/ai-workflow/verification-summary.mjs --cmd "pnpm test" --cmd "pnpm build"
@@ -20,6 +21,7 @@ Options:
   --rubric <text>    Required rubric text for artifact judgments.
   --rubric-file <path>  Read rubric text from a file.
   --goal <text>      Optional goal or target statement for the artifact judge.
+  --judge <artifact|shell-transcript>  Judge mode for artifacts. Defaults to artifact.
   --provider <id>    Force the artifact judge provider.
   --model <id>       Force the artifact judge model.
   --json             Emit JSON.
@@ -42,6 +44,7 @@ export async function runVerificationSummary(argv = process.argv.slice(2)) {
     rubricFile: args["rubric-file"]
   });
   const goal = args.goal ? String(args.goal).trim() : null;
+  const judgeMode = String(args.judge ?? "artifact").trim().toLowerCase();
   const providerId = args.provider ? String(args.provider).trim() : null;
   const modelId = args.model ? String(args.model).trim() : null;
 
@@ -60,7 +63,8 @@ export async function runVerificationSummary(argv = process.argv.slice(2)) {
   let artifactJudgment = null;
   if (artifactPaths.length) {
     const startedAt = Date.now();
-    artifactJudgment = await judgeArtifacts({
+    const judgeFn = judgeMode === "shell-transcript" ? judgeShellTranscripts : judgeArtifacts;
+    artifactJudgment = await judgeFn({
       projectRoot: root,
       artifactPaths,
       rubric: rubricText,
@@ -89,6 +93,7 @@ export async function runVerificationSummary(argv = process.argv.slice(2)) {
     conclusion,
     results,
     artifactJudgment,
+    judgeMode,
     skips
   };
 
@@ -110,7 +115,7 @@ export async function runVerificationSummary(argv = process.argv.slice(2)) {
 
   if (artifactJudgment) {
     lines.push("Artifact judgment:");
-    lines.push(`- ${artifactJudgment.result?.status === "pass" ? "PASS" : "FAIL"} artifact-judge (${artifactJudgment.durationMs}ms)`);
+    lines.push(`- ${artifactJudgment.result?.status === "pass" ? "PASS" : "FAIL"} ${summary.judgeMode === "shell-transcript" ? "shell-transcript-judge" : "artifact-judge"} (${artifactJudgment.durationMs}ms)`);
     lines.push(`  Evidence: ${formatArtifactEvidence(artifactJudgment.result)}`);
   }
 

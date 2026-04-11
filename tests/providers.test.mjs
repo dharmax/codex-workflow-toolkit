@@ -2,9 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { generateWithAnthropic, generateWithOllama, probeOllama, refreshProviderQuotaState, resolveOllamaConfig } from "../core/services/providers.mjs";
-import { discoverProviderState } from "../core/services/providers.mjs";
+import { discoverProviderState, refreshProviderRegistry } from "../core/services/providers.mjs";
 import { buildModelFitMatrix } from "../core/services/model-fit.mjs";
 import { searchWebEvidence } from "../core/services/web-search.mjs";
 import { runProviderSetupWizard } from "../cli/lib/provider-setup.mjs";
@@ -687,6 +687,69 @@ test("runProviderSetupWizard explains configured Ollama models when the host doe
     } else {
       process.env.OLLAMA_HOST = originalOllamaHost;
     }
+    await rm(root, { recursive: true, force: true });
+    await rm(tempHome, { recursive: true, force: true });
+  }
+});
+
+test("refreshProviderRegistry tolerates read-only global config paths when writes are optional", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "providers-refresh-readonly-root-"));
+  const tempHome = await mkdtemp(path.join(os.tmpdir(), "providers-refresh-readonly-home-"));
+  const originalFetch = globalThis.fetch;
+  const originalHome = process.env.HOME;
+  const originalOllamaHost = process.env.OLLAMA_HOST;
+  process.env.HOME = tempHome;
+  process.env.OLLAMA_HOST = "http://127.0.0.1:11434";
+  globalThis.fetch = async (url) => {
+    if (url === "http://127.0.0.1:11434/api/tags") {
+      return {
+        ok: true,
+        async json() {
+          return {
+            models: [
+              { name: "llama3.2:3b" }
+            ]
+          };
+        }
+      };
+    }
+    throw new Error(`Unexpected fetch URL: ${url}`);
+  };
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+    await chmod(tempHome, 0o555);
+
+    const result = await refreshProviderRegistry({
+      root,
+      scope: "global",
+      forceRefresh: true,
+      ignoreWriteErrors: true
+    });
+
+    assert.equal(
+      result.refreshed.some((entry) => entry.providerId === "ollama" && entry.modelCount === 1),
+      true
+    );
+    assert.match(result.warning ?? "", /Could not update/);
+    assert.equal(result.providerState.providers.ollama.available, true);
+    await assert.rejects(
+      readFile(path.join(tempHome, ".ai-workflow", "config.json"), "utf8"),
+      /ENOENT/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (originalOllamaHost === undefined) {
+      delete process.env.OLLAMA_HOST;
+    } else {
+      process.env.OLLAMA_HOST = originalOllamaHost;
+    }
+    await chmod(tempHome, 0o755);
     await rm(root, { recursive: true, force: true });
     await rm(tempHome, { recursive: true, force: true });
   }

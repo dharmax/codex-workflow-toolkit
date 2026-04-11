@@ -108,7 +108,15 @@ export async function runProviderSetupWizard({
     }
 
     providerState = await discoverProviderStateImpl({ root, forceRefresh: true });
-    const refreshResult = await refreshProviderRegistryImpl({ root, scope, forceRefresh: true });
+    const refreshResult = await refreshProviderRegistryImpl({
+      root,
+      scope,
+      forceRefresh: true,
+      ignoreWriteErrors: !interactive
+    });
+    if (refreshResult?.warning) {
+      messages.push(refreshResult.warning);
+    }
 
     return {
       configPath,

@@ -2,6 +2,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { judgeShellTranscripts } from "../../../../core/services/shell-transcript-verification.mjs";
 import { ensureDir, readText } from "./fs-utils.mjs";
 import { getToolkitRoot } from "./toolkit-root.mjs";
 import { collectOperatorSurfaceState, listOperatorSurfaceIds } from "./operator-surfaces.mjs";
@@ -145,8 +146,23 @@ async function buildShellScenarios({ profile, cliPath, root, timeoutMs }) {
       cwd: root,
       timeoutMs,
       cliPath,
-      args: ["shell", "Give me a concise operator brief grounded in the current workflow state, and justify the recommendation.", "--json", "--trace"],
-      validationHints: shellPlanningExpectation
+      args: ["shell", "Give me a concise operator brief grounded in the current workflow state, and justify the recommendation.", "--trace"],
+      validationHints: {
+        ...shellPlanningExpectation,
+        semanticRubric: "The shell output must directly answer the operator brief request, stay grounded in workflow/project state, avoid exposing internal planner/router chatter, and must not say it needs the AI planner or a clearer phrasing."
+      }
+    }));
+    scenarios.push(await runCliScenario({
+      id: "ai-explainer-read",
+      description: "shell answers a repo explainer question with grounded AI fallback behavior",
+      cwd: root,
+      timeoutMs,
+      cliPath,
+      args: ["shell", "what is the projections service?", "--trace"],
+      validationHints: {
+        ...shellPlanningExpectation,
+        semanticRubric: "The shell output must answer what the projections service is, mention projections directly, stay grounded in repo/project evidence, avoid internal planner/router chatter, and must not say it needs the AI planner or a clearer phrasing."
+      }
     }));
   }
 
@@ -272,13 +288,14 @@ async function runCliScenario({ id, description, cwd, timeoutMs, cliPath, args, 
     timeoutMs,
     args: [cliPath, ...args]
   });
-  return buildScenarioResult({
+  const scenario = buildScenarioResult({
     id,
     description,
     command: `${process.execPath} ${cliPath} ${args.map(shellQuote).join(" ")}`,
     result,
     validationHints
   });
+  return applyScenarioSemanticValidation({ cwd, scenario, validationHints });
 }
 
 function buildScenarioResult({ id, description, command, result, validationHints = {} }) {
@@ -338,11 +355,112 @@ function validateScenarioResult({ id, result, model, progressLines, validationHi
     if (validationHints.expectLocalModel && !/^ollama:/i.test(model)) {
       return { ok: false, message: "expected the shell soft test to route through Ollama when Ollama is available" };
     }
+    if (/needs the AI planner or a more direct phrasing/i.test(`${result.stdout}\n${result.stderr}`)) {
+      return { ok: false, message: "operator-brief prompt fell back to the generic shell failure reply" };
+    }
+  }
+  if (id === "ai-explainer-read") {
+    if (!progressLines.length) {
+      return { ok: false, message: "missing non-interactive shell progress output for explainer prompt" };
+    }
+    if (!model) {
+      return { ok: false, message: "missing AI model trace for explainer prompt" };
+    }
+    if (validationHints.expectLocalModel && !/^ollama:/i.test(model)) {
+      return { ok: false, message: "expected the explainer prompt to route through Ollama when Ollama is available" };
+    }
+    if (/needs the AI planner or a more direct phrasing/i.test(`${result.stdout}\n${result.stderr}`)) {
+      return { ok: false, message: "explainer prompt fell back to the generic shell failure reply" };
+    }
+    if (!/projections/i.test(result.stdout)) {
+      return { ok: false, message: "explainer prompt did not return a projections-focused answer" };
+    }
   }
   if (result.code !== 0) {
     return { ok: false, message: "scenario process exited with a non-zero code" };
   }
   return { ok: true, message: "" };
+}
+
+async function applyScenarioSemanticValidation({ cwd, scenario, validationHints = {} }) {
+  if (!validationHints.semanticRubric) {
+    return scenario;
+  }
+
+  const transcriptRoot = await mkdtemp(path.join(os.tmpdir(), `ai-workflow-dogfood-${scenario.id}-`));
+  const transcriptPath = path.join(transcriptRoot, `${scenario.id}.txt`);
+  const transcript = [
+    `Scenario: ${scenario.id}`,
+    `Description: ${scenario.description}`,
+    `Command: ${scenario.command}`,
+    scenario.model ? `Model: ${scenario.model}` : null,
+    scenario.progressLines?.length ? `Progress:\n${scenario.progressLines.join("\n")}` : null,
+    "Stdout:",
+    scenario.stdout ?? "",
+    "Stderr:",
+    scenario.stderr ?? ""
+  ].filter(Boolean).join("\n\n");
+
+  try {
+    await writeFile(transcriptPath, `${transcript}\n`, "utf8");
+    const routedModel = parseScenarioModelRef(scenario.model);
+    const judgment = await judgeShellTranscripts({
+      projectRoot: cwd,
+      artifactPaths: [transcriptPath],
+      rubric: validationHints.semanticRubric,
+      goal: scenario.description,
+      providerId: routedModel?.providerId ?? null,
+      modelId: routedModel?.modelId ?? null
+    });
+    scenario.semanticJudgment = {
+      status: judgment.result?.status ?? "needs_human_review",
+      score: judgment.result?.score ?? 0,
+      confidence: judgment.result?.confidence ?? 0,
+      summary: judgment.result?.summary ?? ""
+    };
+    if (judgment.result?.status === "fail") {
+      scenario.ok = false;
+      scenario.stderr = truncateText([
+        scenario.stderr,
+        `semantic validation failed: ${judgment.result?.summary ?? "artifact judge did not pass"}`
+      ].filter(Boolean).join("\n"));
+    } else if (judgment.result?.status && judgment.result.status !== "pass") {
+      scenario.stderr = truncateText([
+        scenario.stderr,
+        `semantic validation warning: ${judgment.result?.summary ?? "artifact judge requested human review"}`
+      ].filter(Boolean).join("\n"));
+    }
+    return scenario;
+  } catch (error) {
+    scenario.semanticJudgment = {
+      status: "needs_human_review",
+      score: 0,
+      confidence: 0,
+      summary: error?.message ?? String(error)
+    };
+    scenario.stderr = truncateText([
+      scenario.stderr,
+      `semantic validation warning: ${error?.message ?? String(error)}`
+    ].filter(Boolean).join("\n"));
+    return scenario;
+  } finally {
+    await rm(transcriptRoot, { recursive: true, force: true });
+  }
+}
+
+function parseScenarioModelRef(model) {
+  const text = String(model ?? "").trim();
+  if (!text) {
+    return null;
+  }
+  const match = text.match(/^([^:]+):(.+?)(?:\s+@|$)/);
+  if (!match) {
+    return null;
+  }
+  return {
+    providerId: match[1],
+    modelId: match[2]
+  };
 }
 
 function truncateText(value, maxLength = 1600) {

@@ -1,0 +1,11 @@
+{
+  "id": "shell-transcript-judge",
+  "stability": "stable",
+  "category": "verification",
+  "summary": "Judge shell transcripts for intent handling, grounding, and Codex-like answer quality.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/shell-transcript-judge.mjs",
+  "execution": "js",
+  "focus": "shell-transcript-evaluation",
+  "taskClass": "artifact-evaluation"
+}

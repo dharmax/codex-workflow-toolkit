@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { chooseShellPlannerModel, compileShellAction, handleShellCommand, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, buildShellPlannerPrompt, planShellRequestWithAgent, resolveShellPlanners, runShellTurn } from "../cli/lib/shell.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
+import { syncProject } from "../core/services/sync.mjs";
 
 const defaultShellTestFetch = async (url) => {
   if (String(url).includes("duckduckgo")) {
@@ -319,6 +320,8 @@ test("planShellRequestHeuristically answers doctor help locally", () => {
   assert.equal(plan.kind, "reply");
   assert.match(plan.reply, /doctor: run local diagnostics/i);
   assert.match(plan.reply, /Usage: `doctor`/);
+  assert.equal(plan.intent.capability, "shell-usage");
+  assert.equal(plan.finalAnswerPolicy.format, "paragraphs");
 });
 
 test("planShellRequestHeuristically asks for a topic on incomplete epic requests", () => {
@@ -332,6 +335,103 @@ test("planShellRequestHeuristically asks for a topic on incomplete epic requests
   assert.equal(plan.kind, "reply");
   assert.match(plan.reply, /Give me the epic topic/i);
   assert.match(plan.reply, /create epic for <topic>/i);
+  assert.equal(plan.intent.capability, "project-planning");
+});
+
+test("planShellRequestHeuristically attaches a typed intent envelope to capability-routing plans", () => {
+  const plan = planShellRequestHeuristically("I need design tokens for shell/operator surfaces so colors and spacing stay coherent.", {
+    toolkitCodelets: [],
+    projectCodelets: [],
+    summary: {},
+    providerState: {}
+  });
+
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.intent.capability, "design-direction");
+  assert.equal(plan.intent.taskClass, "design-tokens");
+  assert.equal(plan.intent.scope, "repo-targeted");
+  assert.equal(plan.finalAnswerPolicy.includeEvidence, true);
+});
+
+test("planShellRequestHeuristically maps follow-up handling review prompts onto the shell continuity ticket", () => {
+  const plan = planShellRequestHeuristically("review the follow-up handling and give me the top 3 risks with absolute file paths.", {
+    toolkitCodelets: [],
+    projectCodelets: [],
+    summary: {
+      activeTickets: [
+        { id: "TKT-SHELL-NL-007", title: "Strengthen conversational continuity and follow-up handling in shell sessions", lane: "Todo" }
+      ]
+    },
+    providerState: {}
+  });
+
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.intent.capability, "review");
+  assert.equal(plan.intent.taskClass, "review");
+  assert.equal(plan.actions[1]?.type, "status_query");
+  assert.equal(plan.actions[1]?.query, "TKT-SHELL-NL-007");
+});
+
+test("planShellRequestHeuristically treats response-format redesign as design-direction work", () => {
+  const plan = planShellRequestHeuristically("design a better shell response format for terse operator briefs versus deep investigations.", {
+    toolkitCodelets: [],
+    projectCodelets: [],
+    summary: {
+      activeTickets: [
+        { id: "TKT-SHELL-NL-006", title: "Adapt shell answer verbosity and format to user intent", lane: "Todo" }
+      ]
+    },
+    providerState: {}
+  });
+
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.intent.capability, "design-direction");
+  assert.equal(plan.intent.taskClass, "ui-styling");
+});
+
+test("validateShellPlan accepts the typed intent envelope format", () => {
+  const plan = validateShellPlan({
+    kind: "intent",
+    confidence: 0.94,
+    reason: "This is a debugging-style request.",
+    intent: {
+      version: "1",
+      capability: "debugging",
+      objective: "Investigate a modal overlay regression.",
+      subject: "modal overlay",
+      taskClass: "bug-hunting",
+      scope: "repo-targeted",
+      risk: "medium",
+      needsRepoContext: true,
+      needsMutation: false,
+      safeToAutoExecute: false,
+      followUpMode: "new-request",
+      responseStyle: {
+        detail: "normal",
+        format: "paragraphs",
+        includeExamples: false
+      }
+    },
+    finalAnswerPolicy: {
+      verbosity: "normal",
+      format: "paragraphs",
+      includeEvidence: true,
+      includeNextSteps: true,
+      includeExamples: false
+    },
+    actions: [
+      { type: "route", taskClass: "bug-hunting" },
+      { type: "search", query: "modal overlay" }
+    ]
+  }, {
+    toolkitCodelets: [],
+    projectCodelets: []
+  }, "I'm debugging a modal overlay issue.");
+
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.intent.capability, "debugging");
+  assert.equal(plan.intent.taskClass, "bug-hunting");
+  assert.equal(plan.finalAnswerPolicy.includeNextSteps, true);
 });
 
 test("planShellRequestWithAgent uses operator-first prompt design and interaction memory", async (t) => {
@@ -421,6 +521,126 @@ test("buildShellPlannerPrompt keeps first-turn runtime context minimal by defaul
   assert.match(prompt, /## Guidance Highlights/);
   assert.match(prompt, /- Project guidelines: Use ESM\./);
   assert.doesNotMatch(prompt, /Build the future\.|## Todo|Smart status here\./);
+});
+
+test("buildShellPlannerPrompt grounds repo explainer questions with module evidence", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-grounding-" + Math.random().toString(36).slice(2));
+  await fs.mkdir(path.join(root, "core", "services"), { recursive: true });
+  await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "grounding-fixture", type: "module" }, null, 2));
+  await fs.writeFile(
+    path.join(root, "core", "services", "projections.mjs"),
+    [
+      "export function buildProjectSummary() {",
+      "  return { ok: true };",
+      "}",
+      "",
+      "export function renderKanbanProjection() {",
+      "  return '# Kanban';",
+      "}"
+    ].join("\n")
+  );
+  await syncProject({ projectRoot: root });
+
+  try {
+    const { prompt } = await buildShellPlannerPrompt("what is the projections service?", {
+      root,
+      plannerContext: {
+        root,
+        providerState: { providers: {} },
+        summary: {
+          activeTickets: [],
+          modules: [{ name: "core/services/projections", responsibility: "Builds project summaries and kanban projections." }]
+        },
+        toolkitCodelets: [],
+        projectCodelets: []
+      },
+      history: []
+    });
+
+    assert.match(prompt, /## Grounded Repo Evidence/);
+    assert.match(prompt, /Likely module matches:/);
+    assert.match(prompt, /core\/services\/projections/);
+    assert.match(prompt, /Resolved target:/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("planShellRequestWithAgent accepts a plain-text planner reply for explainer questions", async () => {
+  registerProvider("mock-plain-explainer", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async () => ({
+      response: "The projections service builds project summaries and generated kanban/epic views from workflow state."
+    })
+  });
+
+  const result = await planShellRequestWithAgent("what is the projections service?", {
+    root: "/tmp",
+    planner: { providerId: "mock-plain-explainer", modelId: "brain-v1" },
+    plannerContext: { summary: {}, toolkitCodelets: [], projectCodelets: [] },
+    history: []
+  });
+
+  assert.equal(result.kind, "reply");
+  assert.match(result.reply, /projections service builds project summaries/i);
+});
+
+test("planShellRequest falls back to grounded repo evidence for explainer questions when the planner times out", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-timeout-grounding-" + Math.random().toString(36).slice(2));
+  await fs.mkdir(path.join(root, "core", "services"), { recursive: true });
+  await fs.writeFile(path.join(root, "package.json"), JSON.stringify({ name: "grounding-timeout-fixture", type: "module" }, null, 2));
+  await fs.writeFile(
+    path.join(root, "core", "services", "projections.mjs"),
+    [
+      "export function buildProjectSummary() {",
+      "  return { ok: true };",
+      "}",
+      "",
+      "export function renderKanbanProjection() {",
+      "  return '# Kanban';",
+      "}"
+    ].join("\n")
+  );
+  await syncProject({ projectRoot: root });
+
+  registerProvider("mock-timeout-explainer", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async () => {
+      throw new Error("planner timed out after 25ms");
+    }
+  });
+
+  try {
+    const result = await planShellRequest("what is the projections service?", {
+      root,
+      plannerContext: {
+        root,
+        providerState: { providers: {} },
+        summary: {
+          activeTickets: [],
+          modules: [{ name: "core/services/projections", responsibility: "Builds project summaries and kanban projections." }]
+        },
+        toolkitCodelets: [],
+        projectCodelets: []
+      },
+      planners: {
+        planners: [{ providerId: "mock-timeout-explainer", modelId: "brain-v1" }],
+        heuristic: { mode: "heuristic", reason: "fallback" }
+      },
+      history: []
+    });
+
+    assert.equal(result.kind, "reply");
+    assert.match(result.reply, /core\/services\/projections is the relevant service/i);
+    assert.match(result.reply, /Builds project summaries and kanban projections/i);
+    assert.equal(result.planner.mode, "ai-fallback-to-grounded");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test("planShellRequestWithAgent handles vague requests by asking for clarification", async (t) => {
@@ -981,6 +1201,18 @@ test("heuristic shell planner handles broad project-next questions and implicit 
   assert.equal(execute.kind, "plan");
   assert.deepEqual(execute.actions, [
     { type: "execute_ticket", ticketId: "REF-APP-SHELL-01", apply: true }
+  ]);
+});
+
+test("heuristic fallback treats operator-brief phrasing as project status", async () => {
+  const plan = await planShellRequest("Give me a concise operator brief grounded in the current workflow state, and justify the recommendation.", {
+    plannerContext,
+    noAi: true,
+    planners: { planners: [], heuristic: { mode: "heuristic", reason: "fallback" } }
+  });
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [
+    { type: "project_summary" }
   ]);
 });
 
@@ -1563,6 +1795,184 @@ test("heuristic continuation replies can reference prior graph state", () => {
   assert.equal(plan.kind, "reply");
   assert.match(plan.reply, /last graph has already been executed/i);
   assert.match(plan.reply, /Branch path: branch:ifTrue/);
+});
+
+test("heuristic continuation planning can keep the previous coding focus", () => {
+  const plan = planShellRequestHeuristically("follow up on that and make it a small bounded patch.", plannerContext, {
+    activeGraphState: {
+      focus: {
+        taskClass: "code-generation",
+        subject: "shell planner replies",
+        searchQuery: "cli/lib/shell"
+      },
+      graph: {
+        nodes: [
+          { id: "n1", kind: "action", status: "completed", result: { summary: "Route selected." } }
+        ],
+        branchPath: []
+      }
+    }
+  });
+
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.intent.taskClass, "code-generation");
+  assert.equal(plan.intent.followUpMode, "continue-prior-work");
+  assert.equal(plan.actions[1]?.type, "search");
+  assert.equal(plan.actions[1]?.query, "cli/lib/shell");
+});
+
+test("heuristic continuation can explain prior failed steps without a stock trigger regex", () => {
+  const plan = planShellRequestHeuristically("why did the second step fail, exactly?", plannerContext, {
+    activeGraphState: {
+      focus: {
+        taskClass: "bug-hunting",
+        subject: "shell continuation failures",
+        searchQuery: "cli/lib/shell"
+      },
+      references: {
+        files: ["cli/lib/shell.mjs"],
+        graphNodeIds: ["n1", "n2"]
+      },
+      graph: {
+        nodes: [
+          { id: "n1", kind: "action", type: "route", status: "completed", result: { summary: "Route selected." } },
+          { id: "n2", kind: "action", type: "search", status: "failed", result: { summary: "search step failed on shell continuation targets" } }
+        ],
+        branchPath: []
+      }
+    }
+  });
+
+  assert.equal(plan.kind, "reply");
+  assert.equal(plan.intent.followUpMode, "ask-about-prior-result");
+  assert.equal(plan.intent.taskClass, "bug-hunting");
+  assert.match(plan.reply, /n2 \[failed\]/i);
+});
+
+test("heuristic continuation can revise prior answers into requested formats", () => {
+  const plan = planShellRequestHeuristically("make that answer one sentence.", plannerContext, {
+    activeGraphState: {
+      focus: {
+        taskClass: "summarization",
+        subject: "shell continuation work",
+        searchQuery: "cli/lib/shell"
+      },
+      references: {
+        files: ["cli/lib/shell.mjs", "tests/shell-human-language.test.mjs"]
+      },
+      lastReply: "Shell continuation work currently centers on cli/lib/shell.mjs and tests/shell-human-language.test.mjs.",
+      graph: {
+        nodes: [
+          { id: "n1", kind: "synthesize", type: "synthesize", status: "completed", result: { summary: "summary emitted" } }
+        ],
+        branchPath: []
+      }
+    }
+  });
+
+  assert.equal(plan.kind, "reply");
+  assert.equal(plan.intent.followUpMode, "revise-prior-answer");
+  assert.equal(plan.intent.taskClass, "summarization");
+  assert.equal(plan.reply.split(/[.!?]+/).filter((part) => part.trim()).length, 1);
+});
+
+test("planShellRequest prefers the AI planner for conversational follow-ups with prior state", async () => {
+  let capturedPrompt = null;
+  registerProvider("mock-followup-shell-planner", {
+    local: false,
+    available: true,
+    models: [{ id: "brain-v1", quality: "high" }],
+    generate: async ({ prompt }) => {
+      capturedPrompt = prompt;
+      return {
+        response: JSON.stringify({
+          kind: "plan",
+          confidence: 0.95,
+          reason: "Conversational follow-up should continue prior coding work.",
+          intent: {
+            version: "1",
+            capability: "coding",
+            objective: "Continue the prior bounded shell fix",
+            subject: "shell continuation work",
+            taskClass: "code-generation",
+            scope: "repo-targeted",
+            risk: "medium",
+            needsRepoContext: true,
+            needsMutation: false,
+            safeToAutoExecute: false,
+            followUpMode: "continue-prior-work",
+            references: {
+              files: ["cli/lib/shell.mjs"],
+              modules: ["cli/lib/shell"],
+              graphNodeIds: ["n1", "n2"]
+            },
+            responseStyle: {
+              detail: "normal",
+              format: "paragraphs",
+              includeExamples: false
+            }
+          },
+          actions: [
+            { type: "route", taskClass: "code-generation" },
+            { type: "search", query: "cli/lib/shell" }
+          ]
+        })
+      };
+    }
+  });
+
+  const options = {
+    root: "/tmp",
+    plannerContext: { summary: {}, toolkitCodelets: [], projectCodelets: [] },
+    history: [],
+    activeGraphState: {
+      request: "implement a bounded fix in cli/lib/shell.mjs",
+      active: false,
+      intent: {
+        capability: "coding",
+        taskClass: "code-generation",
+        subject: "shell continuation work",
+        references: {
+          files: ["cli/lib/shell.mjs"],
+          modules: ["cli/lib/shell"],
+          graphNodeIds: ["n1", "n2"]
+        }
+      },
+      focus: {
+        taskClass: "code-generation",
+        subject: "shell continuation work",
+        searchQuery: "cli/lib/shell"
+      },
+      references: {
+        files: ["cli/lib/shell.mjs"],
+        modules: ["cli/lib/shell"],
+        graphNodeIds: ["n1", "n2"]
+      },
+      graph: {
+        nodes: [
+          { id: "n1", kind: "action", type: "route", status: "completed", result: { summary: "Route selected." } },
+          { id: "n2", kind: "action", type: "search", status: "completed", result: { summary: "Search completed." } }
+        ],
+        branchPath: []
+      },
+      outcome: {
+        planKind: "plan",
+        failed: [],
+        pending: []
+      }
+    },
+    planners: {
+      planners: [{ providerId: "mock-followup-shell-planner", modelId: "brain-v1" }],
+      heuristic: { mode: "heuristic", reason: "fallback" }
+    }
+  };
+
+  const plan = await planShellRequest("do it now, but keep the change surgical.", options);
+  assert.equal(plan.kind, "plan");
+  assert.equal(plan.planner.providerId, "mock-followup-shell-planner");
+  assert.equal(plan.intent.followUpMode, "continue-prior-work");
+  assert.match(capturedPrompt, /Active Turn Memory/);
+  assert.match(capturedPrompt, /"files": \[/);
 });
 
 test("compileShellAction produces a safe mutating note command", () => {
