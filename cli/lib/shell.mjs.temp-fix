@@ -1,0 +1,104 @@
+/**
+ * Responsibility: Provide the natural-language operator surface and multi-turn planning loop.
+ * Scope: Handles prompt construction, AI planning, gated execution, and conversational feedback.
+ */
+
+import path from "node:path";
+import process from "node:process";
+import { pathToFileURL } from "node:url";
+import * as readline from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
+import { getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
+import { listProjectCodelets } from "./project-codelets.mjs";
+import { routeTask } from "../../core/services/router.mjs";
+import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
+import { decomposeTicket, executeTicket, ideateFeature, sweepBugs } from "../../core/services/orchestrator.mjs";
+import { auditArchitecture } from "../../core/services/critic.mjs";
+import { addManualNote, createTicket, evaluateProjectReadiness, getProjectMetrics, getProjectSummary, getSmartProjectStatus, recordMetric, searchProject, syncProject, updateTicketLifecycle, withWorkflowStore } from "../../core/services/sync.mjs";
+import { executeCodelet } from "../../core/services/codelet-executor.mjs";
+import { buildTicketEntity, inferTicketLane } from "../../core/services/projections.mjs";
+import { buildTelegramPreview } from "../../core/services/telegram.mjs";
+import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
+import { runDogfood } from "../../runtime/scripts/ai-workflow/lib/dogfood-utils.mjs";
+import { buildWorkflowAuditSummary } from "../../runtime/scripts/ai-workflow/lib/workflow-audit-report.mjs";
+import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
+import { buildDoctorReport, renderDoctorReport } from "./doctor.mjs";
+import { configureOllamaHardware } from "./ollama-hw.mjs";
+import { runProviderSetupWizard } from "./provider-setup.mjs";
+import { handleProviderConnect } from "./provider-connect.mjs";
+import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
+import { formatStatusReport, resolveProjectStatus } from "../../core/services/status.mjs";
+import { executeJsOrchestrator } from "../../core/services/js-orchestrator.mjs";
+import { executeOperatorRequest } from "../../core/services/operator-brain.mjs";
+
+const STREAMED_STDIO = "__STREAMED_STDIO__";
+const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
+const TICKET_ID_PATTERN = "[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+";
+const WORKFLOW_GATED_MUTATIONS = new Set(["add_note", "create_ticket", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket", "finalize_verified_fix"]);
+
+// ... (rest of imports and constants from the original file - I'll use replace for surgical fix if possible, 
+// but write_file is safer for a full reset of the broken area)
+
+export async function handleShell(rest) {
+  const args = parseArgs(rest);
+  const root = process.cwd();
+  const options = {
+    root,
+    json: args.json,
+    yes: args.yes,
+    planOnly: args.planOnly,
+    noAi: args.noAi,
+    trace: args.trace,
+    shellMode: "plan",
+    history: []
+  };
+
+  options.plannerContext = await buildShellContext(root);
+  options.planners = await resolveShellPlanners(root, { providerState: options.plannerContext.providerState });
+  return runInteractiveShell(options);
+}
+
+// ... (skipping ahead to the broken area)
+
+export async function runShellTurn(inputText, options) {
+  // Use the shared operator brain for planning and execution
+  const operatorResult = await executeOperatorRequest(inputText, {
+    root: options.root,
+    runId: options.runId,
+    plannerContext: options.plannerContext,
+    history: options.history,
+    planner: options.planner
+  });
+
+  const result = {
+    input: inputText,
+    plan: operatorResult.plan,
+    executed: operatorResult.workflowResult?.ok ? [{ ok: true, summary: "JS workflow completed" }] : [],
+    executedGraph: null,
+    preRendered: false,
+    history: options.history ?? [],
+    assistantReply: operatorResult.assistantReply,
+    options
+  };
+
+  if (operatorResult.workflowResult) {
+    const workflowResult = operatorResult.workflowResult;
+    const executed = workflowResult.ok ? [{ ok: true, summary: "JS workflow completed" }] : [{ ok: false, error: workflowResult.error }];
+    const executedGraph = { 
+      nodes: [{ id: "js-main", kind: "action", type: "js-orchestrator", status: workflowResult.ok ? "ok" : "failed", result: { summary: workflowResult.ok ? "JS workflow completed" : workflowResult.error } }],
+      executions: executed,
+      branchPath: []
+    };
+
+    return {
+      ...result,
+      executed,
+      executedGraph,
+      continuationState: buildContinuationState({ inputText, plan: operatorResult.plan, executedGraph })
+    };
+  }
+
+  return result;
+}
+
+// ... (I'll use replace to fix only the broken part to avoid losing thousands of lines)

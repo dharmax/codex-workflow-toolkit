@@ -29,6 +29,7 @@ import { handleProviderConnect } from "./provider-connect.mjs";
 import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 import { formatStatusReport, resolveProjectStatus } from "../../core/services/status.mjs";
 import { executeJsOrchestrator } from "../../core/services/js-orchestrator.mjs";
+import { executeOperatorRequest } from "../../core/services/operator-brain.mjs";
 
 const STREAMED_STDIO = "__STREAMED_STDIO__";
 const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
@@ -3686,34 +3687,28 @@ function validateShellAction(action, plannerContext) {
 }
 
 export async function runShellTurn(inputText, options) {
-  const plan = await planShellRequest(inputText, options);
+  // Use the shared operator brain for planning and execution
+  const operatorResult = await executeOperatorRequest(inputText, {
+    root: options.root,
+    runId: options.runId,
+    plannerContext: options.plannerContext,
+    history: options.history,
+    planner: options.planner
+  });
+
   const result = {
     input: inputText,
-    plan,
-    executed: [],
+    plan: operatorResult.plan,
+    executed: operatorResult.workflowResult?.ok ? [{ ok: true, summary: "JS workflow completed" }] : [],
     executedGraph: null,
     preRendered: false,
     history: options.history ?? [],
+    assistantReply: operatorResult.assistantReply,
     options
   };
 
-  if (plan.kind !== "plan") {
-    return result;
-  }
-
-  // Handle JS Orchestration (Modern Path)
-  if (plan.code) {
-    const services = buildJsOrchestratorServices(options);
-    const workflowResult = await withWorkflowStore(options.root, async (workflowStore) => {
-      return executeJsOrchestrator(plan.code, {
-        workflowStore,
-        prompt: inputText,
-        runId: options.runId,
-        services
-      });
-    });
-
-    // Map JS execution results back to shell-friendly format
+  if (operatorResult.workflowResult) {
+    const workflowResult = operatorResult.workflowResult;
     const executed = workflowResult.ok ? [{ ok: true, summary: "JS workflow completed" }] : [{ ok: false, error: workflowResult.error }];
     const executedGraph = { 
       nodes: [{ id: "js-main", kind: "action", type: "js-orchestrator", status: workflowResult.ok ? "ok" : "failed", result: { summary: workflowResult.ok ? "JS workflow completed" : workflowResult.error } }],
@@ -3725,99 +3720,11 @@ export async function runShellTurn(inputText, options) {
       ...result,
       executed,
       executedGraph,
-      continuationState: buildContinuationState({ inputText, plan, executedGraph }),
-      assistantReply: workflowResult.ok ? "JS workflow executed successfully." : `JS workflow failed: ${workflowResult.error}`
+      continuationState: buildContinuationState({ inputText, plan: operatorResult.plan, executedGraph })
     };
   }
 
-  // Legacy Graph Path (Remaining for backward compatibility if code is missing)
-  const mutationModeGate = await ensureMutatingModeForPlan(plan, options);
-  if (mutationModeGate) {
-    return {
-      ...result,
-      plan: replyPlan(mutationModeGate.reply, 0.15, mutationModeGate.reason),
-      executed: [],
-      executedGraph: { nodes: [], executions: [], branchPath: [] },
-      preRendered: false
-    };
-  }
-
-  const mutationGate = evaluateShellMutationPolicy(plan, options.plannerContext);
-  if (mutationGate) {
-    return {
-      ...result,
-      plan: replyPlan(mutationGate.reply, 0.15, mutationGate.reason),
-      executed: [],
-      executedGraph: { nodes: [], executions: [], branchPath: [] },
-      preRendered: false
-    };
-  }
-
-  let preRendered = false;
-  const shouldNarrate = shouldNarrateShellPlan(plan, options);
-  const shouldRenderRawPlan = !options.json && !shouldNarrate;
-  if (shouldRenderRawPlan) {
-    const activePlanner = plan.planner ?? options.planners.planners[0] ?? options.planners.heuristic;
-    output.write(`${renderPlannerLine(activePlanner)}\n${renderActionList(plan.actions)}\n`);
-    preRendered = true;
-  }
-
-  const executed = [];
-  const executedGraph = plan.graph
-    ? await executeActionGraph(plan.graph, { ...options, currentInputText: inputText })
-    : { nodes: [], executions: [], branchPath: [] };
-  for (const node of executedGraph.nodes) {
-    if (node.execution) {
-      executed.push(node.execution);
-    }
-  }
-
-  const failed = executed.find((item) => item.ok === false);
-  let recovery = null;
-  const anyAiPlanner = options.planners.planners[0];
-  
-  // Item 39: Circuit Breaker - Prevent infinite retry loops
-  options._retryCount = (options._retryCount || 0) + 1;
-  if (failed && anyAiPlanner && !options.noAi && options._retryCount <= 2) {
-    recovery = await attemptShellRecovery({
-      inputText,
-      plan,
-      failed,
-      options,
-      planner: anyAiPlanner
-    });
-  }
-
-  const narrationPlanner = plan.planner?.providerId ? plan.planner : (anyAiPlanner ?? null);
-  let assistantReply = null;
-  if (!failed && !recovery && shouldNarrate) {
-    assistantReply = await synthesizeShellExecutionReply({
-      inputText,
-      plan,
-      executed: { graphNodes: executedGraph.nodes, executions: executed },
-      options,
-      planner: narrationPlanner
-    });
-  }
-  if (!assistantReply && shouldNarrate) {
-    assistantReply = renderFallbackAssistantReply({
-      inputText,
-      plan,
-      executed: { graphNodes: executedGraph.nodes, executions: executed },
-      plannerContext: options.plannerContext
-    });
-  }
-
-  return {
-    input: inputText,
-    plan,
-    executed,
-    executedGraph,
-    continuationState: buildContinuationState({ inputText, plan, executedGraph }),
-    preRendered,
-    recovery,
-    assistantReply
-  };
+  return result;
 }
 
 export async function executeShellAction(action, options) {
