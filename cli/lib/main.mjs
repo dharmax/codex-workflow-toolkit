@@ -32,7 +32,7 @@ import { onboardProjectBrief } from "../../core/services/orchestrator.mjs";
 import { updateKnowledgeRemote } from "../../core/services/knowledge.mjs";
 import { assertSafeRepairTarget, getToolkitRoot as getOperatingToolkitRoot, resolveOperatingContext } from "../../core/lib/operating-context.mjs";
 import { readLatestRunArtifact } from "../../core/lib/run-artifacts.mjs";
-import { resolveHostRequest } from "../../core/services/host-resolver.mjs";
+import { resolveHostRequest } from "../../core/services/operator-brain.mjs";
 import { discoverProviderState, refreshProviderRegistry } from "../../core/services/providers.mjs";
 import { invalidateModelFitCache } from "../../core/services/model-fit.mjs";
 import { invalidateWebSearchCache } from "../../core/services/web-search.mjs";

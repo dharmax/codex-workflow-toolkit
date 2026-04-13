@@ -175,6 +175,34 @@ function buildActionCatalog(plannerContext = {}) {
   return `Valid actions: ${baseActions.join(", ")}`;
 }
 
+/**
+ * Resolves a host request (e.g. from the 'ask' surface).
+ */
+export async function resolveHostRequest(options) {
+  const { projectRoot, text, host } = options;
+  
+  // Reuse the execution logic
+  const result = await executeOperatorRequest(text, {
+    root: projectRoot,
+    host
+  });
+
+  // Map result back to host-resolver format for compatibility
+  return {
+    status: result.ok ? "complete" : "failed",
+    route: {
+      intent: result.plan?.intent?.capability ?? "operator_request",
+      operation: "operator_brain",
+      reason: result.plan?.reason ?? "Handled by shared operator brain."
+    },
+    response_type: "reply",
+    payload: {
+      summary: result.assistantReply,
+      answer: result.assistantReply,
+      workflowResult: result.workflowResult
+    }
+  };
+}
 function buildOperatorServices(root, options) {
   return {
     sync: {
@@ -190,7 +218,7 @@ function buildOperatorServices(root, options) {
       executeTicket: (args) => executeTicket({ root, ...args }),
       decomposeTicket: (args) => decomposeTicket({ root, ...args }),
       ideateFeature: (args) => ideateFeature({ root, ...args }),
-      sweepBugs: (args) => sweep_bugs({ root, ...args }),
+      sweepBugs: (args) => sweepBugs({ root, ...args }),
     },
     codelets: {
       execute: (id, args) => executeCodelet(id, args, { cwd: root }),
