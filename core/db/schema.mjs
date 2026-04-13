@@ -1,3 +1,8 @@
+/**
+ * Responsibility: Define the canonical SQL schema for the workflow database.
+ * Scope: Handles table definitions, indexes, and migrations for operational project state.
+ */
+
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
 
@@ -158,6 +163,64 @@ CREATE TABLE IF NOT EXISTS metrics (
   success INTEGER NOT NULL,
   error_message TEXT,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow_runs (
+  id TEXT PRIMARY KEY,
+  prompt TEXT NOT NULL,
+  code TEXT NOT NULL,
+  status TEXT NOT NULL, -- 'running', 'completed', 'failed', 'paused'
+  current_state TEXT,
+  result_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow_steps (
+  run_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL, -- 'pending', 'completed', 'failed'
+  result_json TEXT,
+  error_json TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  PRIMARY KEY (run_id, step_id),
+  FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workflow_state (
+  run_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value_json TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (run_id, key),
+  FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workflow_transitions (
+  run_id TEXT NOT NULL,
+  from_state TEXT NOT NULL,
+  to_state TEXT NOT NULL,
+  label TEXT,
+  trigger_type TEXT NOT NULL, -- 'success', 'error', 'condition', 'user'
+  payload_json TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workflow_issues (
+  id TEXT PRIMARY KEY,
+  run_id TEXT,
+  issue_type TEXT NOT NULL, -- 'exception', 'failed_test', 'user_criticism', 'integrity_violation'
+  severity TEXT NOT NULL, -- 'low', 'medium', 'high', 'critical'
+  summary TEXT NOT NULL,
+  details_json TEXT,
+  status TEXT NOT NULL, -- 'open', 'investigating', 'fixed', 'ignored'
+  resolution_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS test_runs (

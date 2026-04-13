@@ -67,8 +67,15 @@ export async function invalidatePackageUpdateCache(root = process.cwd()) {
 
 async function readCurrentPackageVersions(root) {
   const packageJsonPath = path.resolve(root, "package.json");
-  const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
-  const aiWorkflow = String(packageJson.version ?? "").trim() || null;
+  let aiWorkflow = null;
+  try {
+    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
+    aiWorkflow = String(packageJson.version ?? "").trim() || null;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
   const leanCtx = await probeLeanCtxVersion().catch(() => null);
   return { aiWorkflow, leanCtx };
 }

@@ -2,10 +2,31 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { chooseShellPlannerModel, compileShellAction, handleShellCommand, planShellRequest, planShellRequestHeuristically, validateShellPlan, buildShellContext, buildShellPlannerPrompt, planShellRequestWithAgent, resolveShellPlanners, runShellTurn } from "../cli/lib/shell.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
 import { attemptActionCorrection } from "../core/lib/self-correction.mjs";
 import { syncProject } from "../core/services/sync.mjs";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+async function runNode(args, options = {}) {
+  return await new Promise((resolve) => {
+    execFile(process.execPath, args, {
+      cwd: options.cwd ?? repoRoot,
+      env: { ...process.env, ...(options.env ?? {}) },
+      timeout: options.timeout ?? 180000,
+      maxBuffer: 8 * 1024 * 1024
+    }, (error, stdout, stderr) => {
+      resolve({
+        code: error?.code ?? 0,
+        stdout: String(stdout ?? ""),
+        stderr: String(stderr ?? "")
+      });
+    });
+  });
+}
 
 const defaultShellTestFetch = async (url) => {
   if (String(url).includes("duckduckgo")) {
@@ -1203,6 +1224,70 @@ test("heuristic shell planner handles broad project-next questions and implicit 
   assert.deepEqual(execute.actions, [
     { type: "execute_ticket", ticketId: "REF-APP-SHELL-01", apply: true }
   ]);
+
+  const finalize = planShellRequestHeuristically("finalize that verified fix and close it out.", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [{ id: "REF-APP-SHELL-01", title: "Continue app-shell hardening", lane: "In Progress" }]
+    }
+  }, {
+    activeGraphState: {
+      references: {
+        tickets: ["REF-APP-SHELL-01"]
+      },
+      graph: {
+        nodes: [{
+          id: "n1",
+          kind: "action",
+          type: "execute_ticket",
+          status: "ok",
+          result: {
+            structuredPayload: {
+              ticketId: "REF-APP-SHELL-01",
+              success: true
+            }
+          }
+        }]
+      }
+    }
+  });
+  assert.equal(finalize.kind, "plan");
+  assert.deepEqual(finalize.actions, [
+    { type: "finalize_verified_fix", ticketId: "REF-APP-SHELL-01" }
+  ]);
+
+  const reopen = planShellRequestHeuristically("reopen that ticket and put it back in progress.", {
+    ...plannerContext,
+    summary: {
+      ...plannerContext.summary,
+      activeTickets: [{ id: "REF-APP-SHELL-01", title: "Continue app-shell hardening", lane: "Done" }]
+    }
+  }, {
+    activeGraphState: {
+      references: {
+        tickets: ["REF-APP-SHELL-01"]
+      },
+      graph: {
+        nodes: [{
+          id: "n1",
+          kind: "action",
+          type: "resolve_ticket",
+          status: "ok",
+          result: {
+            structuredPayload: {
+              id: "REF-APP-SHELL-01",
+              lane: "Done"
+            }
+          }
+        }]
+      }
+    }
+  });
+  assert.equal(reopen.kind, "plan");
+  assert.deepEqual(reopen.actions, [
+    { type: "reopen_ticket", ticketId: "REF-APP-SHELL-01", lane: "In Progress" }
+  ]);
 });
 
 test("heuristic fallback treats operator-brief phrasing as project status", async () => {
@@ -1688,6 +1773,63 @@ test("runShellTurn executes mutating shell actions in mutating mode", async () =
   }
 });
 
+test("runShellTurn finalizes a verified fix and resolves the current ticket after workflow checks pass", { concurrency: false }, async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-finalize-" + Math.random().toString(36).slice(2));
+
+  try {
+    const initResult = await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", root]);
+    assert.equal(initResult.code, 0, initResult.stderr || initResult.stdout);
+
+    const syncResult = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--json"], { cwd: root });
+    assert.equal(syncResult.code, 0, syncResult.stderr || syncResult.stdout);
+
+    const createResult = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "ticket",
+      "create",
+      "--id",
+      "BUG-FINAL-001",
+      "--title",
+      "Finalize verified shell fix",
+      "--lane",
+      "In Progress",
+      "--summary",
+      "Exercise shell finalization."
+    ], { cwd: root });
+    assert.equal(createResult.code, 0, createResult.stderr || createResult.stdout);
+
+    const plannerContext = await buildShellContext(root);
+    const result = await runShellTurn("finalize this verified fix and close BUG-FINAL-001.", {
+      root,
+      json: false,
+      yes: true,
+      noAi: true,
+      planOnly: false,
+      shellMode: "mutate",
+      plannerContext,
+      planners: {
+        planners: [],
+        heuristic: { mode: "heuristic", reason: "fallback" }
+      },
+      history: []
+    });
+
+    assert.equal(result.plan.kind, "plan");
+    assert.equal(result.executed.some((item) => item.action.type === "finalize_verified_fix" && item.ok), true);
+
+    const summaryResult = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "project", "summary", "--json"], { cwd: root });
+    assert.equal(summaryResult.code, 0, summaryResult.stderr || summaryResult.stdout);
+    const summary = JSON.parse(summaryResult.stdout);
+    assert.equal(summary.activeTickets.some((ticket) => ticket.id === "BUG-FINAL-001"), false);
+
+    const kanban = await fs.readFile(path.join(root, "kanban.md"), "utf8");
+    assert.match(kanban, /BUG-FINAL-001 Finalize verified shell fix ✅ \d{4}-\d{2}-\d{2}/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("runShellTurn can set up Ollama without hitting the missing provider_connect handler", async () => {
   const root = path.resolve("/tmp/ai-workflow-shell-ollama-setup-" + Math.random().toString(36).slice(2));
   const originalFetch = globalThis.fetch;
@@ -2135,6 +2277,30 @@ test("compileShellAction renders execute_ticket as a mutating shell action", () 
 
   assert.equal(compiled.mutation, true);
   assert.equal(compiled.display, "execute ticket REF-APP-SHELL-01");
+});
+
+test("compileShellAction renders lifecycle actions as workflow mutations", () => {
+  const resolveCompiled = compileShellAction({
+    type: "resolve_ticket",
+    ticketId: "BUG-LC-001"
+  });
+  assert.equal(resolveCompiled.mutation, true);
+  assert.deepEqual(resolveCompiled.args, ["project", "ticket", "resolve", "BUG-LC-001"]);
+
+  const reopenCompiled = compileShellAction({
+    type: "reopen_ticket",
+    ticketId: "BUG-LC-001",
+    lane: "In Progress"
+  });
+  assert.equal(reopenCompiled.mutation, true);
+  assert.deepEqual(reopenCompiled.args, ["project", "ticket", "reopen", "BUG-LC-001", "--lane", "In Progress"]);
+
+  const finalizeCompiled = compileShellAction({
+    type: "finalize_verified_fix",
+    ticketId: "BUG-LC-001"
+  });
+  assert.equal(finalizeCompiled.mutation, true);
+  assert.equal(finalizeCompiled.display, "finalize verified fix for BUG-LC-001");
 });
 
 test("validateShellPlan accepts known codelets and rejects unknown ones", () => {

@@ -1373,10 +1373,10 @@ export class SqliteWorkflowStore {
       values.push(filters.targetId);
     }
     const query = `
-      SELECT *
-      FROM test_runs
-      ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
-      ORDER BY recorded_at DESC, updated_at DESC, id DESC
+     SELECT *
+     FROM test_runs
+     ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+     ORDER BY recorded_at DESC, updated_at DESC, id DESC
     `;
     return this.db.prepare(query).all(...values).map((row) => ({
       id: row.id,
@@ -1394,8 +1394,184 @@ export class SqliteWorkflowStore {
       updatedAt: row.updated_at
     }));
   }
-}
 
+  upsertWorkflowRun(run) {
+    const now = nowIso();
+    const existing = this.getWorkflowRun(run.id);
+    
+    // Ensure we don't overwrite prompt/code/createdAt with nulls on partial updates
+    const finalPrompt = run.prompt ?? existing?.prompt ?? "unknown";
+    const finalCode = run.code ?? existing?.code ?? "";
+    const finalCreatedAt = run.createdAt ?? existing?.createdAt ?? now;
+
+    this.db.prepare(`
+      INSERT INTO workflow_runs (id, prompt, code, status, current_state, result_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        current_state = COALESCE(excluded.current_state, workflow_runs.current_state),
+        result_json = excluded.result_json,
+        updated_at = excluded.updated_at
+    `).run(
+      run.id,
+      finalPrompt,
+      finalCode,
+      run.status ?? existing?.status ?? "running",
+      run.currentState ?? null,
+      asJson(run.result),
+      finalCreatedAt,
+      now
+    );
+  }
+
+  addWorkflowTransition(transition) {
+    this.db.prepare(`
+      INSERT INTO workflow_transitions (run_id, from_state, to_state, label, trigger_type, payload_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      transition.runId,
+      transition.from,
+      transition.to,
+      transition.label ?? null,
+      transition.triggerType,
+      asJson(transition.payload),
+      nowIso()
+    );
+  }
+
+  listWorkflowTransitions(runId) {
+    return this.db.prepare("SELECT * FROM workflow_transitions WHERE run_id = ? ORDER BY created_at").all(runId).map(row => ({
+      runId: row.run_id,
+      from: row.from_state,
+      to: row.to_state,
+      label: row.label,
+      triggerType: row.trigger_type,
+      payload: parseJson(row.payload_json),
+      createdAt: row.created_at
+    }));
+  }
+
+  getWorkflowRun(id) {
+    const row = this.db.prepare("SELECT * FROM workflow_runs WHERE id = ?").get(id);
+    if (!row) return null;
+    return {
+      id: row.id,
+      prompt: row.prompt,
+      code: row.code,
+      status: row.status,
+      result: parseJson(row.result_json),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  upsertWorkflowStep(step) {
+    const now = nowIso();
+    this.db.prepare(`
+      INSERT INTO workflow_steps (run_id, step_id, description, status, result_json, error_json, started_at, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id, step_id) DO UPDATE SET
+        status = excluded.status,
+        result_json = excluded.result_json,
+        error_json = excluded.error_json,
+        completed_at = excluded.completed_at
+    `).run(
+      step.runId,
+      step.stepId,
+      step.description ?? null,
+      step.status,
+      asJson(step.result),
+      asJson(step.error),
+      step.startedAt ?? now,
+      step.completedAt ?? null
+    );
+  }
+
+  listWorkflowSteps(runId) {
+    return this.db.prepare("SELECT * FROM workflow_steps WHERE run_id = ? ORDER BY started_at").all(runId).map(row => ({
+      runId: row.run_id,
+      stepId: row.step_id,
+      description: row.description,
+      status: row.status,
+      result: parseJson(row.result_json),
+      error: parseJson(row.error_json),
+      startedAt: row.started_at,
+      completedAt: row.completed_at
+    }));
+  }
+
+  setWorkflowState(runId, key, value) {
+    this.db.prepare(`
+      INSERT INTO workflow_state (run_id, key, value_json, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(run_id, key) DO UPDATE SET
+        value_json = excluded.value_json,
+        updated_at = excluded.updated_at
+    `).run(runId, key, asJson(value), nowIso());
+  }
+
+  getWorkflowState(runId, key, fallback = null) {
+    const row = this.db.prepare("SELECT value_json FROM workflow_state WHERE run_id = ? AND key = ?").get(runId, key);
+    return row ? parseJson(row.value_json, fallback) : fallback;
+  }
+
+  upsertWorkflowIssue(issue) {
+    const now = nowIso();
+    this.db.prepare(`
+      INSERT INTO workflow_issues (id, run_id, issue_type, severity, summary, details_json, status, resolution_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        issue_type = excluded.issue_type,
+        severity = excluded.severity,
+        summary = excluded.summary,
+        details_json = excluded.details_json,
+        status = excluded.status,
+        resolution_json = excluded.resolution_json,
+        updated_at = excluded.updated_at
+    `).run(
+      issue.id,
+      issue.runId ?? null,
+      issue.issueType,
+      issue.severity,
+      issue.summary,
+      asJson(issue.details),
+      issue.status ?? "open",
+      asJson(issue.resolution),
+      issue.createdAt ?? now,
+      now
+    );
+  }
+
+  listWorkflowIssues(filters = {}) {
+    const clauses = [];
+    const values = [];
+    if (filters.status) {
+      clauses.push("status = ?");
+      values.push(filters.status);
+    }
+    if (filters.issueType) {
+      clauses.push("issue_type = ?");
+      values.push(filters.issueType);
+    }
+    const query = `
+      SELECT * FROM workflow_issues
+      ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}
+      ORDER BY created_at DESC
+    `;
+    return this.db.prepare(query).all(...values).map(row => ({
+      id: row.id,
+      runId: row.run_id,
+      issueType: row.issue_type,
+      severity: row.severity,
+      summary: row.summary,
+      details: parseJson(row.details_json),
+      status: row.status,
+      resolution: parseJson(row.resolution_json),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+  }
+  }
 function normalizeText(value) {
   return String(value).toLowerCase().replace(/\s+/g, " ").trim();
 }

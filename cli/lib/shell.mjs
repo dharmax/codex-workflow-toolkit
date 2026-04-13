@@ -1,6 +1,10 @@
+/**
+ * Responsibility: Provide the natural-language operator surface and multi-turn planning loop.
+ * Scope: Handles prompt construction, AI planning, gated execution, and conversational feedback.
+ */
+
 import path from "node:path";
 import process from "node:process";
-import { once } from "node:events";
 import { pathToFileURL } from "node:url";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -10,11 +14,13 @@ import { routeTask } from "../../core/services/router.mjs";
 import { discoverProviderState, generateCompletion, generateWithOllama } from "../../core/services/providers.mjs";
 import { decomposeTicket, executeTicket, ideateFeature, sweepBugs } from "../../core/services/orchestrator.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
-import { addManualNote, createTicket, evaluateProjectReadiness, getProjectMetrics, getProjectSummary, getSmartProjectStatus, recordMetric, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { addManualNote, createTicket, evaluateProjectReadiness, getProjectMetrics, getProjectSummary, getSmartProjectStatus, recordMetric, searchProject, syncProject, updateTicketLifecycle, withWorkflowStore } from "../../core/services/sync.mjs";
 import { executeCodelet } from "../../core/services/codelet-executor.mjs";
 import { buildTicketEntity, inferTicketLane } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
+import { runDogfood } from "../../runtime/scripts/ai-workflow/lib/dogfood-utils.mjs";
+import { buildWorkflowAuditSummary } from "../../runtime/scripts/ai-workflow/lib/workflow-audit-report.mjs";
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
 import { buildDoctorReport, renderDoctorReport } from "./doctor.mjs";
 import { configureOllamaHardware } from "./ollama-hw.mjs";
@@ -22,11 +28,12 @@ import { runProviderSetupWizard } from "./provider-setup.mjs";
 import { handleProviderConnect } from "./provider-connect.mjs";
 import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 import { formatStatusReport, resolveProjectStatus } from "../../core/services/status.mjs";
+import { executeJsOrchestrator } from "../../core/services/js-orchestrator.mjs";
 
 const STREAMED_STDIO = "__STREAMED_STDIO__";
 const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
 const TICKET_ID_PATTERN = "[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+";
-const WORKFLOW_GATED_MUTATIONS = new Set(["add_note", "create_ticket", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
+const WORKFLOW_GATED_MUTATIONS = new Set(["add_note", "create_ticket", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket", "finalize_verified_fix"]);
 const TOOLKIT_ROOT = getToolkitRoot();
 const SHELL_REFERENTIAL_TOKENS = new Set([
   "it",
@@ -45,7 +52,7 @@ const SHELL_REFERENTIAL_TOKENS = new Set([
   "first"
 ]);
 
-const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket"]);
+const MUTATING_ACTIONS = new Set(["sync", "add_note", "create_ticket", "set_ollama_hw", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket", "resolve_ticket", "reopen_ticket", "finalize_verified_fix"]);
 const FAST_DIRECT_ACTIONS = new Set([
   "project_summary",
   "list_tickets",
@@ -846,6 +853,10 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     if (continuationPlan) {
       return continuationPlan;
     }
+    const lifecycleFollowUpPlan = buildTicketLifecycleShellPlan(text, plannerContext, { activeGraphState });
+    if (lifecycleFollowUpPlan) {
+      return lifecycleFollowUpPlan;
+    }
     return replyPlan([
       "The last graph has already been executed.",
       renderContinuationState(activeGraphState),
@@ -905,6 +916,11 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
   const contextualReply = buildContextualShellReply(text, plannerContext);
   if (contextualReply) {
     return contextualReply;
+  }
+
+  const lifecyclePlan = buildTicketLifecycleShellPlan(text, plannerContext, { activeGraphState });
+  if (lifecyclePlan) {
+    return lifecyclePlan;
   }
 
   const kickoffPlan = buildWorkflowKickoffShellPlan(text, plannerContext);
@@ -1639,6 +1655,69 @@ function extractEpicKickoffTopic(inputText) {
   return extractOperationalSearchQuery(inputText) || "workflow";
 }
 
+function buildTicketLifecycleShellPlan(inputText, plannerContext = {}, { activeGraphState = null } = {}) {
+  const text = String(inputText ?? "").trim();
+  const normalized = normalizeConversationText(text);
+  if (!normalized) {
+    return null;
+  }
+
+  const explicitTicketId = text.match(new RegExp(`\\b(${TICKET_ID_PATTERN})\\b`, "i"))?.[1]?.toUpperCase() ?? null;
+  const ticketId = explicitTicketId
+    ?? resolveLifecycleTicketIdFromMemory(activeGraphState)
+    ?? resolveImplicitTicketId(plannerContext, text);
+  if (!ticketId) {
+    return null;
+  }
+
+  const asksReopen = /\breopen\b/.test(normalized);
+  if (asksReopen) {
+    return actionPlan([{
+      type: "reopen_ticket",
+      ticketId,
+      lane: inferLifecycleLaneFromText(text)
+    }], explicitTicketId ? 0.95 : 0.9, "Ticket lifecycle follow-up reopened the current work item.");
+  }
+
+  const asksFinalize = /\b(finali[sz]e|close(?:\s+it|\s+this|\s+that|\s+the)?(?:\s+out)?|mark(?:\s+it|\s+this|\s+that|\s+the)?\s+done|move(?:\s+it|\s+this|\s+that|\s+the)?\s+to\s+done|archive(?:\s+it|\s+this|\s+that|\s+the)?)\b/.test(normalized);
+  const mentionsVerification = /\b(verified|verification|workflow clean|dogfood|audit|tests pass|tests passed|fix is good|fix is verified)\b/.test(normalized);
+  if (asksFinalize && (mentionsVerification || activeGraphState?.graph?.nodes?.length || explicitTicketId)) {
+    return actionPlan([{
+      type: "finalize_verified_fix",
+      ticketId
+    }], explicitTicketId ? 0.96 : 0.91, "Ticket lifecycle follow-up finalized a verified fix before closure.");
+  }
+
+  return null;
+}
+
+function resolveLifecycleTicketIdFromMemory(activeGraphState) {
+  const referencedTicket = activeGraphState?.references?.tickets?.find(Boolean);
+  if (referencedTicket) {
+    return String(referencedTicket).trim().toUpperCase();
+  }
+
+  const graphNodes = activeGraphState?.graph?.nodes ?? [];
+  const actionTicket = graphNodes
+    .map((node) => node?.result?.structuredPayload?.ticketId ?? node?.result?.structuredPayload?.ticket?.id ?? node?.result?.structuredPayload?.id ?? null)
+    .find(Boolean);
+  if (actionTicket) {
+    return String(actionTicket).trim().toUpperCase();
+  }
+
+  return null;
+}
+
+function inferLifecycleLaneFromText(inputText) {
+  const normalized = normalizeConversationText(inputText);
+  if (/\bin progress\b/.test(normalized)) return "In Progress";
+  if (/\bbugs p1\b/.test(normalized)) return "Bugs P1";
+  if (/\bbugs p2\/p3\b/.test(normalized)) return "Bugs P2/P3";
+  if (/\b(todo|to do)\b/.test(normalized)) return "Todo";
+  if (/\bbacklog\b/.test(normalized)) return "Backlog";
+  return null;
+}
+
 function buildWorkflowKickoffShellPlan(inputText, plannerContext = {}) {
   const text = String(inputText ?? "").trim();
   if (!looksLikeEpicKickoffRequest(text)) {
@@ -1889,17 +1968,17 @@ function buildShellPlannerJsonSchema() {
         ifFalse: [{ type: "sync" }],
         instruction: "for replan nodes; explain how to generate the next graph fragment from prior results",
         action: {
-          type: "project_summary|list_tickets|status_query|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key"
+          type: "project_summary|list_tickets|status_query|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|resolve_ticket|reopen_ticket|finalize_verified_fix|run_codelet|provider_connect|reprofile|set_provider_key"
         }
       }]
     },
     actions: [{
-      type: "project_summary|list_tickets|status_query|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|run_codelet|provider_connect|reprofile|set_provider_key",
+      type: "project_summary|list_tickets|status_query|next_ticket|metrics|audit_architecture|sync|run_review|evaluate_readiness|search|extract_ticket|decompose_ticket|execute_ticket|ideate_feature|sweep_bugs|ingest_artifact|extract_guidelines|route|run_dynamic_codelet|telegram_preview|add_note|create_ticket|resolve_ticket|reopen_ticket|finalize_verified_fix|run_codelet|provider_connect|reprofile|set_provider_key",
       query: "for status_query/search",
       entityType: "optional type hint for status_query",
       goalType: "for evaluate_readiness",
       question: "for evaluate_readiness",
-      ticketId: "for extract_ticket/decompose_ticket/execute_ticket/extract_guidelines",
+      ticketId: "for extract_ticket/decompose_ticket/execute_ticket/extract_guidelines/resolve_ticket/reopen_ticket/finalize_verified_fix",
       intent: "for ideate_feature",
       filePath: "for ingest_artifact/add_note",
       code: "for run_dynamic_codelet (JavaScript snippet)",
@@ -3570,6 +3649,22 @@ function validateShellAction(action, plannerContext) {
         epicId: action.epicId ? requireTicketId(action.epicId) : null,
         summary: action.summary ? String(action.summary).trim() : null
       };
+    case "resolve_ticket":
+      return {
+        type,
+        ticketId: requireTicketId(action.ticketId)
+      };
+    case "reopen_ticket":
+      return {
+        type,
+        ticketId: requireTicketId(action.ticketId),
+        lane: action.lane ? String(action.lane).trim() : null
+      };
+    case "finalize_verified_fix":
+      return {
+        type,
+        ticketId: requireTicketId(action.ticketId)
+      };
     case "run_codelet": {
       const codeletId = String(action.codeletId ?? "").trim();
       const known = new Set([
@@ -3606,6 +3701,36 @@ export async function runShellTurn(inputText, options) {
     return result;
   }
 
+  // Handle JS Orchestration (Modern Path)
+  if (plan.code) {
+    const services = buildJsOrchestratorServices(options);
+    const workflowResult = await withWorkflowStore(options.root, async (workflowStore) => {
+      return executeJsOrchestrator(plan.code, {
+        workflowStore,
+        prompt: inputText,
+        runId: options.runId,
+        services
+      });
+    });
+
+    // Map JS execution results back to shell-friendly format
+    const executed = workflowResult.ok ? [{ ok: true, summary: "JS workflow completed" }] : [{ ok: false, error: workflowResult.error }];
+    const executedGraph = { 
+      nodes: [{ id: "js-main", kind: "action", type: "js-orchestrator", status: workflowResult.ok ? "ok" : "failed", result: { summary: workflowResult.ok ? "JS workflow completed" : workflowResult.error } }],
+      executions: executed,
+      branchPath: []
+    };
+
+    return {
+      ...result,
+      executed,
+      executedGraph,
+      continuationState: buildContinuationState({ inputText, plan, executedGraph }),
+      assistantReply: workflowResult.ok ? "JS workflow executed successfully." : `JS workflow failed: ${workflowResult.error}`
+    };
+  }
+
+  // Legacy Graph Path (Remaining for backward compatibility if code is missing)
   const mutationModeGate = await ensureMutatingModeForPlan(plan, options);
   if (mutationModeGate) {
     return {
@@ -3798,6 +3923,44 @@ export async function executeShellAction(action, options) {
         summary: payload.status ?? (payload.success ? "ok" : "failed")
       });
     }
+    if (action.type === "resolve_ticket" || action.type === "reopen_ticket") {
+      const payload = await withWorkspaceMutation(options.root, `shell ${action.type} ${action.ticketId}`, async () => updateTicketLifecycle({
+        projectRoot: options.root,
+        ticketId: action.ticketId,
+        action: action.type === "resolve_ticket" ? "resolve" : "reopen",
+        lane: action.type === "reopen_ticket" ? action.lane ?? null : null
+      }));
+      return attachStructuredExecution({
+        action,
+        command: compiled.display,
+        mutation: compiled.mutation,
+        ok: true,
+        stdout: options.json
+          ? `${JSON.stringify(payload, null, 2)}\n`
+          : renderTicketLifecycleResult({ ticket: payload, action }),
+        stderr: "",
+        structuredPayload: payload,
+        summary: `${payload.id} ${action.type === "resolve_ticket" ? "resolved" : "reopened"}`
+      });
+    }
+    if (action.type === "finalize_verified_fix") {
+      const payload = await finalizeVerifiedFix({
+        root: options.root,
+        ticketId: action.ticketId
+      });
+      return attachStructuredExecution({
+        action,
+        command: compiled.display,
+        mutation: compiled.mutation,
+        ok: Boolean(payload.success),
+        stdout: payload.success
+          ? (options.json ? `${JSON.stringify(payload, null, 2)}\n` : renderVerifiedFixFinalization(payload))
+          : "",
+        stderr: payload.success ? "" : `${payload.error ?? "Verified fix finalization failed."}\n`,
+        structuredPayload: payload,
+        summary: payload.success ? `${payload.ticket.id} finalized and resolved` : (payload.error ?? "verified fix finalization failed")
+      });
+    }
     const stdout = await runShellActionDirect(action, options);
     const execution = {
       action,
@@ -3934,6 +4097,29 @@ export function compileShellAction(action, { json = false } = {}) {
         ...(action.summary ? ["--summary", action.summary] : []),
         ...(json ? ["--json"] : [])
       ], true);
+    case "resolve_ticket":
+      return cliCommand([
+        "project",
+        "ticket",
+        "resolve",
+        action.ticketId,
+        ...(json ? ["--json"] : [])
+      ], true);
+    case "reopen_ticket":
+      return cliCommand([
+        "project",
+        "ticket",
+        "reopen",
+        action.ticketId,
+        ...(action.lane ? ["--lane", action.lane] : []),
+        ...(json ? ["--json"] : [])
+      ], true);
+    case "finalize_verified_fix":
+      return {
+        args: [],
+        mutation: true,
+        display: `finalize verified fix for ${action.ticketId}`
+      };
     case "run_codelet":
       return cliCommand(["run", action.codeletId, ...action.args], false);
     default:
@@ -4275,6 +4461,80 @@ function renderShellStatusLine(message) {
 
 function clearShellStatusLine() {
   return "\r\x1b[2K";
+}
+
+function renderTicketLifecycleResult({ ticket, action }) {
+  const verb = action?.type === "resolve_ticket" ? "resolved" : "reopened";
+  return `${ticket.id} ${verb} -> ${ticket.lane} (${ticket.state})\n`;
+}
+
+function renderVerifiedFixFinalization(result) {
+  const lines = [
+    `${result.ticket.id} finalized and resolved.`,
+    `Dogfood: ${result.verification.dogfood.status}.`,
+    `Workflow audit: ${result.verification.audit.status}.`
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+async function finalizeVerifiedFix({ root, ticketId }) {
+  try {
+    await syncProject({ projectRoot: root, writeProjections: true });
+    const dogfoodReport = await runDogfood({
+      root,
+      profile: "full",
+      timeoutMs: 45000,
+      writeReport: true
+    });
+    const dogfoodStatus = summarizeDogfoodStatus(dogfoodReport);
+    if (dogfoodStatus !== "pass") {
+      throw new Error(`Dogfood failed: ${summarizeDogfoodResult(dogfoodReport)}`);
+    }
+    const audit = await buildWorkflowAuditSummary(root);
+    if (audit.status !== "pass") {
+      throw new Error(audit.failures[0] ?? "workflow-audit failed");
+    }
+    const ticket = await updateTicketLifecycle({
+      projectRoot: root,
+      ticketId,
+      action: "resolve"
+    });
+    return {
+      success: true,
+      ticket,
+      verification: {
+        dogfood: {
+          status: dogfoodStatus,
+          summary: summarizeDogfoodResult(dogfoodReport)
+        },
+        audit: {
+          status: audit.status,
+          summary: audit.failures[0] ?? null
+        }
+      }
+    };
+  } catch (error) {
+    return {
+      success: false,
+      ticketId,
+      error: error?.message ?? String(error)
+    };
+  }
+}
+
+function summarizeDogfoodStatus(report) {
+  const failedSurfaces = Object.values(report?.surfaces ?? {}).filter((surface) => surface?.status && surface.status !== "pass");
+  return failedSurfaces.length ? "fail" : "pass";
+}
+
+function summarizeDogfoodResult(report) {
+  const failingSurfaces = Object.entries(report?.surfaces ?? {})
+    .filter(([, surface]) => surface?.status && surface.status !== "pass")
+    .map(([surfaceId, surface]) => `${surfaceId}:${surface.status}`);
+  if (!failingSurfaces.length) {
+    return "all operator surfaces passed";
+  }
+  return failingSurfaces.join(", ");
 }
 
 async function runShellActionDirect(action, options) {
@@ -5400,6 +5660,9 @@ function buildActionCatalog(plannerContext) {
     "telegram_preview",
     "add_note",
     "create_ticket",
+    "resolve_ticket",
+    "reopen_ticket",
+    "finalize_verified_fix",
     "run_codelet",
     "provider_connect",
     "reprofile",
@@ -5418,12 +5681,23 @@ function buildActionCatalog(plannerContext) {
 
 function buildShellPlannerSchemaPrompt() {
   return [
-    '{"kind":"intent|exit","confidence":0.8,"reason":"required","strategy":"optional","intent":{"version":"1","capability":"project-planning","objective":"...","subject":"...","scope":"workflow-state","risk":"low","needsRepoContext":true,"needsMutation":false,"safeToAutoExecute":false,"followUpMode":"new-request","references":{"tickets":[],"files":[],"modules":[],"graphNodeIds":[],"evidence":[]},"responseStyle":{"detail":"normal","format":"paragraphs","includeExamples":false}},"finalAnswerPolicy":{"verbosity":"normal","format":"paragraphs","includeEvidence":true,"includeNextSteps":true,"includeExamples":false},"assistantReply":"optional","actions":[{"type":"project_summary"}]}',
-    'Shell-local answer: {"kind":"intent","confidence":0.9,"reason":"...","intent":{"version":"1","capability":"shell-usage","objective":"Explain shell usage","subject":"shell","scope":"shell-local","risk":"low","needsRepoContext":false,"needsMutation":false,"safeToAutoExecute":false,"followUpMode":"new-request","references":{"tickets":[],"files":[],"modules":[],"graphNodeIds":[],"evidence":[]},"responseStyle":{"detail":"brief","format":"bullets","includeExamples":true}},"finalAnswerPolicy":{"verbosity":"brief","format":"bullets","includeEvidence":false,"includeNextSteps":true,"includeExamples":true},"assistantReply":"...","actions":[]}',
-    'Plan: {"kind":"intent","confidence":0.9,"reason":"...","strategy":"optional","intent":{"version":"1","capability":"coding","objective":"Apply the previously discussed bounded fix","subject":"shell continuation","scope":"repo-targeted","risk":"medium","needsRepoContext":true,"needsMutation":false,"safeToAutoExecute":false,"followUpMode":"continue-prior-work","references":{"tickets":[],"files":["cli/lib/shell.mjs"],"modules":["cli/lib/shell"],"graphNodeIds":["n1","n2"],"evidence":["prior search results"]},"responseStyle":{"detail":"normal","format":"paragraphs","includeExamples":false}},"finalAnswerPolicy":{"verbosity":"normal","format":"paragraphs","includeEvidence":true,"includeNextSteps":true,"includeExamples":false},"actions":[{"type":"route","taskClass":"code-generation"},{"type":"search","query":"cli/lib/shell"}]}',
-    'Optional advanced form: include `graph.nodes` only when branching or gating is truly needed.',
-    'Every action type must come from the valid action catalog.',
-    'For conversational turns, set `followUpMode` from the prior turn memory, not from stock trigger phrases.'
+    '{"kind":"plan","confidence":0.9,"code":"async () => { ... }","intent":{...}}',
+    'Field "code" must be an async JS function body.',
+    'Helpers:',
+    '- `await step(id, desc, fn)`: Persistent operation.',
+    '- `await transition(toState, trigger, fn)`: State-machine move.',
+    '- `await shell(prompt)`: Recursive NL call.',
+    '- `await exec(cmd, [args])`: Raw shell command.',
+    '- `await executeCodelet(id, args)`: Toolkit tool.',
+    '- `issue(type, sum, {details})`: Log failure.',
+    'Patterns:',
+    '- Use `try/catch` & comments.',
+    '- Use `transition` for branching logic (e.g. if success -> state A, if fail -> state B).',
+    'Example:',
+    'const res = await step("test", "Run tests", () => exec("npm test"));',
+    'if (res.ok) await transition("VERIFIED", "tests passed", () => {});',
+    'else await transition("FAILED", "tests failed", () => issue("test_fail", "Tests failed", res));',
+    'Simple replies: use kind:"reply" and omit "code".'
   ].join("\n");
 }
 
@@ -5496,12 +5770,16 @@ function evaluateShellMutationPolicy(plan, plannerContext) {
   if (!mutationActions.length) {
     return null;
   }
+  const gatedActions = mutationActions.filter((action) => WORKFLOW_GATED_MUTATIONS.has(action.type));
+  if (!gatedActions.length) {
+    return null;
+  }
 
   const summary = plannerContext?.summary ?? {};
   const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
   const inProgressTickets = activeTickets.filter((ticket) => /in progress/i.test(String(ticket.lane ?? "")));
-  const gatedTicketIds = mutationActions
-    .filter((action) => action?.type === "execute_ticket" && action.apply !== false)
+  const gatedTicketIds = gatedActions
+    .filter((action) => (action?.type === "execute_ticket" && action.apply !== false) || action?.type === "finalize_verified_fix")
     .map((action) => String(action.ticketId ?? "").trim().toUpperCase())
     .filter(Boolean);
 
@@ -7117,4 +7395,38 @@ Examples:
   - "what tickets are in Todo?"
   - "sync and show review hotspots"
   - "set-provider-key google"
+  - "set-provider-key google"
 `;
+
+function buildJsOrchestratorServices(options) {
+  const root = options.root;
+  return {
+    sync: {
+      syncProject: (args) => syncProject({ projectRoot: root, ...args }),
+      getProjectSummary: (args) => getProjectSummary({ projectRoot: root, ...args }),
+      getProjectMetrics: (args) => getProjectMetrics({ projectRoot: root, ...args }),
+    },
+    status: {
+      resolveProjectStatus: (args) => resolveProjectStatus({ projectRoot: root, ...args }),
+      getSmartProjectStatus: (args) => getSmartProjectStatus({ projectRoot: root, ...args }),
+    },
+    orchestrator: {
+      executeTicket: (args) => executeTicket({ root, ...args }),
+      decomposeTicket: (args) => decomposeTicket({ root, ...args }),
+      ideateFeature: (args) => ideateFeature({ root, ...args }),
+      sweepBugs: (args) => sweepBugs({ root, ...args }),
+    },
+    codelets: {
+      execute: (id, args) => executeCodelet(id, args, { cwd: root }),
+    },
+    shell: {
+      execute: (prompt, opts) => runShellTurn(prompt, { ...options, ...opts }),
+    },
+    sh: {
+      execute: async (command, args = []) => {
+        const { stdout, stderr } = await execFileAsync(command, args, { cwd: root, shell: true });
+        return { stdout: stdout.trim(), stderr: stderr.trim(), ok: true };
+      }
+    }
+  };
+}

@@ -430,6 +430,71 @@ export async function createTicket({ projectRoot = process.cwd(), entity }) {
   });
 }
 
+export async function updateTicketLifecycle({
+  projectRoot = process.cwd(),
+  ticketId,
+  action,
+  lane = null
+} = {}) {
+  const normalizedAction = String(action ?? "").trim().toLowerCase();
+  if (!ticketId) {
+    throw new Error("ticketId is required");
+  }
+  if (!["resolve", "reopen"].includes(normalizedAction)) {
+    throw new Error(`unsupported ticket lifecycle action: ${action}`);
+  }
+
+  return withWorkflowStore(projectRoot, async (store) => {
+    const ticket = store.getEntity(ticketId);
+    if (!ticket || ticket.entityType !== "ticket") {
+      throw new Error(`Ticket ${ticketId} not found.`);
+    }
+
+    const timestamp = new Date().toISOString();
+    const currentData = { ...(ticket.data ?? {}) };
+    const preservedPreviousLane = currentData.previousLane && !["Done", "Archived"].includes(String(currentData.previousLane))
+      ? currentData.previousLane
+      : null;
+
+    let nextTicket;
+    if (normalizedAction === "resolve") {
+      const previousLane = !["Done", "Archived"].includes(String(ticket.lane ?? ""))
+        ? (ticket.lane ?? inferTicketLane({ id: ticket.id, title: ticket.title }))
+        : (preservedPreviousLane ?? inferTicketLane({ id: ticket.id, title: ticket.title }));
+      nextTicket = {
+        ...ticket,
+        lane: "Done",
+        state: "archived",
+        updatedAt: timestamp,
+        data: {
+          ...currentData,
+          previousLane,
+          completedAt: timestamp.slice(0, 10)
+        }
+      };
+    } else {
+      const reopenedLane = lane
+        ? String(lane).trim()
+        : (preservedPreviousLane ?? inferTicketLane({ id: ticket.id, title: ticket.title, lane: ticket.lane }));
+      const nextData = { ...currentData };
+      delete nextData.completedAt;
+      nextTicket = {
+        ...ticket,
+        lane: reopenedLane,
+        state: "open",
+        updatedAt: timestamp,
+        data: nextData
+      };
+    }
+
+    store.upsertEntity(nextTicket);
+    await reconcileEpicStates(store);
+    createSearchDocumentsForEntities(store);
+    await writeProjectProjections(store, { projectRoot });
+    return store.getEntity(ticketId);
+  });
+}
+
 export async function addManualNote({ projectRoot = process.cwd(), note }) {
   return withWorkflowStore(projectRoot, async (store) => {
     const candidateScores = deriveCandidateScores(note, note.filePath ?? "manual");

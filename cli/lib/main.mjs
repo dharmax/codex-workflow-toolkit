@@ -1,3 +1,8 @@
+/**
+ * Responsibility: Provide the primary CLI entry point and subcommand dispatch logic.
+ * Scope: Handles argument parsing, subcommand routing, and high-level service orchestration.
+ */
+
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import os from "node:os";
@@ -21,7 +26,7 @@ import { refreshProviderQuotaState } from "../../core/services/providers.mjs";
 import { refreshCodeletRegistry, listCodeletsFromStore, getCodeletFromStore, searchCodeletsFromStore } from "../../core/services/codelets.mjs";
 import { executeCodelet } from "../../core/services/codelet-executor.mjs";
 import { buildTicketEntity, importLegacyProjections, inferTicketLane, renderEpicsProjection, renderKanbanProjection, writeProjectProjections } from "../../core/services/projections.mjs";
-import { addManualNote, createTicket, evaluateProjectReadiness, getEpic, getProjectMetrics, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, withWorkflowStore } from "../../core/services/sync.mjs";
+import { addManualNote, createTicket, evaluateProjectReadiness, getEpic, getProjectMetrics, getProjectSummary, listEpicUserStories, listEpics, reviewProjectCandidates, searchEpicUserStories, searchEpics, searchProject, syncProject, updateTicketLifecycle, withWorkflowStore } from "../../core/services/sync.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { onboardProjectBrief } from "../../core/services/orchestrator.mjs";
 import { updateKnowledgeRemote } from "../../core/services/knowledge.mjs";
@@ -34,6 +39,7 @@ import { invalidateWebSearchCache } from "../../core/services/web-search.mjs";
 import { assertDirectCommandChannel } from "../../core/lib/command-channel.mjs";
 import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 import { STATUS_NODE_TYPES, formatStatusReport, resolveProjectStatus } from "../../core/services/status.mjs";
+import { listWorkflowIssues, refineWorkflowIssue } from "../../core/services/workflow-refinement.mjs";
 
 const toolkitRoot = getToolkitRoot();
 const execFileAsync = promisify(execFile);
@@ -74,6 +80,8 @@ const HELP = `Usage:
   ai-workflow project story <list|search> [...]
   ai-workflow project codelet <list|show|search> [...]
   ai-workflow project ticket create --id <id> --title <title> [--lane <lane>] [--epic <epic-id>] [--summary <text>] [--json]
+  ai-workflow project ticket resolve <ticket-id> [--json]
+  ai-workflow project ticket reopen <ticket-id> [--lane <lane>] [--json]
   ai-workflow project note add --type <NOTE|TODO|FIXME|HACK|BUG|RISK> --body <text> [--file <path>] [--line <n>] [--symbol <name>] [--json]
   ai-workflow project review-candidates [--json]
   ai-workflow extract ticket <id> [options]
@@ -90,7 +98,9 @@ const HELP = `Usage:
   ai-workflow mode status [--json]
   ai-workflow knowledge update-remote [--url <remote-url>] [--json]
   ai-workflow tool observe [--complaint <text>] [--json]
+  ai-workflow tool refine [issue-id] [--json]
   ai-workflow web tutorial [--port <n>] [--host <host>] [--json]
+
   ai-workflow config get [key]
   ai-workflow config set <key> <value>
 
@@ -717,6 +727,49 @@ async function handleProject(rest) {
     });
   }
 
+  if (subcommand === "ticket" && args._[0] === "resolve") {
+    assertDirectCommandChannel("ai-workflow project ticket resolve");
+    return withWorkspaceMutation(process.cwd(), "project ticket resolve", async () => {
+      const ticketId = String(args._[1] ?? args.id ?? "").trim();
+      if (!ticketId) {
+        printAndExit("Usage: ai-workflow project ticket resolve <ticket-id> [--json]", 1);
+      }
+      const ticket = await updateTicketLifecycle({
+        projectRoot: process.cwd(),
+        ticketId,
+        action: "resolve"
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(ticket, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(`${ticket.id} resolved -> ${ticket.lane} (${ticket.state})\n`);
+      return 0;
+    });
+  }
+
+  if (subcommand === "ticket" && args._[0] === "reopen") {
+    assertDirectCommandChannel("ai-workflow project ticket reopen");
+    return withWorkspaceMutation(process.cwd(), "project ticket reopen", async () => {
+      const ticketId = String(args._[1] ?? args.id ?? "").trim();
+      if (!ticketId) {
+        printAndExit("Usage: ai-workflow project ticket reopen <ticket-id> [--lane <lane>] [--json]", 1);
+      }
+      const ticket = await updateTicketLifecycle({
+        projectRoot: process.cwd(),
+        ticketId,
+        action: "reopen",
+        lane: args.lane ? String(args.lane) : null
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(ticket, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(`${ticket.id} reopened -> ${ticket.lane} (${ticket.state})\n`);
+      return 0;
+    });
+  }
+
   if (subcommand === "note" && args._[0] === "add") {
     assertDirectCommandChannel("ai-workflow project note add");
     return withWorkspaceMutation(process.cwd(), "project note add", async () => {
@@ -1052,7 +1105,43 @@ async function handleTool(rest) {
   if (action === "observe") {
     return handleToolObserve(extras);
   }
-  printAndExit("Usage: ai-workflow tool observe [--complaint <text>] [--json]", 1);
+  if (action === "refine") {
+    return handleToolRefine(extras);
+  }
+  printAndExit("Usage: ai-workflow tool observe [--complaint <text>] [--json]\n       ai-workflow tool refine [issue-id] [--json]", 1);
+}
+
+async function handleToolRefine(rest) {
+  const [issueId] = rest;
+  const args = parseArgs(rest);
+  const root = process.cwd();
+
+  return withWorkflowStore(root, async (store) => {
+    if (issueId) {
+      const result = await refineWorkflowIssue(issueId, { workflowStore: store });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      } else {
+        process.stdout.write(`${result.message}\n`);
+      }
+      return 0;
+    }
+
+    const issues = await listWorkflowIssues(store);
+    if (args.json) {
+      process.stdout.write(`${JSON.stringify(issues, null, 2)}\n`);
+    } else {
+      if (!issues.length) {
+        process.stdout.write("No open workflow issues.\n");
+      } else {
+        process.stdout.write("Workflow Issues:\n");
+        for (const issue of issues) {
+          process.stdout.write(`- [${issue.id}] [${issue.issueType}] ${issue.summary} (${issue.status})\n`);
+        }
+      }
+    }
+    return 0;
+  });
 }
 
 async function handleWeb(rest) {

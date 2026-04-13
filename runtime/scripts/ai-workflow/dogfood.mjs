@@ -42,20 +42,20 @@ const report = await runDogfood({
 });
 
 if (args.json) {
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  process.exit(0);
-}
+  console.log(JSON.stringify(report, null, 2));
+  process.exitCode = 0;
+} else {
+  const lines = [
+    `Dogfood report: ${path.resolve(root, ".ai-workflow", "generated", "dogfood-report.json")}`,
+    `Profile: ${report.profile}`
+  ];
 
-const lines = [
-  `Dogfood report: ${path.resolve(root, ".ai-workflow", "generated", "dogfood-report.json")}`,
-  `Profile: ${report.profile}`
-];
-
-for (const [surfaceId, surface] of Object.entries(report.surfaces ?? {})) {
-  lines.push(`${surfaceId}: ${surface.status} (${surface.scenarioCount} scenarios, ${surface.fileCount} files)`);
-  for (const scenario of surface.scenarios ?? []) {
-    lines.push(`- ${scenario.ok ? "PASS" : "FAIL"} ${scenario.id}${scenario.model ? ` [${scenario.model}]` : ""}`);
+  for (const [surfaceId, surface] of Object.entries(report.surfaces ?? {})) {
+    lines.push(`${surfaceId}: ${surface.status} (${surface.scenarioCount} scenarios, ${surface.fileCount} files)`);
+    for (const scenario of surface.scenarios ?? []) {
+      lines.push(`- ${scenario.ok ? "PASS" : "FAIL"} ${scenario.id}${scenario.model ? ` [${scenario.model}]` : ""}`);
+    }
   }
-}
 
-process.stdout.write(`${lines.join("\n")}\n`);
+  console.log(lines.join("\n"));
+}

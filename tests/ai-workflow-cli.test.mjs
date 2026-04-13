@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { withWorkflowStore } from "../core/services/sync.mjs";
 import { registerProvider } from "../core/services/providers.mjs";
 import { runSmartCodelet } from "../runtime/scripts/ai-workflow/smart-codelet-runner.mjs";
+import { buildWorkflowAuditSummary } from "../runtime/scripts/ai-workflow/lib/workflow-audit-report.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -86,6 +87,29 @@ test("ai-workflow doctor reports local diagnostics and ollama absence cleanly", 
   assert.equal(typeof payload.ollama, "object");
   assert.equal(typeof payload.leanCtx, "object");
   assert.equal(payload.leanCtx.installed, true);
+});
+
+test("workflow-audit shared report builder and CLI JSON stay aligned", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-audit-json-"));
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+    await runNode([path.join(repoRoot, "runtime", "scripts", "ai-workflow", "dogfood.mjs"), "--root", targetRoot]);
+    const summary = await buildWorkflowAuditSummary(targetRoot);
+    assert.equal(summary.status, "pass");
+    assert.deepEqual(summary.failures, []);
+
+    const result = await runNode(
+      [path.join(repoRoot, "runtime", "scripts", "ai-workflow", "workflow-audit.mjs"), "--json", "--root", targetRoot],
+      { cwd: targetRoot }
+    );
+    assert.equal(result.code, 0, result.stderr || result.stdout);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.status, "pass");
+    assert.deepEqual(payload.failures, []);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
 });
 
 test("ai-workflow can extract a ticket and build a context pack for an initialized repo", { concurrency: false }, async () => {
@@ -711,6 +735,92 @@ test("ai-workflow project ticket create defaults BUG tickets into Bugs P2/P3", {
     const projection = await readFile(path.join(targetRoot, "kanban.md"), "utf8");
     assert.match(projection, /## Bugs P2\/P3/);
     assert.match(projection, /BUG-SHELL-900 Keep bug work in the dedicated bug lane/);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
+test("ai-workflow project ticket resolve and reopen reconcile projections and summaries", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-ticket-lifecycle-"));
+
+  try {
+    await writeFile(path.join(targetRoot, "kanban.md"), "# Kanban\n\n## ToDo\n\n- No items\n", "utf8");
+    const syncResult = await runNode([path.join(repoRoot, "cli", "ai-workflow.mjs"), "sync", "--write-projections", "--json"], { cwd: targetRoot });
+    assert.equal(syncResult.code, 0, syncResult.stderr || syncResult.stdout);
+
+    const createResult = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "ticket",
+      "create",
+      "--id",
+      "BUG-LC-001",
+      "--title",
+      "Resolve and reopen lifecycle ticket",
+      "--lane",
+      "Bugs P1",
+      "--summary",
+      "Exercise lifecycle reconciliation."
+    ], { cwd: targetRoot });
+    assert.equal(createResult.code, 0, createResult.stderr || createResult.stdout);
+
+    const resolveResult = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "ticket",
+      "resolve",
+      "BUG-LC-001",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(resolveResult.code, 0, resolveResult.stderr || resolveResult.stdout);
+    const resolved = JSON.parse(resolveResult.stdout);
+    assert.equal(resolved.id, "BUG-LC-001");
+    assert.equal(resolved.lane, "Done");
+    assert.equal(resolved.state, "archived");
+    assert.equal(resolved.data.previousLane, "Bugs P1");
+    assert.match(String(resolved.data.completedAt), /^\d{4}-\d{2}-\d{2}$/);
+
+    const summaryAfterResolve = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "summary",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(summaryAfterResolve.code, 0, summaryAfterResolve.stderr || summaryAfterResolve.stdout);
+    const resolvedSummary = JSON.parse(summaryAfterResolve.stdout);
+    assert.equal(resolvedSummary.activeTickets.some((ticket) => ticket.id === "BUG-LC-001"), false);
+
+    const kanbanAfterResolve = await readFile(path.join(targetRoot, "kanban.md"), "utf8");
+    assert.match(kanbanAfterResolve, /## Done/);
+    assert.match(kanbanAfterResolve, /BUG-LC-001 Resolve and reopen lifecycle ticket ✅ \d{4}-\d{2}-\d{2}/);
+
+    const reopenResult = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "ticket",
+      "reopen",
+      "BUG-LC-001",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(reopenResult.code, 0, reopenResult.stderr || reopenResult.stdout);
+    const reopened = JSON.parse(reopenResult.stdout);
+    assert.equal(reopened.id, "BUG-LC-001");
+    assert.equal(reopened.lane, "Bugs P1");
+    assert.equal(reopened.state, "open");
+    assert.equal(Object.hasOwn(reopened.data, "completedAt"), false);
+
+    const summaryAfterReopen = await runNode([
+      path.join(repoRoot, "cli", "ai-workflow.mjs"),
+      "project",
+      "summary",
+      "--json"
+    ], { cwd: targetRoot });
+    assert.equal(summaryAfterReopen.code, 0, summaryAfterReopen.stderr || summaryAfterReopen.stdout);
+    const reopenedSummary = JSON.parse(summaryAfterReopen.stdout);
+    assert.equal(reopenedSummary.activeTickets.some((ticket) => ticket.id === "BUG-LC-001" && ticket.lane === "Bugs P1"), true);
+    const kanbanAfterReopen = await readFile(path.join(targetRoot, "kanban.md"), "utf8");
+    assert.match(kanbanAfterReopen, /## Bugs P1/);
+    assert.match(kanbanAfterReopen, /BUG-LC-001 Resolve and reopen lifecycle ticket/);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-13T09:49:27.325Z",
+  "root": "/home/dharmax/work/ai-workflow",
+  "toolkitRoot": "/home/dharmax/work/ai-workflow",
+  "profile": "bootstrap",
+  "timeoutMs": 45000,
+  "surfaces": {
+    "shell": {
+      "description": "Interactive and non-interactive shell routing, planner selection, and mutation control.",
+      "fileCount": 2,
+      "files": [
+        "cli/lib/shell.mjs",
+        "docs/MANUAL.md"
+      ],
+      "fileHashes": {
+        "cli/lib/shell.mjs": "04b08fc118ab1aba8176474380f3bec5a638bb4c3cece4c6d0ea1d3615f0471b",
+        "docs/MANUAL.md": "062008f7a368f89111819b222dd4ad592e1083754c17cc1fac2521f66c552e73"
+      },
+      "scenarioCount": 4,
+      "status": "pass",
+      "scenarios": [
+        {
+          "id": "doctor-command",
+          "description": "shell handles `doctor` locally",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"shell\" \"doctor\" \"--json\" \"--no-ai\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 2655,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"input\": \"doctor\",\n  \"plan\": {\n    \"kind\": \"plan\",\n    \"actions\": [\n      {\n        \"type\": \"doctor\"\n      }\n    ],\n    \"graph\": {\n      \"nodes\": [\n        {\n          \"id\": \"n1\",\n          \"kind\": \"action\",\n          \"type\": \"doctor\",\n          \"action\": {\n            \"type\": \"doctor\"\n          },\n          \"dependsOn\": [],\n          \"status\": \"pending\"\n        },\n        {\n          \"id\": \"n2\",\n          \"kind\": \"synthesize\",\n          \"type\": \"synthesize\",\n          \"dependsOn\": [\n            \"n1\"\n          ],\n          \"status\": \"pending\"\n        }\n      ]\n    },\n    \"confidence\": 0.98,\n    \"reason\": \"Explicit diagnostics request.\",\n    \"assistantReply\": null,\n    \"intent\": {\n      \"version\": \"1\",\n      \"capability\": \"project-planning\",\n      \"objective\": \"Handle the current shell request.\",\n      \"subject\": null,\n      \"taskClass\": null,\n      \"scope\": \"repo-targeted\",\n      \"risk\": \"low\",\n      \"responseStyle\": {\n        \"detail\": \"normal\",\n        \"format\": \"paragraphs\",\n        \"includeExamples\": false\n      },\n      \"needsRepoContext\": true,\n      \"needsMutation\": false,\n      \"safeToAutoExecute\": false,\n      \"followUpMode\": \"new-request\",\n      \"references\": {\n        \"tickets\": [],\n        \"files\": [],\n        \"modules\": [],\n        \"graphNodeIds\": [],\n        \"evidence\": []\n      },\n      \"directAnswerOnly\": false\n    },\n    \"finalAnswerPolicy\": {\n      \"verbosity\": \"normal\",\n      \"format\": \"paragraphs\",\n      \"includeEvidence\": true,\n      \"includeNextSteps\": true,\n      \"includeExamples\": false\n    },\n    \"executionGraph\": {\n      \"nodes\": [\n        {\n  \n... [truncated]",
+          "stderr": ""
+        },
+        {
+          "id": "doctor-help-command",
+          "description": "shell handles `doctor help` locally",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"shell\" \"doctor help\" \"--json\" \"--no-ai\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 111,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"input\": \"doctor help\",\n  \"plan\": {\n    \"kind\": \"reply\",\n    \"actions\": [],\n    \"graph\": {\n      \"nodes\": []\n    },\n    \"reply\": \"doctor: run local diagnostics and provider visibility checks.\\nUsage: `doctor`\\nCLI equivalent: `ai-workflow doctor`\",\n    \"confidence\": 0.99,\n    \"reason\": \"Local doctor help reply.\",\n    \"assistantReply\": \"doctor: run local diagnostics and provider visibility checks.\\nUsage: `doctor`\\nCLI equivalent: `ai-workflow doctor`\",\n    \"intent\": {\n      \"version\": \"1\",\n      \"capability\": \"shell-usage\",\n      \"objective\": \"Answer a shell-local request.\",\n      \"subject\": null,\n      \"taskClass\": null,\n      \"scope\": \"shell-local\",\n      \"risk\": \"low\",\n      \"responseStyle\": {\n        \"detail\": \"normal\",\n        \"format\": \"paragraphs\",\n        \"includeExamples\": false\n      },\n      \"needsRepoContext\": false,\n      \"needsMutation\": false,\n      \"safeToAutoExecute\": false,\n      \"followUpMode\": \"new-request\",\n      \"references\": {\n        \"tickets\": [],\n        \"files\": [],\n        \"modules\": [],\n        \"graphNodeIds\": [],\n        \"evidence\": []\n      },\n      \"directAnswerOnly\": true\n    },\n    \"finalAnswerPolicy\": {\n      \"verbosity\": \"normal\",\n      \"format\": \"paragraphs\",\n      \"includeEvidence\": false,\n      \"includeNextSteps\": true,\n      \"includeExamples\": false\n    },\n    \"executionGraph\": {\n      \"nodes\": []\n    },\n    \"focusTaskClass\": null\n  },\n  \"executed\": [],\n  \"executedGraph\": {\n    \"nodes\": [],\n    \"executions\": [],\n    \"branchPath\": []\n  },\n  \"continuationState\": {\n    \"request\": \"doctor help\",\n    \"active\": false,\n    \"intent\": {\n  \n... [truncated]",
+          "stderr": ""
+        },
+        {
+          "id": "incomplete-epic-request",
+          "description": "shell asks for the missing epic topic without AI",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"shell\" \"can you write an epic?\" \"--json\" \"--no-ai\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 106,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"input\": \"can you write an epic?\",\n  \"plan\": {\n    \"kind\": \"reply\",\n    \"actions\": [],\n    \"graph\": {\n      \"nodes\": []\n    },\n    \"reply\": \"Yes.\\nGive me the epic topic, or say `create epic for <topic>`.\\nExample: `create epic for Telegram remote-control`.\",\n    \"confidence\": 0.98,\n    \"reason\": \"Epic ideation request is missing a topic.\",\n    \"assistantReply\": \"Yes.\\nGive me the epic topic, or say `create epic for <topic>`.\\nExample: `create epic for Telegram remote-control`.\",\n    \"intent\": {\n      \"version\": \"1\",\n      \"capability\": \"project-planning\",\n      \"objective\": \"Handle the current shell request.\",\n      \"subject\": null,\n      \"taskClass\": null,\n      \"scope\": \"workflow-state\",\n      \"risk\": \"low\",\n      \"responseStyle\": {\n        \"detail\": \"normal\",\n        \"format\": \"paragraphs\",\n        \"includeExamples\": false\n      },\n      \"needsRepoContext\": false,\n      \"needsMutation\": false,\n      \"safeToAutoExecute\": false,\n      \"followUpMode\": \"new-request\",\n      \"references\": {\n        \"tickets\": [],\n        \"files\": [],\n        \"modules\": [],\n        \"graphNodeIds\": [],\n        \"evidence\": []\n      },\n      \"directAnswerOnly\": true\n    },\n    \"finalAnswerPolicy\": {\n      \"verbosity\": \"normal\",\n      \"format\": \"paragraphs\",\n      \"includeEvidence\": false,\n      \"includeNextSteps\": true,\n      \"includeExamples\": false\n    },\n    \"executionGraph\": {\n      \"nodes\": []\n    },\n    \"focusTaskClass\": null\n  },\n  \"executed\": [],\n  \"executedGraph\": {\n    \"nodes\": [],\n    \"executions\": [],\n    \"branchPath\": []\n  },\n  \"continuationState\": {\n    \"request\": \"can you write\n... [truncated]",
+          "stderr": ""
+        },
+        {
+          "id": "epic-read-request",
+          "description": "shell answers `epic?` without AI",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"shell\" \"epic?\" \"--json\" \"--no-ai\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 107,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"input\": \"epic?\",\n  \"plan\": {\n    \"kind\": \"reply\",\n    \"actions\": [],\n    \"graph\": {\n      \"nodes\": []\n    },\n    \"reply\": \"There is no active epic yet.\\nFor the full list, run `ai-workflow project epic list`.\\nTo create a new one, say `create epic for ...`.\",\n    \"confidence\": 0.9,\n    \"reason\": \"No active epic in smart status.\",\n    \"assistantReply\": \"There is no active epic yet.\\nFor the full list, run `ai-workflow project epic list`.\\nTo create a new one, say `create epic for ...`.\",\n    \"intent\": {\n      \"version\": \"1\",\n      \"capability\": \"project-planning\",\n      \"objective\": \"Handle the current shell request.\",\n      \"subject\": null,\n      \"taskClass\": null,\n      \"scope\": \"workflow-state\",\n      \"risk\": \"low\",\n      \"responseStyle\": {\n        \"detail\": \"normal\",\n        \"format\": \"paragraphs\",\n        \"includeExamples\": false\n      },\n      \"needsRepoContext\": false,\n      \"needsMutation\": false,\n      \"safeToAutoExecute\": false,\n      \"followUpMode\": \"new-request\",\n      \"references\": {\n        \"tickets\": [],\n        \"files\": [],\n        \"modules\": [],\n        \"graphNodeIds\": [],\n        \"evidence\": []\n      },\n      \"directAnswerOnly\": true\n    },\n    \"finalAnswerPolicy\": {\n      \"verbosity\": \"normal\",\n      \"format\": \"paragraphs\",\n      \"includeEvidence\": false,\n      \"includeNextSteps\": true,\n      \"includeExamples\": false\n    },\n    \"executionGraph\": {\n      \"nodes\": []\n    },\n    \"focusTaskClass\": null\n  },\n  \"executed\": [],\n  \"executedGraph\": {\n    \"nodes\": [],\n    \"executions\": [],\n    \"branchPath\": []\n  },\n  \"continuationState\": {\n    \"request\": \"epic?\n... [truncated]",
+          "stderr": ""
+        }
+      ]
+    }
+  }
+}
