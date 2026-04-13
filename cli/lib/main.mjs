@@ -82,6 +82,8 @@ const HELP = `Usage:
   ai-workflow project codelet <list|show|search> [...]
   ai-workflow project ticket create --id <id> --title <title> [--lane <lane>] [--epic <epic-id>] [--summary <text>] [--json]
   ai-workflow project ticket resolve <ticket-id> [--json]
+  ai-workflow project ticket close <ticket-id> [--json]
+  ai-workflow project ticket start <ticket-id> [--json]
   ai-workflow project ticket reopen <ticket-id> [--lane <lane>] [--json]
   ai-workflow project note add --type <NOTE|TODO|FIXME|HACK|BUG|RISK> --body <text> [--file <path>] [--line <n>] [--symbol <name>] [--json]
   ai-workflow project review-candidates [--json]
@@ -728,12 +730,13 @@ async function handleProject(rest) {
     });
   }
 
-  if (subcommand === "ticket" && args._[0] === "resolve") {
-    assertDirectCommandChannel("ai-workflow project ticket resolve");
-    return withWorkspaceMutation(process.cwd(), "project ticket resolve", async () => {
+  if (subcommand === "ticket" && (args._[0] === "resolve" || args._[0] === "close")) {
+    const action = args._[0];
+    assertDirectCommandChannel(`ai-workflow project ticket ${action}`);
+    return withWorkspaceMutation(process.cwd(), `project ticket ${action}`, async () => {
       const ticketId = String(args._[1] ?? args.id ?? "").trim();
       if (!ticketId) {
-        printAndExit("Usage: ai-workflow project ticket resolve <ticket-id> [--json]", 1);
+        printAndExit(`Usage: ai-workflow project ticket ${action} <ticket-id> [--json]`, 1);
       }
       const ticket = await updateTicketLifecycle({
         projectRoot: process.cwd(),
@@ -744,7 +747,29 @@ async function handleProject(rest) {
         process.stdout.write(`${JSON.stringify(ticket, null, 2)}\n`);
         return 0;
       }
-      process.stdout.write(`${ticket.id} resolved -> ${ticket.lane} (${ticket.state})\n`);
+      process.stdout.write(`${ticket.id} ${action}d -> ${ticket.lane} (${ticket.state})\n`);
+      return 0;
+    });
+  }
+
+  if (subcommand === "ticket" && args._[0] === "start") {
+    assertDirectCommandChannel("ai-workflow project ticket start");
+    return withWorkspaceMutation(process.cwd(), "project ticket start", async () => {
+      const ticketId = String(args._[1] ?? args.id ?? "").trim();
+      if (!ticketId) {
+        printAndExit("Usage: ai-workflow project ticket start <ticket-id> [--json]", 1);
+      }
+      const ticket = await updateTicketLifecycle({
+        projectRoot: process.cwd(),
+        ticketId,
+        action: "move",
+        lane: "In Progress"
+      });
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(ticket, null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(`${ticket.id} started -> ${ticket.lane} (${ticket.state})\n`);
       return 0;
     });
   }

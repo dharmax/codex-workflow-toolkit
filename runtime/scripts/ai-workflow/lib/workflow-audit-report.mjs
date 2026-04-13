@@ -1,4 +1,5 @@
 import path from "node:path";
+import { execSync } from "node:child_process";
 import { fileExistsRelative, runGuidelineAudit } from "./audit-utils.mjs";
 import { DEFAULT_DOGFOOD_REPORT_PATH, readDogfoodReport } from "./dogfood-utils.mjs";
 import { readText } from "./fs-utils.mjs";
@@ -344,6 +345,25 @@ if (activeDocs.includes("kanban.md")) {
         line: ticket.line,
         message: `${ticket.id ?? ticket.heading}: done ticket is ${ageDays} days old; move it to kanban-archive.md`
       }));
+    }
+  }
+
+  // Zombie Work Detection: Check if open tickets appear in recent commit history
+  const openTickets = parsed.tickets.filter(t => t.section !== "Done" && t.id);
+  if (openTickets.length > 0) {
+    try {
+      const recentCommits = execSync("git log -n 20 --pretty=format:%s", { cwd: resolvedRoot, encoding: "utf8" });
+      for (const ticket of openTickets) {
+        if (recentCommits.includes(ticket.id)) {
+          findings.push(createFinding({
+            category: "integrity",
+            file: "kanban.md",
+            message: `zombie work detected: ticket ${ticket.id} is mentioned in recent commits but remains in lane '${ticket.section}'. Resolve it now.`
+          }));
+        }
+      }
+    } catch (error) {
+      // Ignore if not a git repo or other git error
     }
   }
 }

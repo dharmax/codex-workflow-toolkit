@@ -440,7 +440,7 @@ export async function updateTicketLifecycle({
   if (!ticketId) {
     throw new Error("ticketId is required");
   }
-  if (!["resolve", "reopen"].includes(normalizedAction)) {
+  if (!["resolve", "reopen", "move"].includes(normalizedAction)) {
     throw new Error(`unsupported ticket lifecycle action: ${action}`);
   }
 
@@ -472,7 +472,7 @@ export async function updateTicketLifecycle({
           completedAt: timestamp.slice(0, 10)
         }
       };
-    } else {
+    } else if (normalizedAction === "reopen") {
       const reopenedLane = lane
         ? String(lane).trim()
         : (preservedPreviousLane ?? inferTicketLane({ id: ticket.id, title: ticket.title, lane: ticket.lane }));
@@ -484,6 +484,20 @@ export async function updateTicketLifecycle({
         state: "open",
         updatedAt: timestamp,
         data: nextData
+      };
+    } else if (normalizedAction === "move") {
+      if (!lane) {
+        throw new Error("lane is required for move action");
+      }
+      nextTicket = {
+        ...ticket,
+        lane: String(lane).trim(),
+        updatedAt: timestamp,
+        data: {
+          ...currentData,
+          movedAt: timestamp,
+          previousLane: ticket.lane
+        }
       };
     }
 
