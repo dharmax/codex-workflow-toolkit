@@ -34,7 +34,6 @@ import { executeOperatorRequest } from "../../core/services/operator-brain.mjs";
 const STREAMED_STDIO = "__STREAMED_STDIO__";
 const SHELL_GRAPH_NODE_KINDS = new Set(["action", "branch", "assert", "synthesize", "replan"]);
 const TICKET_ID_PATTERN = "[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+";
-const WORKFLOW_GATED_MUTATIONS = new Set(["add_note", "create_ticket", "ideate_feature", "sweep_bugs", "ingest_artifact", "execute_ticket", "finalize_verified_fix"]);
 const TOOLKIT_ROOT = getToolkitRoot();
 const SHELL_REFERENTIAL_TOKENS = new Set([
   "it",
@@ -217,6 +216,11 @@ export async function handleShell(rest, { cliPath } = {}) {
       processingIndicator.update("refreshing context");
       options.plannerContext = await buildShellContext(root);
       options.planners = await resolveShellPlanners(root, { providerState: options.plannerContext.providerState });
+      if (process.env.AI_WORKFLOW_PLANNER_MODEL) {
+        const [p, m] = process.env.AI_WORKFLOW_PLANNER_MODEL.split(":");
+        const provider = options.plannerContext.providerState.providers[p];
+        options.planner = { providerId: p, modelId: m, host: provider?.host };
+      }
       processingIndicator.update("planning and running", { planner: getShellProgressPlanner(prompt, options) });
       const result = await runShellTurn(prompt, options);
       processingIndicator.clear();
@@ -907,11 +911,9 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     };
   }
 
-  if (routing.mode === "staged-core") {
-    const stagedPlan = buildGoalDirectedShellPlan(intent, plannerContext);
-    if (stagedPlan) {
-      return stagedPlan;
-    }
+  const stagedPlan = buildGoalDirectedShellPlan(intent, plannerContext);
+  if (stagedPlan) {
+    return stagedPlan;
   }
 
   const contextualReply = buildContextualShellReply(text, plannerContext);
@@ -922,11 +924,6 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
   const lifecyclePlan = buildTicketLifecycleShellPlan(text, plannerContext, { activeGraphState });
   if (lifecyclePlan) {
     return lifecyclePlan;
-  }
-
-  const kickoffPlan = buildWorkflowKickoffShellPlan(text, plannerContext);
-  if (kickoffPlan) {
-    return kickoffPlan;
   }
 
   if (looksLikeGenericStatusQuery(text, plannerContext)) {
@@ -5669,88 +5666,6 @@ async function ensureMutatingModeForPlan(plan, options) {
     reason: "shell is in plan mode",
     reply: renderPlanModeMutationReply(mutationActions, options.plannerContext)
   };
-}
-
-function evaluateShellMutationPolicy(plan, plannerContext) {
-  const actions = Array.isArray(plan?.actions) ? plan.actions : [];
-  const mutationActions = actions.filter((action) => isMutatingAction(action));
-  if (!mutationActions.length) {
-    return null;
-  }
-  const gatedActions = mutationActions.filter((action) => WORKFLOW_GATED_MUTATIONS.has(action.type));
-  if (!gatedActions.length) {
-    return null;
-  }
-
-  const summary = plannerContext?.summary ?? {};
-  const activeTickets = Array.isArray(summary.activeTickets) ? summary.activeTickets : [];
-  const inProgressTickets = activeTickets.filter((ticket) => /in progress/i.test(String(ticket.lane ?? "")));
-  const gatedTicketIds = gatedActions
-    .filter((action) => (action?.type === "execute_ticket" && action.apply !== false) || action?.type === "finalize_verified_fix")
-    .map((action) => String(action.ticketId ?? "").trim().toUpperCase())
-    .filter(Boolean);
-
-  if (inProgressTickets.length !== 1) {
-    return {
-      reason: inProgressTickets.length > 1
-        ? "workflow gate blocked: multiple tickets are in progress"
-        : "workflow gate blocked: no ticket is in progress",
-      reply: renderWorkflowMutationGateReply({
-        activeTickets,
-        inProgressTickets,
-        blockedTicketIds: gatedTicketIds,
-        plannerContext
-      })
-    };
-  }
-
-  const inProgressId = String(inProgressTickets[0].id ?? "").trim().toUpperCase();
-  if (gatedTicketIds.length && gatedTicketIds.some((id) => id !== inProgressId)) {
-    return {
-      reason: "workflow gate blocked: plan targets a ticket that is not in progress",
-      reply: renderWorkflowMutationGateReply({
-        activeTickets,
-        inProgressTickets,
-        blockedTicketIds: gatedTicketIds,
-        plannerContext
-      })
-    };
-  }
-
-  return null;
-}
-
-function renderWorkflowMutationGateReply({ activeTickets, inProgressTickets, blockedTicketIds, plannerContext }) {
-  const lines = [
-    "I will not run mutating shell actions until the workflow has exactly one ticket in `In Progress`.",
-    "Move the current work item first, then retry."
-  ];
-
-  if (!activeTickets.length) {
-    lines.push("I do not see any active tickets yet. Run `ai-workflow sync` and create or select a ticket first.");
-  } else {
-    lines.push("Current active tickets:");
-    for (const ticket of activeTickets.slice(0, 8)) {
-      lines.push(`- [${ticket.lane}] ${ticket.id}: ${ticket.title}`);
-    }
-  }
-
-  if (inProgressTickets.length > 1) {
-    lines.push(`I found multiple in-progress tickets: ${inProgressTickets.map((ticket) => ticket.id).join(", ")}.`);
-    lines.push("Keep exactly one live ticket in `In Progress` before mutating the project.");
-  } else if (inProgressTickets.length === 1) {
-    lines.push(`Active in-progress ticket: ${inProgressTickets[0].id}.`);
-  } else if (activeTickets.length) {
-    lines.push(`Move one ticket to ` + "`In Progress`" + ` with \`ai-workflow kanban move --id <ticket> --to In Progress\`.`);
-  }
-
-  if (blockedTicketIds.length) {
-    lines.push(`The blocked plan targets: ${blockedTicketIds.join(", ")}.`);
-  }
-
-  const projectName = path.basename(plannerContext?.root ?? process.cwd());
-  lines.push(`Current project: ${projectName}.`);
-  return lines.join("\n");
 }
 
 function extractReadinessGoal(text) {

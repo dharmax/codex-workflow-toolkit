@@ -78,8 +78,6 @@ export async function planOperatorRequest(inputText, options = {}) {
 
 async function buildOperatorPlannerPrompt(inputText, options) {
   const plannerContext = options.plannerContext ?? {};
-  const history = options.history ?? [];
-  const activeGraphState = options.activeGraphState ?? null;
   
   const catalog = buildActionCatalog(plannerContext);
   const runtimeContext = buildOperatorPlannerRuntimeContext(plannerContext, options);
@@ -87,36 +85,37 @@ async function buildOperatorPlannerPrompt(inputText, options) {
   const schemaPrompt = buildOperatorPlannerSchemaPrompt();
 
   const system = [
-    "You are the operator brain inside ai-workflow.",
-    "Behave like a strong operator that decides how to use tools, not like a chatty project summarizer.",
-    "Choose the smallest truthful next step.",
+    "You are the OPERATOR BRAIN, the high-level steering logic of ai-workflow.",
+    "Behave like a Senior Principal Engineer taking control of a messy project.",
+    "Goal: Reach a 'READY' state by identifying work, creating tickets, and executing code.",
     "",
     "## Operating Contract",
-    "- Convert every user request into a typed intent envelope.",
-    "- Use `kind=plan` for normal planning output.",
-    "- Use `kind=reply` for simple conversational answers.",
+    "- Use `kind=plan` for almost everything. Only use `kind=reply` for simple greetings.",
+    "- NEVER reply saying 'I do not see an active ticket' or 'Please create a ticket'. This is a failure state.",
+    "- If no tickets exist and the user provides a goal, your FIRST STEP is to call `orchestrator.ideateFeature` or `sync.createTicket`.",
+    "- If a ticket exists but isn't 'In Progress', your FIRST STEP is to call `exec('ai-workflow project ticket start <id>')`.",
+    "- You have implicit permission to create and start tickets to get the job done.",
     "",
-    "## Available Actions (Your Capabilities):",
+    "## Available Actions:",
     catalog,
     "",
     "## Planning Rules",
     "- Use `await step(id, desc, fn)` for persistent operations.",
     "- Use `await transition(to, trigger, fn)` for state transitions.",
-    "- Use `await exec(cmd, [args])` for git/shell commands (e.g. `git checkout -b`).",
-    "- Imperative requests (e.g. 'start working on X') must result in a plan that actually changes state (e.g. `project ticket start`).",
+    "- Use `await exec(cmd, [args])` for CLI/Git commands.",
     "- Include comments and proper try/catch exception handling in the generated JS.",
     "- JSON only: your output must be valid JSON matching the schema.",
   ].join("\n");
 
   const promptSections = [
-    "## Runtime Context",
+    "## Environment",
     runtimeContext,
-    groundingContext ? `\n## Grounded Repo Evidence\n${groundingContext}` : "",
+    groundingContext ? `\n## Evidence\n${groundingContext}` : "\n## Evidence\nNo active tickets or recent status found. This project is a blank slate.",
     "",
-    "## Allowed JSON Schema:",
+    "## Schema",
     schemaPrompt,
     "",
-    `## Current User Request:\n"${inputText}"\n\nYour Response (JSON):`
+    `## Request:\n"${inputText}"\n\nYour Response (JSON):`
   ];
 
   return {
@@ -130,8 +129,8 @@ async function buildOperatorPlannerGroundingContext(inputText, options = {}) {
   const root = options.root ?? process.cwd();
   const lower = inputText.toLowerCase();
 
-  // Evaluative Intent (Audit, Health, Quality)
-  if (/\b(how is|audit|health|quality|metrics|checks?|status|doing|ready|readiness)\b/i.test(lower)) {
+  // Evaluative/Bootstrap Intent (Audit, Health, Quality, Mess, Regression)
+  if (/\b(how is|audit|health|quality|metrics|checks?|status|doing|ready|readiness|mess|regression|broken)\b/i.test(lower)) {
     const status = await resolveProjectStatus({ projectRoot: root, selector: ".", includeRelated: true }).catch(() => null);
     if (status?.ok) {
       sections.push(`### Project Health / Status\n${status.title}\n${status.summary}\nActive Tickets: ${status.evidence?.filter(e => e.includes("ticket")).length ?? 0}`);
@@ -142,8 +141,8 @@ async function buildOperatorPlannerGroundingContext(inputText, options = {}) {
     }
   }
 
-  // Workplan Intent (Next steps, Planning, Roadmap)
-  if (/\b(plan|start|next|roadmap|todo|working on|tackle|sequence|order)\b/i.test(lower)) {
+  // Workplan/Focus Intent (Next steps, Planning, Roadmap, Focus)
+  if (/\b(plan|start|next|roadmap|todo|working on|tackle|sequence|order|focus|workplan)\b/i.test(lower)) {
     const summary = await getProjectSummary({ projectRoot: root }).catch(() => null);
     if (summary) {
       const topTickets = summary.activeTickets.slice(0, 5).map(t => `- [${t.lane}] ${t.id}: ${t.title}`).join("\n");
@@ -188,6 +187,9 @@ function buildOperatorPlannerSchemaPrompt() {
     '- `await exec(cmd, [args])`: Raw shell command.',
     '- `await executeCodelet(id, args)`: Toolkit tool.',
     '- `issue(type, sum, {details})`: Log failure.',
+    'Patterns:',
+    '- Use `try/catch` & comments.',
+    '- Use `transition` for branching logic.',
     'Simple replies: use kind:"reply" and omit "code".'
   ].join("\n");
 }
@@ -227,6 +229,7 @@ export async function resolveHostRequest(options) {
     }
   };
 }
+
 function buildOperatorServices(root, options) {
   return {
     sync: {
