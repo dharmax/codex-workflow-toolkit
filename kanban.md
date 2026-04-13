@@ -18,31 +18,32 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 ## ToDo
 <!-- canonical alias: ## Todo -->
 
-- [ ] TKT-SHELL-CANONICAL-003 Migrate shell planning, fallback, and recovery onto the shared operator backend
-  - Summary: Collapse shell-specific heuristic, AI-planner, fallback, and recovery drift into the shared backend while keeping only a tiny deterministic shell-local fast path.
-  - Epic: EPIC-SHELL-CANONICAL-001
-  - Parent: EPIC-SHELL-CANONICAL-001
-  - State: open
-- [ ] TKT-SHELL-CANONICAL-005 Add live comparative benchmark and transcript gate for shell superiority
-  - Summary: Turn shell quality into a hard benchmark using live shell transcripts, workflow-state invariants, and AI-judged comparison against routed Gemini and OpenAI baselines.
-  - Epic: EPIC-SHELL-CANONICAL-001
-  - Parent: EPIC-SHELL-CANONICAL-001
-  - State: open
-- [ ] TKT-SHELL-CANONICAL-002 Migrate ask and host surfaces onto the shared operator backend
-  - Summary: Replace host-resolver and ask-specific routing with thin adapters over the shared operator backend so workflow-state, current-work, and readiness answers stay consistent.
-  - Epic: EPIC-SHELL-CANONICAL-001
-  - Parent: EPIC-SHELL-CANONICAL-001
-  - State: open
-- [ ] TKT-SHELL-CANONICAL-001 Build a shared operator-brain backend for natural-language workflow handling
-  - Summary: Create one canonical intent-ground-execute-synthesize backend that all operator surfaces can call, instead of maintaining separate natural-language brains.
-  - Epic: EPIC-SHELL-CANONICAL-001
-  - Parent: EPIC-SHELL-CANONICAL-001
-  - State: open
-- [ ] TKT-SHELL-JS-001 Spike: Evaluate Function constructor and vm scoping for JS Orchestrator
-  - Summary: Investigate the best way to scope LLM-generated JS (Function constructor vs vm module), how to review it with comments, and basic state-machine support.
-  - Epic: EPIC-SHELL-JS-ORCHESTRATOR
-  - Parent: EPIC-SHELL-JS-ORCHESTRATOR
-  - State: open
+- [x] TKT-SHELL-CANONICAL-003 Migrate shell planning, fallback, and recovery onto the shared operator backend ✅ 2026-04-13
+ - Summary: Collapse shell-specific heuristic, AI-planner, fallback, and recovery drift into the shared backend while keeping only a tiny deterministic shell-local fast path.
+ - Epic: EPIC-SHELL-CANONICAL-001
+ - Parent: EPIC-SHELL-CANONICAL-001
+ - State: archived
+- [x] TKT-SHELL-CANONICAL-005 Add live comparative benchmark and transcript gate for shell superiority ✅ 2026-04-13
+ - Summary: Turn shell quality into a hard benchmark using live shell transcripts, workflow-state invariants, and AI-judged comparison against routed Gemini and OpenAI baselines.
+ - Epic: EPIC-SHELL-CANONICAL-001
+ - Parent: EPIC-SHELL-CANONICAL-001
+ - State: archived
+- [x] TKT-SHELL-CANONICAL-002 Migrate ask and host surfaces onto the shared operator backend ✅ 2026-04-13
+ - Summary: Replace host-resolver and ask-specific routing with thin adapters over the shared operator backend so workflow-state, current-work, and readiness answers stay consistent.
+ - Epic: EPIC-SHELL-CANONICAL-001
+ - Parent: EPIC-SHELL-CANONICAL-001
+ - State: archived
+- [x] TKT-SHELL-CANONICAL-001 Build a shared operator-brain backend for natural-language workflow handling ✅ 2026-04-13
+ - Summary: Create one canonical intent-ground-execute-synthesize backend that all operator surfaces can call, instead of maintaining separate natural-language brains.
+ - Epic: EPIC-SHELL-CANONICAL-001
+ - Parent: EPIC-SHELL-CANONICAL-001
+ - State: archived
+- [x] TKT-SHELL-JS-001 Spike: Evaluate Function constructor and vm scoping for JS Orchestrator ✅ 2026-04-13
+ - Summary: Investigate the best way to scope LLM-generated JS (Function constructor vs vm module), how to review it with comments, and basic state-machine support.
+ - Epic: EPIC-SHELL-JS-ORCHESTRATOR
+ - Parent: EPIC-SHELL-JS-ORCHESTRATOR
+ - State: archived
+
 - [ ] TKT-TELEGRAM-003 Gate mutating Telegram commands with approval
   - Summary: Require explicit approval, dry-run, and confirmation before a Telegram command changes project state.
   - Epic: EPIC-010
