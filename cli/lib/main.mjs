@@ -40,6 +40,7 @@ import { assertDirectCommandChannel } from "../../core/lib/command-channel.mjs";
 import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 import { STATUS_NODE_TYPES, formatStatusReport, resolveProjectStatus } from "../../core/services/status.mjs";
 import { listWorkflowIssues, refineWorkflowIssue } from "../../core/services/workflow-refinement.mjs";
+import { runShellBenchmark } from "../../core/services/shell-benchmark.mjs";
 
 const toolkitRoot = getToolkitRoot();
 const execFileAsync = promisify(execFile);
@@ -99,8 +100,8 @@ const HELP = `Usage:
   ai-workflow knowledge update-remote [--url <remote-url>] [--json]
   ai-workflow tool observe [--complaint <text>] [--json]
   ai-workflow tool refine [issue-id] [--json]
+  ai-workflow tool benchmark <prompt> [--json]
   ai-workflow web tutorial [--port <n>] [--host <host>] [--json]
-
   ai-workflow config get [key]
   ai-workflow config set <key> <value>
 
@@ -1108,7 +1109,33 @@ async function handleTool(rest) {
   if (action === "refine") {
     return handleToolRefine(extras);
   }
-  printAndExit("Usage: ai-workflow tool observe [--complaint <text>] [--json]\n       ai-workflow tool refine [issue-id] [--json]", 1);
+  if (action === "benchmark") {
+    return handleToolBenchmark(extras);
+  }
+  printAndExit("Usage: ai-workflow tool observe [--complaint <text>] [--json]\n       ai-workflow tool refine [issue-id] [--json]\n       ai-workflow tool benchmark <prompt> [--json]", 1);
+}
+
+async function handleToolBenchmark(rest) {
+  const args = parseArgs(rest);
+  const prompt = args._.join(" ");
+  if (!prompt) {
+    printAndExit("Usage: ai-workflow tool benchmark <prompt> [--json]", 1);
+  }
+
+  const result = await runShellBenchmark(prompt, { root: process.cwd() });
+  if (args.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    if (!result.ok) {
+      process.stdout.write(`Benchmark failed: ${result.error}\n`);
+      return 1;
+    }
+    process.stdout.write(`${result.summary}\n`);
+    for (const run of result.runs) {
+      process.stdout.write(`- Tier: ${run.tier} | Model: ${run.model} | Latency: ${run.latency}ms | Code: ${run.hasCode ? "YES" : "NO"}\n`);
+    }
+  }
+  return 0;
 }
 
 async function handleToolRefine(rest) {
