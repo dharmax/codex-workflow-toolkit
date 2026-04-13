@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
 import { getToolkitCodelet, getToolkitRoot } from "./codelets.mjs";
+import { buildWorkflowAuditSummary } from "../../runtime/scripts/ai-workflow/lib/workflow-audit-report.mjs";
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
 import { runDoctor } from "./doctor.mjs";
 import { handleSetOllamaHw } from "./ollama-hw.mjs";
@@ -103,7 +104,9 @@ const HELP = `Usage:
   ai-workflow tool observe [--complaint <text>] [--json]
   ai-workflow tool refine [issue-id] [--json]
   ai-workflow tool benchmark <prompt> [--json]
+  ai-workflow tool finalize [--json]
   ai-workflow web tutorial [--port <n>] [--host <host>] [--json]
+
   ai-workflow config get [key]
   ai-workflow config set <key> <value>
 
@@ -1137,7 +1140,49 @@ async function handleTool(rest) {
   if (action === "benchmark") {
     return handleToolBenchmark(extras);
   }
-  printAndExit("Usage: ai-workflow tool observe [--complaint <text>] [--json]\n       ai-workflow tool refine [issue-id] [--json]\n       ai-workflow tool benchmark <prompt> [--json]", 1);
+  if (action === "finalize") {
+    return handleToolFinalize(extras);
+  }
+  printAndExit("Usage: ai-workflow tool observe [--complaint <text>] [--json]\n       ai-workflow tool refine [issue-id] [--json]\n       ai-workflow tool benchmark <prompt> [--json]\n       ai-workflow tool finalize [--json]", 1);
+}
+
+async function handleToolFinalize(rest) {
+  const args = parseArgs(rest);
+  const root = process.cwd();
+
+  process.stdout.write("Finalizing workflow...\n");
+
+  // 1. Sync
+  process.stdout.write("- Syncing project state...\n");
+  await syncProject({ projectRoot: root, writeProjections: true });
+
+  // 2. Audit
+  process.stdout.write("- Running workflow audit...\n");
+  const auditSummary = await buildWorkflowAuditSummary(root);
+  
+  if (args.json) {
+    process.stdout.write(JSON.stringify({ ok: true, audit: auditSummary }, null, 2) + "\n");
+    return 0;
+  }
+
+  // 3. Report
+  const zombieFindings = auditSummary.findings.filter(f => f.category === "integrity" && f.message.includes("zombie work"));
+  
+  if (zombieFindings.length === 0) {
+    process.stdout.write("No zombie work detected. Workflow state matches implementation.\n");
+  } else {
+    process.stdout.write("\nDetected tickets referenced in commits but still open:\n");
+    for (const f of zombieFindings) {
+      process.stdout.write(`${f.message}\n`);
+    }
+    process.stdout.write("\nAction: Use `ai-workflow project ticket resolve <id>` to close these.\n");
+  }
+
+  if (auditSummary.failures.length > zombieFindings.length) {
+    process.stdout.write("\nNote: There are other audit failures. Run `ai-workflow verify workflow` for details.\n");
+  }
+
+  return 0;
 }
 
 async function handleToolBenchmark(rest) {
@@ -1453,41 +1498,34 @@ async function handleConsult(rest) {
 }
 
 function runNodeScript(scriptPath, args, options = {}) {
-  return mkdtemp(path.join(os.tmpdir(), "ai-workflow-cli-")).then(async (captureDir) => {
-    const stdoutPath = path.join(captureDir, "stdout.log");
-    const stderrPath = path.join(captureDir, "stderr.log");
-    const command = `${shellQuote(process.execPath)} ${[scriptPath, ...args].map(shellQuote).join(" ")} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)}`;
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [scriptPath, ...args], {
+      cwd: process.cwd(),
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
 
-    try {
-      await execFileAsync("/usr/bin/bash", ["-lc", command], {
-        cwd: process.cwd(),
-        maxBuffer: 16 * 1024 * 1024,
-        env: options.env ? { ...process.env, ...options.env } : process.env
-      });
-      const stdout = await readFile(stdoutPath, "utf8").catch(() => "");
-      const stderr = await readFile(stderrPath, "utf8").catch(() => "");
-      if (stdout) {
-        process.stdout.write(stdout);
-      }
-      if (stderr) {
-        process.stderr.write(stderr);
-      }
-      return 0;
-    } catch (error) {
-      const stdout = await readFile(stdoutPath, "utf8").catch(() => error.stdout ?? "");
-      const stderr = await readFile(stderrPath, "utf8").catch(() => error.stderr ?? "");
-      if (stdout) {
-        process.stdout.write(stdout);
-      }
-      if (stderr) {
-        process.stderr.write(stderr);
-      } else if (error.message) {
-        process.stderr.write(`${error.message}\n`);
-      }
-      return error.code ?? 1;
-    } finally {
-      await rm(captureDir, { recursive: true, force: true });
-    }
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+      process.stdout.write(chunk);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+      process.stderr.write(chunk);
+    });
+
+    child.on("exit", (code) => {
+      resolve(code ?? 0);
+    });
+
+    child.on("error", (error) => {
+      process.stderr.write(`${error.message}\n`);
+      resolve(1);
+    });
   });
 }
 

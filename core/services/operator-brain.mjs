@@ -102,6 +102,8 @@ async function buildOperatorPlannerPrompt(inputText, options) {
     "## Planning Rules",
     "- Use `await step(id, desc, fn)` for persistent operations.",
     "- Use `await transition(to, trigger, fn)` for state transitions.",
+    "- Use `await exec(cmd, [args])` for git/shell commands (e.g. `git checkout -b`).",
+    "- Imperative requests (e.g. 'start working on X') must result in a plan that actually changes state (e.g. `project ticket start`).",
     "- Include comments and proper try/catch exception handling in the generated JS.",
     "- JSON only: your output must be valid JSON matching the schema.",
   ].join("\n");
@@ -126,19 +128,41 @@ async function buildOperatorPlannerPrompt(inputText, options) {
 async function buildOperatorPlannerGroundingContext(inputText, options = {}) {
   const sections = [];
   const root = options.root ?? process.cwd();
-  
-  // Heuristic grounding: if they ask about code, search for relevant symbols
-  if (inputText.length > 10) {
+  const lower = inputText.toLowerCase();
+
+  // Evaluative Intent (Audit, Health, Quality)
+  if (/\b(how is|audit|health|quality|metrics|checks?|status|doing|ready|readiness)\b/i.test(lower)) {
+    const status = await resolveProjectStatus({ projectRoot: root, selector: ".", includeRelated: true }).catch(() => null);
+    if (status?.ok) {
+      sections.push(`### Project Health / Status\n${status.title}\n${status.summary}\nActive Tickets: ${status.evidence?.filter(e => e.includes("ticket")).length ?? 0}`);
+    }
+    const metrics = await getProjectMetrics({ projectRoot: root }).catch(() => null);
+    if (metrics) {
+      sections.push(`### Performance Metrics\n- Success Rate: ${metrics.successRate}%\n- Avg Latency: ${metrics.avgLatencyMs}ms\n- Total Calls: ${metrics.totalCalls}`);
+    }
+  }
+
+  // Workplan Intent (Next steps, Planning, Roadmap)
+  if (/\b(plan|start|next|roadmap|todo|working on|tackle|sequence|order)\b/i.test(lower)) {
+    const summary = await getProjectSummary({ projectRoot: root }).catch(() => null);
+    if (summary) {
+      const topTickets = summary.activeTickets.slice(0, 5).map(t => `- [${t.lane}] ${t.id}: ${t.title}`).join("\n");
+      sections.push(`### Current Working Set\n${topTickets || "No active tickets."}`);
+    }
+  }
+
+  // Fallback Grounding (Heuristic search)
+  if (sections.length === 0 && inputText.length > 15) {
     const payload = await resolveProjectStatus({
       projectRoot: root,
       selector: ".",
       includeRelated: true,
       rawQuestion: true,
-      relatedLimit: 5
+      relatedLimit: 3
     }).catch(() => null);
     
     if (payload?.ok) {
-      sections.push(`Current Project: ${payload.title}\n${payload.summary}`);
+      sections.push(`### Project Context\n${payload.summary}`);
     }
   }
 

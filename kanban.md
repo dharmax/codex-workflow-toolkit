@@ -46,35 +46,15 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 
 ## Bugs P1
 
-- [ ] BUG-SHELL-HUMAN-077 Handle imperative branch-and-start-work requests without status-query collapse
-  - Summary: Imperative requests like 'on a new branch, start working on the Telegram epic and tickets in the right order' should become a staged execution plan, not a bogus epic status lookup; correction retries must not repeat the same failed action or leak concatenated raw errors.
-  - State: open
-- [ ] BUG-WORKFLOW-INTEGRITY-001 Add a verified-fix workflow that closes tickets and projects board state
-  - Summary: When a shell or CLI fix is implemented and verified, the tool should support a first-class close/resolve flow so operator-facing status no longer reports fixed bugs as open.
-  - State: open
-- [ ] BUG-WORKFLOW-INTEGRITY-002 Teach the shell to mark verified bug tickets done after a successful fix loop
-  - Summary: When shell-led work ends with passing tests and successful dogfood/audit, the shell should be able to propose or execute ticket closure instead of leaving verified bug tickets active.
-  - State: open
-- [ ] BUG-WORKFLOW-INTEGRITY-006 Require shell finalization to reconcile implementation results with workflow state
-  - Summary: A shell fix loop should not be considered complete until tests, dogfood, audit, and ticket/board reconciliation all agree; the shell needs an explicit finalization step or policy for that.
-  - State: open
+- No items
 
 ## Bugs P2/P3
 
-- [ ] BUG-WORKFLOW-RUNTIME-001 Fix nested Node capture for workflow-audit wrapper output
-  - Summary: The workflow-audit CLI emits correct JSON via direct shell invocation, but nested Node child-process capture still returns empty stdout; now that shell finalization uses a shared audit service this is no longer blocking, but the wrapper contract should still be made reliable for tool callers.
-  - State: open
-- [ ] BUG-WORKFLOW-INTEGRITY-004 Add transcript-level tests that require workflow-state integrity after shell fixes
-  - Summary: Regression tests should fail if a shell fix changes behavior but leaves the operator-visible workflow state inconsistent, such as open bug tickets remaining the reported next work after verification.
-  - State: open
-- [ ] BUG-WORKFLOW-INTEGRITY-007 Fix misleading next-step synthesis when no ticket is actually in progress
-  - Summary: Ask/shell summaries should not say Inspect the leading in-progress ticket when the active work is Bugs or Todo only; the next-step synthesis must reflect real lane and state semantics.
-  - State: open
+- No items
 
 ## In Progress
 
-- [ ] BUG-SHELL-HUMAN-076 Handle evaluative and workplan prompts without wrong-surface fallback
-  - State: open
+- No items
 
 ## Human Inspection
 
@@ -86,6 +66,29 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 
 ## Done
 
+- [ ] BUG-WORKFLOW-INTEGRITY-004 Add transcript-level tests that require workflow-state integrity after shell fixes ✅ 2026-04-13
+  - Summary: Regression tests should fail if a shell fix changes behavior but leaves the operator-visible workflow state inconsistent, such as open bug tickets remaining the reported next work after verification.
+  - State: archived
+- [ ] BUG-SHELL-HUMAN-077 Handle imperative branch-and-start-work requests without status-query collapse ✅ 2026-04-13
+  - Summary: Imperative requests like 'on a new branch, start working on the Telegram epic and tickets in the right order' should become a staged execution plan, not a bogus epic status lookup; correction retries must not repeat the same failed action or leak concatenated raw errors.
+  - State: archived
+- [ ] BUG-WORKFLOW-INTEGRITY-006 Require shell finalization to reconcile implementation results with workflow state ✅ 2026-04-13
+  - Summary: A shell fix loop should not be considered complete until tests, dogfood, audit, and ticket/board reconciliation all agree; the shell needs an explicit finalization step or policy for that.
+  - State: archived
+- [ ] BUG-WORKFLOW-INTEGRITY-002 Teach the shell to mark verified bug tickets done after a successful fix loop ✅ 2026-04-13
+  - Summary: When shell-led work ends with passing tests and successful dogfood/audit, the shell should be able to propose or execute ticket closure instead of leaving verified bug tickets active.
+  - State: archived
+- [ ] BUG-WORKFLOW-INTEGRITY-001 Add a verified-fix workflow that closes tickets and projects board state ✅ 2026-04-13
+  - Summary: When a shell or CLI fix is implemented and verified, the tool should support a first-class close/resolve flow so operator-facing status no longer reports fixed bugs as open.
+  - State: archived
+- [ ] BUG-WORKFLOW-RUNTIME-001 Fix nested Node capture for workflow-audit wrapper output ✅ 2026-04-13
+  - Summary: The workflow-audit CLI emits correct JSON via direct shell invocation, but nested Node child-process capture still returns empty stdout; now that shell finalization uses a shared audit service this is no longer blocking, but the wrapper contract should still be made reliable for tool callers.
+  - State: archived
+- [ ] BUG-WORKFLOW-INTEGRITY-007 Fix misleading next-step synthesis when no ticket is actually in progress ✅ 2026-04-13
+  - Summary: Ask/shell summaries should not say Inspect the leading in-progress ticket when the active work is Bugs or Todo only; the next-step synthesis must reflect real lane and state semantics.
+  - State: archived
+- [ ] BUG-SHELL-HUMAN-076 Handle evaluative and workplan prompts without wrong-surface fallback ✅ 2026-04-13
+  - State: archived
 - [ ] BUG-WORKFLOW-INTEGRITY-005 Add first-class ticket resolve/close commands to the project CLI ✅ 2026-04-13
   - Summary: The workflow CLI exposes ticket creation but not an equally direct resolve/close path, which makes it too easy to leave verified work active and operator-facing summaries wrong.
   - State: archived

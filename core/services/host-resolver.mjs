@@ -128,9 +128,11 @@ export async function resolveHostRequest({
           : "No active work was found in the workflow DB.",
         active_tickets: active,
         answer: ["Current work:", ...lines].join("\n"),
-        recommended_next_actions: active.length
+        recommended_next_actions: active.some(t => t.lane === "In Progress")
           ? ["Inspect the leading in-progress ticket before planning more work."]
-          : ["Run ai-workflow sync if the DB may be stale."]
+          : active.length > 0 
+            ? ["Select a ticket from Todo or Bugs and start work."]
+            : ["Run ai-workflow sync if the DB may be stale."]
       }
     };
   }
