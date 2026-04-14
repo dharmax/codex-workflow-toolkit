@@ -74,6 +74,8 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 
 ## Done
 
+- [ ] TKT-RESILIENCE-001 Improve JSON parsing and provider JSON modes ✅ 2026-04-14
+  - State: archived
 - [ ] TKT-HOOKS-004 Expose hook configuration in CLI settings ✅ 2026-04-14
   - Epic: EPIC-SETTINGS-001
   - Parent: EPIC-SETTINGS-001

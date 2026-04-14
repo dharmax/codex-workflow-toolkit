@@ -336,13 +336,22 @@ export async function generateWithOllama({ model, prompt, system = "", host, for
   };
 }
 
-export async function generateWithGemini({ model, prompt, system = "", apiKey, contentParts = null, signal = null } = {}) {
+export async function generateWithGemini({ model, prompt, system = "", apiKey, config = {}, contentParts = null, signal = null } = {}) {
   const key = apiKey ?? process.env.GOOGLE_API_KEY;
   if (!key) {
     throw new Error("Gemini API key is required (GOOGLE_API_KEY or config)");
   }
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+  const generationConfig = {
+    temperature: 0.1,
+    maxOutputTokens: 2048
+  };
+
+  if (config.format === "json") {
+    generationConfig.response_mime_type = "application/json";
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -352,10 +361,7 @@ export async function generateWithGemini({ model, prompt, system = "", apiKey, c
     body: JSON.stringify({
       systemInstruction: system ? { parts: [{ text: system }] } : undefined,
       contents: [{ parts: buildGeminiParts({ prompt, contentParts }) }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 2048
-      }
+      generationConfig
     })
   });
 
@@ -385,13 +391,26 @@ export async function generateWithGemini({ model, prompt, system = "", apiKey, c
   };
 }
 
-export async function generateWithOpenAI({ model, prompt, system = "", apiKey, baseUrl, contentParts = null, signal = null } = {}) {
+export async function generateWithOpenAI({ model, prompt, system = "", apiKey, baseUrl, config = {}, contentParts = null, signal = null } = {}) {
   const key = apiKey ?? process.env.OPENAI_API_KEY;
   if (!key) {
     throw new Error("OpenAI API key is required (OPENAI_API_KEY or config)");
   }
 
   const url = `${baseUrl ?? "https://api.openai.com/v1"}/chat/completions`;
+  const body = {
+    model,
+    messages: [
+      ...(system ? [{ role: "system", content: system }] : []),
+      { role: "user", content: buildOpenAIMessageContent({ prompt, contentParts }) }
+    ],
+    temperature: 0.1
+  };
+
+  if (config.format === "json") {
+    body.response_format = { type: "json_object" };
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -399,14 +418,7 @@ export async function generateWithOpenAI({ model, prompt, system = "", apiKey, b
       authorization: `Bearer ${key}`
     },
     signal,
-    body: JSON.stringify({
-      model,
-      messages: [
-        ...(system ? [{ role: "system", content: system }] : []),
-        { role: "user", content: buildOpenAIMessageContent({ prompt, contentParts }) }
-      ],
-      temperature: 0.1
-    })
+    body: JSON.stringify(body)
   });
 
   if (!response.ok) {
@@ -493,9 +505,9 @@ export async function generateCompletion({ providerId, modelId, prompt, system, 
         generationOptions: config.generationOptions ?? null
       });
     case "google":
-      return generateWithGemini({ model: modelId, prompt, system, apiKey: config.apiKey, contentParts, signal });
+      return generateWithGemini({ model: modelId, prompt, system, apiKey: config.apiKey, config, contentParts, signal });
     case "openai":
-      return generateWithOpenAI({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl, contentParts, signal });
+      return generateWithOpenAI({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl, config, contentParts, signal });
     case "anthropic":
       return generateWithAnthropic({ model: modelId, prompt, system, apiKey: config.apiKey, baseUrl: config.baseUrl, contentParts, signal });
     default:

@@ -113,7 +113,7 @@ export async function planOperatorRequest(inputText, options = {}) {
         config: { host: candidate.host, apiKey: candidate.apiKey, baseUrl: candidate.baseUrl, format: "json" }
       });
 
-      plan = JSON.parse(completion.response);
+      plan = parsePlannerResponse(completion.response);
       break;
     } catch (error) {
       console.error(`[operator-brain] Planning failed with ${candidate.providerId}:${candidate.modelId}:`, error.message);
@@ -143,6 +143,28 @@ export async function planOperatorRequest(inputText, options = {}) {
   }
 
   return finalPlan;
+}
+
+/**
+ * Safely parses a JSON response from the planner, stripping markdown wrappers if present.
+ */
+function parsePlannerResponse(text) {
+  const trimmed = text.trim();
+  
+  try {
+    return JSON.parse(trimmed);
+  } catch (e) {
+    // Try to extract JSON from markdown code block
+    const match = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (match) {
+      try {
+        return JSON.parse(match[1]);
+      } catch (e2) {
+        // Fall through
+      }
+    }
+    throw e; // Re-throw original error if extraction fails
+  }
 }
 
 async function buildOperatorPlannerPrompt(inputText, options) {
