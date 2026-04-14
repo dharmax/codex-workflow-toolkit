@@ -35,6 +35,13 @@ async function ensureProjectConfig(projectRoot) {
       candidateReviewIntervalHours: 36,
       ...(existing.lifecycle ?? {})
     },
+    hooks: {
+      BeforePlan: [],
+      AfterPlan: [],
+      BeforeAction: [],
+      AfterAction: [],
+      ...(existing.hooks ?? {})
+    },
     providers: existing.providers ?? {},
     routing: existing.routing ?? {}
   };
