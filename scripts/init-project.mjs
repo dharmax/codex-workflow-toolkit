@@ -12,11 +12,12 @@ import { withWorkspaceMutation } from "../core/lib/workspace-mutation.mjs";
 import { runDogfood } from "../runtime/scripts/ai-workflow/lib/dogfood-utils.mjs";
 
 const HELP = `Usage:
-  node scripts/init-project.mjs --target /path/to/project
+  node scripts/init-project.mjs --target /path/to/project [options]
 
 Options:
   --target <path>    Target project root. Defaults to current directory.
   --brief <file>     Run project-brief onboarding after install.
+  --all              Install all documentation templates (AGENTS.md, etc.).
   --force            Overwrite existing non-empty files.
   --dry-run          Show what would change without writing files.
   --no-sync          Skip the initial workflow DB sync.
@@ -27,14 +28,14 @@ const repoRoot = path.resolve(__dirname, "..");
 const templatesRoot = path.resolve(repoRoot, "templates");
 const runtimeRoot = path.resolve(repoRoot, "runtime", "scripts", "ai-workflow");
 const WORKFLOW_PACKAGE_SCRIPTS = {
-  "workflow:kanban": "node scripts/ai-workflow/kanban.mjs",
-  "workflow:ticket": "node scripts/ai-workflow/kanban-ticket.mjs",
-  "workflow:guidance": "node scripts/ai-workflow/guidance-summary.mjs",
-  "workflow:review": "node scripts/ai-workflow/review-summary.mjs",
-  "workflow:verify": "node scripts/ai-workflow/verification-summary.mjs",
-  "workflow:dogfood": "node scripts/ai-workflow/dogfood.mjs",
-  "workflow:guideline-audit": "node scripts/ai-workflow/guideline-audit.mjs",
-  "workflow:audit": "node scripts/ai-workflow/workflow-audit.mjs"
+  "workflow:kanban": "ai-workflow kanban",
+  "workflow:ticket": "ai-workflow project ticket",
+  "workflow:guidance": "ai-workflow run guidelines",
+  "workflow:review": "ai-workflow run review",
+  "workflow:verify": "ai-workflow run verify",
+  "workflow:dogfood": "ai-workflow dogfood",
+  "workflow:guideline-audit": "ai-workflow run guideline-audit",
+  "workflow:audit": "ai-workflow audit workflow"
 };
 
 const args = parseArgs(process.argv.slice(2));
@@ -45,6 +46,7 @@ if (args.help) {
 
 const targetRoot = path.resolve(String(args.target ?? process.cwd()));
 const force = Boolean(args.force);
+const installAll = Boolean(args.all);
 const dryRun = Boolean(args["dry-run"]);
 const runInitialSync = !dryRun && !args["no-sync"];
 const briefSource = args.brief ? path.resolve(targetRoot, String(args.brief)) : null;
@@ -54,6 +56,26 @@ if (!dryRun) {
 }
 
 const plan = [
+  {
+    source: path.resolve(templatesRoot, "kanban.md"),
+    target: path.resolve(targetRoot, "kanban.md"),
+    essential: true
+  },
+  {
+    source: path.resolve(templatesRoot, "kanban-archive.md"),
+    target: path.resolve(targetRoot, "kanban-archive.md"),
+    essential: true
+  },
+  {
+    source: path.resolve(templatesRoot, "epics.md"),
+    target: path.resolve(targetRoot, "epics.md"),
+    essential: true
+  },
+  {
+    source: path.resolve(templatesRoot, "knowledge.md"),
+    target: path.resolve(targetRoot, "knowledge.md"),
+    essential: true
+  },
   {
     source: path.resolve(templatesRoot, "AGENTS.md"),
     target: path.resolve(targetRoot, "AGENTS.md")
@@ -71,33 +93,12 @@ const plan = [
     target: path.resolve(targetRoot, "enforcement.md")
   },
   {
-    source: path.resolve(templatesRoot, "kanban.md"),
-    target: path.resolve(targetRoot, "kanban.md")
-  },
-  {
-    source: path.resolve(templatesRoot, "kanban-archive.md"),
-    target: path.resolve(targetRoot, "kanban-archive.md")
-  },
-  {
-    source: path.resolve(templatesRoot, "epics.md"),
-    target: path.resolve(targetRoot, "epics.md")
-  },
-  {
     source: path.resolve(templatesRoot, "project-guidelines.md"),
     target: path.resolve(targetRoot, "project-guidelines.md")
   },
   {
-    source: path.resolve(templatesRoot, "knowledge.md"),
-    target: path.resolve(targetRoot, "knowledge.md")
-  },
-  {
     source: path.resolve(templatesRoot, ".github", "workflows", "ai-workflow-audit.yml"),
     target: path.resolve(targetRoot, ".github", "workflows", "ai-workflow-audit.yml")
-  },
-  ...(await buildRuntimePlan(runtimeRoot, path.resolve(targetRoot, "scripts", "ai-workflow"))),
-  {
-    target: path.resolve(targetRoot, "scripts", "ai-workflow", "toolkit-root.txt"),
-    content: `${repoRoot}\n`
   }
 ];
 
@@ -121,8 +122,10 @@ const looksLikeJsProject = await fileExists(path.resolve(targetRoot, "package.js
 let syncResult = null;
 let briefResult = null;
 
+const activePlan = plan.filter(entry => installAll || entry.essential);
+
 if (dryRun) {
-  for (const entry of plan) {
+  for (const entry of activePlan) {
     const action = await classifyAction(entry, force);
 
     if (action.type === "identical") {
@@ -144,7 +147,7 @@ if (dryRun) {
   }
 } else {
   const mutationResult = await withWorkspaceMutation(targetRoot, "init project", async () => {
-    for (const entry of plan) {
+    for (const entry of activePlan) {
       const action = await classifyAction(entry, force);
 
       if (action.type === "identical") {
@@ -317,33 +320,6 @@ function printAndExit(message, code = 0) {
   const stream = code === 0 ? process.stdout : process.stderr;
   stream.write(`${message}\n`);
   process.exit(code);
-}
-
-async function buildRuntimePlan(sourceRoot, targetRootPath) {
-  const entries = await walkFiles(sourceRoot);
-  return entries.map((sourcePath) => ({
-    source: sourcePath,
-    target: path.resolve(targetRootPath, path.relative(sourceRoot, sourcePath)),
-    content: isRuntimeWrapper(sourcePath, sourceRoot) ? renderRuntimeWrapper(path.relative(sourceRoot, sourcePath)) : undefined
-  }));
-}
-
-function isRuntimeWrapper(sourcePath, sourceRoot) {
-  const relative = path.relative(sourceRoot, sourcePath);
-  return !relative.startsWith("lib/");
-}
-
-function renderRuntimeWrapper(relativeScriptPath) {
-  return `#!/usr/bin/env node
-
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { getToolkitRoot } from "./lib/toolkit-root.mjs";
-
-const scriptPath = path.resolve(getToolkitRoot(), "runtime", "scripts", "ai-workflow", ${JSON.stringify(relativeScriptPath)});
-process.env.AIWF_WRAPPED_RUNTIME = "1";
-await import(pathToFileURL(scriptPath).href);
-`;
 }
 
 async function walkFiles(rootPath) {

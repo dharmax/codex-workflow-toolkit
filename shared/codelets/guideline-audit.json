@@ -1,0 +1,8 @@
+{
+  "id": "guideline-audit",
+  "stability": "stable",
+  "category": "verification",
+  "summary": "Audit the project against established architectural guidelines.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/guideline-audit.mjs"
+}

@@ -2,6 +2,19 @@ import path from "node:path";
 import { readText } from "../../runtime/scripts/ai-workflow/lib/fs-utils.mjs";
 import { writeProjectFile } from "../lib/filesystem.mjs";
 import { sha1, stableId } from "../lib/hash.mjs";
+import { getToolkitRoot } from "../lib/operating-context.mjs";
+
+const toolkitRoot = getToolkitRoot();
+const templatesRoot = path.resolve(toolkitRoot, "templates");
+
+async function readProjectOrTemplate(projectRoot, fileName, templateName = fileName) {
+  const projectPath = path.resolve(projectRoot, fileName);
+  const text = await readText(projectPath, "");
+  if (text) {
+    return text;
+  }
+  return await readText(path.resolve(templatesRoot, templateName), "");
+}
 
 const CORE_TICKET_LANES = [
   "Deep Backlog",
@@ -323,8 +336,8 @@ export async function importLegacyProjections(store, { projectRoot }) {
   const epicsSource = await selectProjectionSource(projectRoot, ["docs/epics.md", "epics.md"], countEpicEntries, { lastProjectionDigest });
   const kanbanText = kanbanSource.text;
   const epicsText = epicsSource.text;
-  const missionText = await readText(path.resolve(projectRoot, "MISSION.md"), "");
-  const geminiText = await readText(path.resolve(projectRoot, ".gemini", "GEMINI.md"), "") || await readText(path.resolve(projectRoot, "GEMINI.md"), "");
+  const missionText = await readProjectOrTemplate(projectRoot, "MISSION.md");
+  const geminiText = await readText(path.resolve(projectRoot, ".gemini", "GEMINI.md"), "") || await readProjectOrTemplate(projectRoot, "GEMINI.md");
   
   if (missionText) {
     store.setMeta("mission", missionText);

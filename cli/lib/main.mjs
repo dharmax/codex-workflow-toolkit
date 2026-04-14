@@ -48,12 +48,12 @@ const execFileAsync = promisify(execFile);
 
 const HELP = `Usage:
   ai-workflow setup [--project <path>]
-  ai-workflow init [options]
+  ai-workflow init [--all] [--target <path>]
   ai-workflow install [--project <path>]
   ai-workflow doctor [--json] [--refresh-models]
   ai-workflow version [--json]
   ai-workflow --version
-  ai-workflow audit architecture [--json]
+  ai-workflow audit <architecture|workflow> [--json]
   ai-workflow kanban <new|move|next|archive|migrate> [...]
   ai-workflow set-ollama-hw [options]
   ai-workflow set-provider-key <provider-id> [--global]
@@ -1325,6 +1325,13 @@ async function handleAudit(rest) {
   const args = parseArgs(rest);
   const root = process.cwd();
   const sub = args._[0];
+
+  if (sub === "workflow") {
+    return runNodeScript(
+      path.resolve(toolkitRoot, "runtime", "scripts", "ai-workflow", "workflow-audit.mjs"),
+      rest.slice(1)
+    );
+  }
 
   if (sub === "architecture") {
     const findings = await auditArchitecture(root);

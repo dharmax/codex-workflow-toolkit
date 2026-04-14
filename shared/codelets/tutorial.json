@@ -1,0 +1,8 @@
+{
+  "id": "tutorial",
+  "stability": "stable",
+  "category": "learning",
+  "summary": "Launch the interactive web tutorial for ai-workflow.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/tutorial-web.mjs"
+}

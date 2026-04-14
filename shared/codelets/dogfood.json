@@ -1,0 +1,8 @@
+{
+  "id": "dogfood",
+  "stability": "stable",
+  "category": "utility",
+  "summary": "Run the dogfooding report to evaluate ai-workflow performance on the current project.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/dogfood.mjs"
+}
