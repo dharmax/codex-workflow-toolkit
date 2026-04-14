@@ -50,7 +50,10 @@ export async function executeJsOrchestrator(code, {
     getState: session.getState.bind(session),
     setState: session.setState.bind(session),
     
-    // Services (Direct Access)
+    // Services (Spread for direct access like sync.createTicket)
+    ...services,
+    
+    // Legacy/Explicit Access
     services,
     db: workflowStore,
     
@@ -68,43 +71,31 @@ export async function executeJsOrchestrator(code, {
   try {
     const trimmedCode = code.trim().replace(/^```javascript/, "").replace(/^```js/, "").replace(/^```/, "").replace(/```$/, "");
     
-    const context = vm.createContext(sandbox);
+    // We create an async function that receives the sandbox keys as arguments.
+    // This is the most robust way to handle any characters in the user's code.
+    const argKeys = Object.keys(sandbox);
+    const argValues = Object.values(sandbox);
     
-    // We wrap the code in a way that handles both raw statements and full functions.
-    // We use a temporary variable to hold the code to avoid string interpolation bugs.
-    context.__userCode = trimmedCode;
+    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
     
-    const scriptSource = `
-      (async function() {
-        const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-        let fn;
-        const codeToEval = __userCode.trim();
-        if (codeToEval.startsWith("async") || codeToEval.startsWith("function")) {
-          // If it's a function string, we evaluate it to get the function object
-          fn = eval("(" + codeToEval + ")");
-        } else {
-          // If it's raw code, we wrap it in an AsyncFunction
-          fn = new AsyncFunction(
-            "step", "transition", "issue", "shell", "exec", "executeCodelet", "getState", "setState", "services", "db", "console", "process",
-            codeToEval
-          );
-        }
-        
-        return await fn.call(
-          this,
-          this.step, this.transition, this.issue, this.shell, this.exec, this.executeCodelet, this.getState, this.setState, this.services, this.db, this.console, this.process
-        );
-      })
-    `;
-
-    const script = new vm.Script(scriptSource);
-    const wrapperFn = script.runInContext(context);
-
-    if (process.env.AI_WORKFLOW_DEBUG_JS) {
-      console.log("[JS-Orchestrator] Executing generated code via VM wrapper...");
+    let userFn;
+    if (trimmedCode.startsWith("async") || trimmedCode.startsWith("function")) {
+      // If it's a function string, we evaluate it in context to get the function object
+      const context = vm.createContext(sandbox);
+      userFn = vm.runInContext(`(${trimmedCode})`, context);
+    } else {
+      // If it's a block of code, we create an AsyncFunction from it
+      userFn = new AsyncFunction(...argKeys, trimmedCode);
     }
 
-    const result = await wrapperFn.call(sandbox);
+    if (process.env.AI_WORKFLOW_DEBUG_JS) {
+      console.log("[JS-Orchestrator] Executing generated code...");
+    }
+
+    // Call the function with sandbox values as arguments
+    const result = await (trimmedCode.startsWith("async") || trimmedCode.startsWith("function") 
+      ? userFn.call(sandbox) 
+      : userFn(...argValues));
 
     workflowStore.upsertWorkflowRun({
       id: finalRunId,

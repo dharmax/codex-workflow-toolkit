@@ -4,7 +4,7 @@
  */
 
 import path from "node:path";
-import { withWorkflowStore, getProjectSummary, syncProject, getProjectMetrics, getSmartProjectStatus } from "./sync.mjs";
+import { withWorkflowStore, getProjectSummary, syncProject, getProjectMetrics, getSmartProjectStatus, createTicket, listEpics, getEpic, updateTicketLifecycle } from "./sync.mjs";
 import { resolveProjectStatus } from "./status.mjs";
 import { executeTicket, decomposeTicket, ideateFeature, sweepBugs } from "./orchestrator.mjs";
 import { executeCodelet } from "./codelet-executor.mjs";
@@ -13,6 +13,7 @@ import { generateCompletion } from "./providers.mjs";
 import { routeTask } from "./router.mjs";
 import { stableId } from "../lib/hash.mjs";
 import { runHooks } from "./hooks.mjs";
+import { buildTicketEntity } from "./projections.mjs";
 import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "../../cli/lib/config-store.mjs";
 
 /**
@@ -206,8 +207,20 @@ async function buildOperatorPlannerPrompt(inputText, options) {
     "- If a ticket exists but isn't 'In Progress', your FIRST STEP is to call `exec('ai-workflow project ticket start <id>')`.",
     "- You have implicit permission to create and start tickets to get the job done.",
     "",
-    "## Available Actions:",
-    catalog,
+    "## Available Helpers:",
+    "- `await step(id, desc, fn)`: Persistent operation.",
+    "- `await transition(toState, trigger, fn)`: State-machine move.",
+    "- `await shell(prompt)`: Recursive NL call.",
+    "- `await exec(cmd, [args])`: Raw shell command.",
+    "- `await executeCodelet(id, args)`: Toolkit tool.",
+    "- `issue(type, sum, {details})`: Log failure.",
+    "",
+    "## Service Objects (Available as globals):",
+    "- `sync`: { syncProject, getProjectSummary, getProjectMetrics, createTicket(title, data), updateTicketLifecycle, listEpics, getEpic }",
+    "- `orchestrator`: { executeTicket, decomposeTicket, ideateFeature(title, summary, data), sweepBugs }",
+    "- `status`: { resolveProjectStatus, getSmartProjectStatus }",
+    "- `sh`: { execute(cmd, args) }",
+    "- `codelets`: { execute(id, args) }",
     "",
     "## Planning Rules",
     "- Use `await step(id, desc, fn)` for persistent operations.",
@@ -346,6 +359,14 @@ function buildOperatorServices(root, options) {
       syncProject: (args) => syncProject({ projectRoot: root, ...args }),
       getProjectSummary: (args) => getProjectSummary({ projectRoot: root, ...args }),
       getProjectMetrics: (args) => getProjectMetrics({ projectRoot: root, ...args }),
+      createTicket: (title, data = {}) => {
+        const id = data.id ?? stableId("tkt", title, Date.now());
+        const entity = buildTicketEntity({ id, title, ...data });
+        return createTicket({ projectRoot: root, entity });
+      },
+      updateTicketLifecycle: (args) => updateTicketLifecycle({ projectRoot: root, ...args }),
+      listEpics: (args) => listEpics({ projectRoot: root, ...args }),
+      getEpic: (args) => getEpic({ projectRoot: root, ...args }),
     },
     status: {
       resolveProjectStatus: (args) => resolveProjectStatus({ projectRoot: root, ...args }),
@@ -354,7 +375,7 @@ function buildOperatorServices(root, options) {
     orchestrator: {
       executeTicket: (args) => executeTicket({ root, ...args }),
       decomposeTicket: (args) => decomposeTicket({ root, ...args }),
-      ideateFeature: (args) => ideateFeature({ root, ...args }),
+      ideateFeature: (title, summary, data = {}) => ideateFeature({ root, title, summary, ...data }),
       sweepBugs: (args) => sweepBugs({ root, ...args }),
     },
     codelets: {
