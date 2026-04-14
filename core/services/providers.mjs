@@ -371,7 +371,10 @@ export async function generateWithGemini({ model, prompt, system = "", apiKey, c
     
     try {
       const errorJson = JSON.parse(errorBody);
-      if (errorJson.error?.reason === "API_KEY_SERVICE_BLOCKED") {
+      const isBlocked = errorJson.error?.reason === "API_KEY_SERVICE_BLOCKED" || 
+                        errorJson.error?.details?.some(d => d.reason === "API_KEY_SERVICE_BLOCKED");
+      
+      if (isBlocked) {
         message = "Gemini API key is blocked for Generative Language API. Please ensure 'Generative Language API' is enabled in your Google Cloud Project and that your API key has permission to use it.";
       }
     } catch (e) {

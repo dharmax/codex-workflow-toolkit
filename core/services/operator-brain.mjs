@@ -64,11 +64,13 @@ export async function executeOperatorRequest(prompt, options = {}) {
     });
   });
 
+  const plannerInfo = plan.__planner ? ` [via ${plan.__planner.providerId}:${plan.__planner.modelId}]` : "";
+
   return {
     ok: workflowResult.ok,
     plan,
     workflowResult,
-    assistantReply: workflowResult.ok ? "Workflow completed successfully." : `Workflow failed: ${workflowResult.error}`
+    assistantReply: workflowResult.ok ? `Workflow completed successfully.${plannerInfo}` : `Workflow failed: ${workflowResult.error}${plannerInfo}`
   };
 }
 
@@ -99,12 +101,26 @@ export async function planOperatorRequest(inputText, options = {}) {
   const { system, prompt } = await buildOperatorPlannerPrompt(effectiveInputText, options);
   
   const route = await routeTask({ root, taskClass: "project-planning" });
-  const candidates = route.candidates ?? [];
+  let candidates = route.candidates ?? [];
+  
+  // If a specific planner is requested, put it at the top of the list
+  if (options.planner) {
+    candidates = [
+      { ...options.planner, score: 999 }, 
+      ...candidates.filter(c => c.providerId !== options.planner.providerId || c.modelId !== options.planner.modelId)
+    ];
+  }
+
   const errors = [];
 
   let plan = null;
-  for (const candidate of candidates.slice(0, 3)) { // Try up to 3 candidates
+  let successfulCandidate = null;
+  for (const candidate of candidates.slice(0, 5)) { // Try up to 5 candidates
     try {
+      if (process.env.AI_WORKFLOW_DEBUG_FALLBACK || candidates.length > 1) {
+        console.log(`[operator-brain] Attempting planning with ${candidate.providerId}:${candidate.modelId}...`);
+      }
+
       const completion = await generateCompletion({
         providerId: candidate.providerId,
         modelId: candidate.modelId,
@@ -114,6 +130,7 @@ export async function planOperatorRequest(inputText, options = {}) {
       });
 
       plan = parsePlannerResponse(completion.response);
+      successfulCandidate = candidate;
       break;
     } catch (error) {
       console.error(`[operator-brain] Planning failed with ${candidate.providerId}:${candidate.modelId}:`, error.message);
@@ -140,6 +157,7 @@ export async function planOperatorRequest(inputText, options = {}) {
   // Tag the plan with the effective input so the executor can log it correctly
   if (typeof finalPlan === "object" && finalPlan !== null) {
     finalPlan.__effectiveInputText = effectiveInputText;
+    finalPlan.__planner = successfulCandidate;
   }
 
   return finalPlan;
