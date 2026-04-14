@@ -18,6 +18,14 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 ## ToDo
 <!-- canonical alias: ## Todo -->
 
+- [ ] TKT-SETTINGS-001 Add separate tabs for local and paid providers in AI settings
+  - Epic: EPIC-SETTINGS-001
+  - Parent: EPIC-SETTINGS-001
+  - State: open
+- [ ] EPIC-SETTINGS-001 AI Provider Settings & Configuration Flow
+  - Epic: true
+  - Parent: true
+  - State: open
 - [ ] TKT-TELEGRAM-001 Pair Telegram identity and trust gate
   - Summary: Authorize a Telegram sender, persist the trust binding, and reject unknown chat commands.
   - Epic: EPIC-010
@@ -66,6 +74,22 @@ _Core lanes are fixed. Rare lanes only render when they contain cards. `Archived
 
 ## Done
 
+- [ ] TKT-HOOKS-004 Expose hook configuration in CLI settings ✅ 2026-04-14
+  - Epic: EPIC-SETTINGS-001
+  - Parent: EPIC-SETTINGS-001
+  - State: archived
+- [ ] TKT-HOOKS-003 Integrate hooks into JS Orchestrator (Action phase) ✅ 2026-04-14
+  - Epic: EPIC-SETTINGS-001
+  - Parent: EPIC-SETTINGS-001
+  - State: archived
+- [ ] TKT-HOOKS-002 Integrate hooks into Operator Brain (Plan phase) ✅ 2026-04-14
+  - Epic: EPIC-SETTINGS-001
+  - Parent: EPIC-SETTINGS-001
+  - State: archived
+- [ ] TKT-HOOKS-001 Implement core hook-runner service ✅ 2026-04-14
+  - Epic: EPIC-SETTINGS-001
+  - Parent: EPIC-SETTINGS-001
+  - State: archived
 - [ ] BUG-WORKFLOW-INTEGRITY-004 Add transcript-level tests that require workflow-state integrity after shell fixes ✅ 2026-04-13
   - Summary: Regression tests should fail if a shell fix changes behavior but leaves the operator-visible workflow state inconsistent, such as open bug tickets remaining the reported next work after verification.
   - State: archived

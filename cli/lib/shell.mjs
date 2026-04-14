@@ -4737,6 +4737,9 @@ function emitShellResult(result, options) {
 }
 
 function renderHumanShellResult(result) {
+  if (result.options?.trace && result.plan?.code) {
+    output.write(`[trace] Generated JS:\n${result.plan.code}\n\n`);
+  }
   if (!result.preRendered && result.plan.planner && !result.assistantReply && result.plan.kind !== "reply") {
     output.write(`${renderPlannerLine(result.plan.planner)}\n`);
   }

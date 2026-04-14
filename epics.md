@@ -2,7 +2,22 @@
 
 _Generated from the workflow DB._
 
-## No epics yet
+## true true
 
-- Add one with `ai-workflow project ticket create --epic EPC-001 ...` or by writing entities directly through the CLI.
-- Each epic should describe the user outcome in natural language, then break into user stories, ticket batches, and kanban tickets.
+### Goal
+
+Pending natural-language scope.
+
+### Status
+
+- [ ] Active
+<!-- status: open -->
+
+### User stories
+None captured yet.
+
+### Ticket batches
+- None captured yet.
+
+### Kanban tickets
+- EPIC-SETTINGS-001 AI Provider Settings & Configuration Flow [Todo]

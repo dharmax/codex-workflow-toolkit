@@ -12,6 +12,8 @@ import { executeJsOrchestrator } from "./js-orchestrator.mjs";
 import { generateCompletion } from "./providers.mjs";
 import { routeTask } from "./router.mjs";
 import { stableId } from "../lib/hash.mjs";
+import { runHooks } from "./hooks.mjs";
+import { getGlobalConfigPath, getProjectConfigPath, readConfigSafe } from "../../cli/lib/config-store.mjs";
 
 /**
  * Executes a natural language request through the operator brain.
@@ -21,7 +23,16 @@ export async function executeOperatorRequest(prompt, options = {}) {
   
   // 1. Plan the request (NL -> JS)
   const plan = await planOperatorRequest(prompt, options);
+  const effectiveInputText = plan.__effectiveInputText ?? prompt;
   
+  if (plan.kind === "reply") {
+    return {
+      ok: true,
+      plan,
+      assistantReply: plan.assistantReply ?? "I'm not sure how to handle that request."
+    };
+  }
+
   if (plan.kind !== "plan" || !plan.code) {
     return {
       ok: true,
@@ -32,12 +43,24 @@ export async function executeOperatorRequest(prompt, options = {}) {
 
   // 2. Execute the plan
   const services = buildOperatorServices(root, options);
+  const runId = options.runId ?? stableId("run", effectiveInputText, Date.now());
+  
   const workflowResult = await withWorkflowStore(root, async (workflowStore) => {
+    // 1. Initialize Run in DB (Moved here to use effectiveInputText)
+    workflowStore.upsertWorkflowRun({
+      id: runId,
+      prompt: effectiveInputText,
+      code: plan.code,
+      status: "running",
+      result: null
+    });
+
     return executeJsOrchestrator(plan.code, {
       workflowStore,
-      prompt,
-      runId: options.runId,
-      services
+      prompt: effectiveInputText,
+      runId,
+      services,
+      root
     });
   });
 
@@ -52,28 +75,74 @@ export async function executeOperatorRequest(prompt, options = {}) {
 export async function planOperatorRequest(inputText, options = {}) {
   const root = options.root ?? process.cwd();
   
-  const { system, prompt } = await buildOperatorPlannerPrompt(inputText, options);
+  const [projectConfigState, globalConfigState] = await Promise.all([
+    readConfigSafe(getProjectConfigPath(root)),
+    readConfigSafe(getGlobalConfigPath())
+  ]);
+  const config = { 
+    ...globalConfigState.config, 
+    ...projectConfigState.config,
+    hooks: {
+      ...(globalConfigState.config?.hooks ?? {}),
+      ...(projectConfigState.config?.hooks ?? {})
+    }
+  };
+
+  // Run BeforePlan hooks
+  const prePlanContext = await runHooks("BeforePlan", { 
+    root, 
+    config, 
+    context: { inputText, options } 
+  });
+  const effectiveInputText = prePlanContext.inputText ?? inputText;
+
+  const { system, prompt } = await buildOperatorPlannerPrompt(effectiveInputText, options);
   
-  const model = options.planner ?? (await routeTask({ root, taskClass: "project-planning" })).recommended;
-  if (!model) {
-    return { kind: "reply", assistantReply: "No planning model available." };
+  const route = await routeTask({ root, taskClass: "project-planning" });
+  const candidates = route.candidates ?? [];
+  const errors = [];
+
+  let plan = null;
+  for (const candidate of candidates.slice(0, 3)) { // Try up to 3 candidates
+    try {
+      const completion = await generateCompletion({
+        providerId: candidate.providerId,
+        modelId: candidate.modelId,
+        system,
+        prompt,
+        config: { host: candidate.host, apiKey: candidate.apiKey, baseUrl: candidate.baseUrl, format: "json" }
+      });
+
+      plan = JSON.parse(completion.response);
+      break;
+    } catch (error) {
+      console.error(`[operator-brain] Planning failed with ${candidate.providerId}:${candidate.modelId}:`, error.message);
+      errors.push(`${candidate.providerId}:${candidate.modelId} failed: ${error.message}`);
+    }
   }
 
-  try {
-    const completion = await generateCompletion({
-      providerId: model.providerId,
-      modelId: model.modelId,
-      system,
-      prompt,
-      config: { host: model.host, apiKey: model.apiKey, format: "json" }
-    });
-
-    const plan = JSON.parse(completion.response);
-    return plan;
-  } catch (error) {
-    console.error("[operator-brain] Planning failed:", error);
-    return { kind: "reply", assistantReply: `Planning failed: ${error.message}` };
+  if (!plan) {
+    return { 
+      kind: "reply", 
+      assistantReply: `Planning failed for all candidates:\n- ${errors.join("\n- ")}` 
+    };
   }
+
+  // Run AfterPlan hooks
+  const postPlanContext = await runHooks("AfterPlan", {
+    root,
+    config,
+    context: { plan, inputText: effectiveInputText, options }
+  });
+
+  const finalPlan = postPlanContext.plan ?? plan;
+  
+  // Tag the plan with the effective input so the executor can log it correctly
+  if (typeof finalPlan === "object" && finalPlan !== null) {
+    finalPlan.__effectiveInputText = effectiveInputText;
+  }
+
+  return finalPlan;
 }
 
 async function buildOperatorPlannerPrompt(inputText, options) {
@@ -90,7 +159,8 @@ async function buildOperatorPlannerPrompt(inputText, options) {
     "Goal: Reach a 'READY' state by identifying work, creating tickets, and executing code.",
     "",
     "## Operating Contract",
-    "- Use `kind=plan` for almost everything. Only use `kind=reply` for simple greetings.",
+    "- Use `kind: \"plan\"` ONLY when you need to execute code, create tickets, or change project state.",
+    "- Use `kind: \"reply\"` for design discussions, architectural analysis, trade-off comparisons, or simple greetings.",
     "- NEVER reply saying 'I do not see an active ticket' or 'Please create a ticket'. This is a failure state.",
     "- If no tickets exist and the user provides a goal, your FIRST STEP is to call `orchestrator.ideateFeature` or `sync.createTicket`.",
     "- If a ticket exists but isn't 'In Progress', your FIRST STEP is to call `exec('ai-workflow project ticket start <id>')`.",

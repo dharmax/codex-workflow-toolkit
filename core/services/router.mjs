@@ -84,6 +84,9 @@ export async function routeTask({
         fitReasons: model.fitReasons ?? [],
         quota: provider.quota ?? null,
         freeQuotaRemaining: provider.quota?.freeUsdRemaining ?? null,
+        apiKey: provider.apiKey ?? null,
+        host: model.host ?? provider.host ?? null,
+        baseUrl: provider.baseUrl ?? null,
         score
       });
     }
@@ -97,17 +100,14 @@ export async function routeTask({
     capability,
     minimumQuality,
     recommended: primary ? {
-      providerId: primary.providerId,
-      modelId: primary.modelId,
-      local: primary.local,
+      ...primary,
       reason: buildReason(primary, taskClass, minimumQuality, capability)
     } : null,
     fallbackChain: candidates.slice(1, 4).map((candidate) => ({
-      providerId: candidate.providerId,
-      modelId: candidate.modelId,
-      local: candidate.local,
+      ...candidate,
       reason: buildReason(candidate, taskClass, minimumQuality, capability)
     })),
+    candidates,
     providers: routedState.providers,
     modelFitMatrix,
     tooling: {
