@@ -134,6 +134,7 @@ node runtime/scripts/ai-workflow/workflow-audit.mjs
 - Chooses between shell-local replies, heuristic planning, and AI planning.
 - Uses the live model-fit matrix and current provider discovery for planner selection.
 - Enforces mutation discipline around ticket state and shell mode.
+- The canonical operator-visible work-mode model is defined in [docs/shell-work-mode-model.md](./shell-work-mode-model.md).
 
 ### High-Value Shell Patterns
 

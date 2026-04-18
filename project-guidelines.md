@@ -95,6 +95,24 @@ Keep this file short and durable. If a point is ticket-local, keep it out.
   - E2E should cover system paths and regressions, not replace module-level proof
   - human-only acceptance should stay explicit instead of being implied by green automation
 
+## Definition of Done
+
+- A ticket is not done because a helper changed. It is done when the requested behavior exists at the real entrypoint that the operator or host surface uses.
+- If the behavior claims workflow awareness, it must be grounded in canonical DB-backed state instead of prompt glue, transient locals, or duplicated surface-specific memory.
+- Shell, `ask`, status queries, operator-brain, and host adapters should resolve the same capability, surface, feature, module, problem, or plan consistently.
+- Capability-sensitive behavior must be able to explain:
+  - what it can do
+  - why it believes that
+  - what its limits are
+  - what the operator should do next
+- State-bearing workflow behavior is not done unless its transitions are inspectable where they belong: DB state first, projections or operator surfaces second.
+- Helper-only proof is not enough for provider, shell, routing, setup, fallback, or workflow-surface work. Require one real entrypoint test and one degraded-path test.
+- Workflow state must stay honest before closure: sync, projections, ticket lane, and archived state should all agree with the implemented result.
+- Operator-surface work is not done until the required surface gates pass: `ai-workflow dogfood` when applicable, and `workflow-audit` whenever workflow docs or operator contracts changed.
+- Documentation is part of closure when the contract changed. Narrative docs must describe the real behavior, not the intended one.
+- Failure honesty is part of done: if the system lacks evidence, capability, or readiness, it must surface that clearly instead of bluffing.
+- GoE or model-governance work is not done just because the loop exists. It is done when weaker or cheaper routes show observable quality uplift under the governed flow.
+
 ## Review Triggers
 
 - Config or dependency changes require explicit mention.

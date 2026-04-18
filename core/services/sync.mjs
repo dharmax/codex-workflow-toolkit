@@ -24,9 +24,10 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
       const snapshot = await collectProjectFileSnapshot(projectRoot, { ignore: dynamicIgnores });
       const fingerprint = await computeProjectFingerprint({ projectRoot, store, snapshot });
       const lastSync = store.getMeta("lastSyncFingerprint", null);
+      const integrityRepair = repairWorkflowEntityIntegrity(store);
     const files = snapshot.map((entry) => entry.relativePath);
 
-    if (lastSync?.fingerprint === fingerprint) {
+    if (lastSync?.fingerprint === fingerprint && !integrityRepair.changed) {
       const summary = buildProjectSummary(store);
       const projections = writeProjections
         ? await writeProjectProjections(store, { projectRoot })
@@ -53,6 +54,10 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
         skipped: true,
         reason: "project state unchanged"
       };
+    }
+
+    if (integrityRepair.changed) {
+      createSearchDocumentsForEntities(store);
     }
 
     store.pruneIndexedFiles(files);
@@ -84,6 +89,7 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
     }
 
     const importSummary = await importLegacyProjections(store, { projectRoot });
+    const postImportIntegrityRepair = repairWorkflowEntityIntegrity(store);
     
     // Architectural Mapping (Heuristic Phase 1)
     await syncArchitecture(projectRoot, store);
@@ -139,7 +145,11 @@ export async function syncProject({ projectRoot = process.cwd(), writeProjection
       importSummary,
       lifecycle,
       projections,
-      summary
+      summary,
+      integrityRepair: {
+        promotedEpics: integrityRepair.promotedEpics + postImportIntegrityRepair.promotedEpics,
+        removedPlaceholderEpics: integrityRepair.removedPlaceholderEpics + postImportIntegrityRepair.removedPlaceholderEpics
+      }
     };
     } finally {
       store.close();
@@ -241,6 +251,135 @@ async function reconcileEpicStates(store) {
   }
 
   return updated;
+}
+
+const EPIC_ID_PATTERN = /^(?:EPIC|EPC)-[A-Z0-9-]+$/i;
+const PLACEHOLDER_ENTITY_IDS = new Set(["true", "false", "null", "undefined"]);
+
+function repairWorkflowEntityIntegrity(store) {
+  const tickets = store.listEntities({ entityType: "ticket" });
+  const epics = store.listEntities({ entityType: "epic" });
+  const promotedTicketIds = new Set();
+  let promotedEpics = 0;
+  let removedPlaceholderEpics = 0;
+
+  for (const ticket of tickets) {
+    if (!shouldPromoteTicketToEpic(ticket, tickets)) {
+      continue;
+    }
+
+    const placeholderSource = epics.find((epic) =>
+      epic.id === ticket.parentId
+      || epic.id === ticket.data?.epic
+      || epic.id === ticket.data?.parent
+    ) ?? null;
+    const linkedTickets = tickets.filter((candidate) =>
+      candidate.id !== ticket.id
+      && (candidate.parentId === ticket.id || candidate.data?.epic === ticket.id)
+    );
+
+    store.upsertEntity({
+      id: ticket.id,
+      entityType: "epic",
+      title: ticket.title,
+      lane: null,
+      state: deriveEpicState({ state: "open" }, linkedTickets),
+      confidence: ticket.confidence ?? 1,
+      provenance: "integrity-repair",
+      sourceKind: ticket.sourceKind ?? "manual",
+      reviewState: ticket.reviewState ?? "active",
+      createdAt: ticket.createdAt,
+      updatedAt: ticket.updatedAt,
+      parentId: null,
+      relevantUntil: ticket.relevantUntil ?? null,
+      consultationQuestion: ticket.consultationQuestion ?? null,
+      data: {
+        summary: firstNonEmptyString(ticket.data?.summary, placeholderSource?.data?.summary, ""),
+        userStories: normalizeStringList(placeholderSource?.data?.userStories ?? placeholderSource?.data?.stories),
+        ticketBatches: normalizeStringList(placeholderSource?.data?.ticketBatches ?? placeholderSource?.data?.batches),
+        graphNotes: normalizeStringList(placeholderSource?.data?.graphNotes)
+      }
+    });
+    promotedTicketIds.add(ticket.id);
+    promotedEpics += 1;
+  }
+
+  for (const epic of epics) {
+    if (!shouldDeletePlaceholderEpic(epic, tickets, promotedTicketIds)) {
+      continue;
+    }
+    store.deleteEntity(epic.id);
+    removedPlaceholderEpics += 1;
+  }
+
+  return {
+    changed: promotedEpics > 0 || removedPlaceholderEpics > 0,
+    promotedEpics,
+    removedPlaceholderEpics
+  };
+}
+
+function shouldPromoteTicketToEpic(ticket, tickets) {
+  if (!looksLikeEpicId(ticket?.id)) {
+    return false;
+  }
+  const linkedChildren = tickets.some((candidate) =>
+    candidate.id !== ticket.id
+    && (candidate.parentId === ticket.id || candidate.data?.epic === ticket.id)
+  );
+  if (linkedChildren) {
+    return true;
+  }
+  return [ticket.parentId, ticket.data?.epic, ticket.data?.parent].some(isPlaceholderEntityId);
+}
+
+function shouldDeletePlaceholderEpic(epic, tickets, promotedTicketIds) {
+  if (!isPlaceholderEntityId(epic?.id)) {
+    return false;
+  }
+
+  const referencedByUnpromotedTicket = tickets.some((ticket) =>
+    !promotedTicketIds.has(ticket.id)
+    && (ticket.parentId === epic.id || ticket.data?.epic === epic.id || ticket.data?.parent === epic.id)
+  );
+  if (referencedByUnpromotedTicket) {
+    return false;
+  }
+
+  const referencedByPromotedTicket = tickets.some((ticket) =>
+    promotedTicketIds.has(ticket.id)
+    && (ticket.parentId === epic.id || ticket.data?.epic === epic.id || ticket.data?.parent === epic.id)
+  );
+  const hasMeaningfulData = Boolean(String(epic.title ?? "").trim() && String(epic.title ?? "").trim() !== String(epic.id ?? "").trim())
+    || firstNonEmptyString(epic.data?.summary, "") !== ""
+    || normalizeStringList(epic.data?.userStories ?? epic.data?.stories).length > 0
+    || normalizeStringList(epic.data?.ticketBatches ?? epic.data?.batches).length > 0;
+
+  return referencedByPromotedTicket || !hasMeaningfulData;
+}
+
+function looksLikeEpicId(value) {
+  return EPIC_ID_PATTERN.test(String(value ?? "").trim());
+}
+
+function isPlaceholderEntityId(value) {
+  return PLACEHOLDER_ENTITY_IDS.has(String(value ?? "").trim().toLowerCase());
+}
+
+function normalizeStringList(value) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item ?? "").trim()).filter(Boolean)
+    : [];
+}
+
+function firstNonEmptyString(...values) {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return "";
 }
 
 function filterIndexedNotes(relativePath, notes = []) {

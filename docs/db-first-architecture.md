@@ -27,3 +27,7 @@
 - Future host adapters
 
 All surfaces share the same DB-backed judgment core. They should not rebuild their own project-memory model.
+
+## Capability Intelligence
+
+The canonical planning note for capability-aware workflow integrity lives in [docs/workflow-integrity-capability-model.md](./workflow-integrity-capability-model.md).

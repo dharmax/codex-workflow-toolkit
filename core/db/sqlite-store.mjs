@@ -669,6 +669,7 @@ export class SqliteWorkflowStore {
       INSERT INTO entities (id, entity_type, title, lane, state, confidence, provenance, source_kind, review_state, parent_id, relevant_until, consultation_question, data_json, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
+        entity_type = excluded.entity_type,
         title = excluded.title,
         lane = excluded.lane,
         state = excluded.state,

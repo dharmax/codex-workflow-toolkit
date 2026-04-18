@@ -143,6 +143,7 @@ Keep execution disciplined, test-backed, and easy to hand off.
 ## Closure Gate
 
 - Do not move a ticket to `Done` unless every requested item was implemented.
+- Apply the `Definition of Done` in `project-guidelines.md`, not a lighter local interpretation.
 - Check each acceptance criterion explicitly.
 - Include concrete proof tied to the actual change.
 - If any required work or proof is missing, keep the ticket open as `PARTIAL` or `BLOCKED`.

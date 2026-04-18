@@ -54,6 +54,66 @@ test("syncProject skips indexing when the project snapshot is unchanged", async 
   }
 });
 
+test("syncProject repairs malformed epic placeholders even when the file snapshot is unchanged", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-epic-repair-"));
+
+  try {
+    await cp(fixtureRoot, targetRoot, { recursive: true });
+    await syncProject({ projectRoot: targetRoot, writeProjections: true });
+
+    await withWorkflowStore(targetRoot, async (store) => {
+      store.upsertEntity({
+        id: "true",
+        entityType: "epic",
+        title: "true",
+        lane: null,
+        state: "open",
+        confidence: 1,
+        provenance: "manual",
+        sourceKind: "manual",
+        reviewState: "active",
+        data: {}
+      });
+      store.upsertEntity(buildTicketEntity({
+        id: "EPIC-SETTINGS-001",
+        title: "AI Provider Settings & Configuration Flow",
+        lane: "Todo",
+        epicId: "true",
+        summary: ""
+      }));
+      store.upsertEntity(buildTicketEntity({
+        id: "TKT-SETTINGS-001",
+        title: "Add separate tabs for local and paid providers in AI settings",
+        lane: "Todo",
+        epicId: "EPIC-SETTINGS-001",
+        summary: "Keep provider settings grouped by capability."
+      }));
+    });
+
+    const repaired = await syncProject({ projectRoot: targetRoot, writeProjections: true });
+    assert.equal(repaired.integrityRepair.promotedEpics, 1);
+    assert.equal(repaired.integrityRepair.removedPlaceholderEpics, 1);
+
+    const epics = await listEpics({ projectRoot: targetRoot });
+    assert.equal(epics.some((item) => item.id === "true"), false);
+    assert.equal(epics.some((item) => item.id === "EPIC-SETTINGS-001"), true);
+
+    const repairedEpic = await getEpic({ projectRoot: targetRoot, epicId: "EPIC-SETTINGS-001" });
+    assert.equal(repairedEpic?.title, "AI Provider Settings & Configuration Flow");
+    assert.equal(repairedEpic?.linkedTickets.some((ticket) => ticket.id === "TKT-SETTINGS-001"), true);
+
+    const kanban = await readFile(path.join(targetRoot, "kanban.md"), "utf8");
+    assert.doesNotMatch(kanban, /\[ \] EPIC-SETTINGS-001 AI Provider Settings & Configuration Flow/);
+    assert.match(kanban, /TKT-SETTINGS-001 Add separate tabs for local and paid providers in AI settings/);
+
+    const epicsProjection = await readFile(path.join(targetRoot, "epics.md"), "utf8");
+    assert.doesNotMatch(epicsProjection, /## true true/);
+    assert.match(epicsProjection, /## EPIC-SETTINGS-001 AI Provider Settings & Configuration Flow/);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("resolveProjectStatus materializes surface links and test evidence", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-status-surface-"));
 
