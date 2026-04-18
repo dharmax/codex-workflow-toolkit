@@ -1,0 +1,673 @@
+{
+  "input": "Can you look up EPIC-GAME-001 in the generated project and show me whether the long-term vision and module split are there?",
+  "plan": {
+    "kind": "plan",
+    "actions": [
+      {
+        "type": "search",
+        "query": "EPIC-GAME-001"
+      }
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": "n1",
+          "kind": "action",
+          "type": "search",
+          "action": {
+            "type": "search",
+            "query": "EPIC-GAME-001"
+          },
+          "dependsOn": [],
+          "status": "pending"
+        },
+        {
+          "id": "n2",
+          "kind": "synthesize",
+          "type": "synthesize",
+          "dependsOn": [
+            "n1"
+          ],
+          "status": "pending"
+        }
+      ]
+    },
+    "confidence": 0.95,
+    "reason": "Explicit search request.",
+    "assistantReply": null,
+    "intent": {
+      "version": "1",
+      "capability": "project-planning",
+      "objective": "Handle the current shell request.",
+      "subject": null,
+      "taskClass": null,
+      "scope": "repo-targeted",
+      "risk": "low",
+      "responseStyle": {
+        "detail": "normal",
+        "format": "paragraphs",
+        "includeExamples": false
+      },
+      "needsRepoContext": true,
+      "needsMutation": false,
+      "safeToAutoExecute": false,
+      "followUpMode": "new-request",
+      "references": {
+        "tickets": [],
+        "files": [],
+        "modules": [],
+        "graphNodeIds": [],
+        "evidence": []
+      },
+      "directAnswerOnly": false
+    },
+    "finalAnswerPolicy": {
+      "verbosity": "normal",
+      "format": "paragraphs",
+      "includeEvidence": true,
+      "includeNextSteps": true,
+      "includeExamples": false
+    },
+    "executionGraph": {
+      "nodes": [
+        {
+          "id": "n1",
+          "kind": "action",
+          "type": "search",
+          "action": {
+            "type": "search",
+            "query": "EPIC-GAME-001"
+          },
+          "dependsOn": [],
+          "status": "pending"
+        },
+        {
+          "id": "n2",
+          "kind": "synthesize",
+          "type": "synthesize",
+          "dependsOn": [
+            "n1"
+          ],
+          "status": "pending"
+        }
+      ]
+    },
+    "focusTaskClass": null
+  },
+  "executed": [
+    {
+      "action": {
+        "type": "search",
+        "query": "EPIC-GAME-001"
+      },
+      "command": "ai-workflow project search EPIC-GAME-001 --json",
+      "mutation": false,
+      "ok": true,
+      "stdout": "[\n  {\n    \"id\": \"d7abb94483466f80e134f9d874b68694d7f777e1\",\n    \"scope\": \"entity\",\n    \"refId\": \"EPIC-GAME-001\",\n    \"title\": \"EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"{\\\"summary\\\":\\\"\\\",\\\"userStories\\\":[],\\\"ticketBatches\\\":[],\\\"graphNotes\\\":[],\\\"id\\\":\\\"EPIC-GAME-001\\\",\\\"lane\\\":null,\\\"state\\\":\\\"open\\\",\\\"parentId\\\":null}\",\n    \"tags\": [\n      \"epic\",\n      \"EPIC-GAME-001\",\n      \"open\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.529Z\"\n  },\n  {\n    \"id\": \"0878cc973c968068d48e1f84b04e938acd8d1289\",\n    \"scope\": \"symbol\",\n    \"refId\": \"74f304ec4686634bdb84c95e8f320c7df1312d48\",\n    \"title\": \"heading EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"epics.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"epics.md\",\n      \"EPIC-GAME-001 Star Lane Defense\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"1b6ba23bff534e3a1ca1cb27cd41201b1f99b502\",\n    \"scope\": \"symbol\",\n    \"refId\": \"d7027b41fe0664bae83b01c6b4488025e87715ca\",\n    \"title\": \"heading EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"project-brief.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"project-brief.md\",\n      \"EPIC-GAME-001 Star Lane Defense\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"171564d559f23f3ad4be66c9b5228c86aa650f09\",\n    \"scope\": \"file\",\n    \"refId\": \"epics.md\",\n    \"title\": \"epics.md\",\n    \"body\": \"# Epics\\n\\n## EPIC-GAME-001 Star Lane Defense\\n\\n- Long-term vision: turn the first playable wave-defense loop into a reusable arcade framework with alternate formations, boss encounters, and drop-in renderers.\\n- Outcome: a polished first-play experience with deterministic automation and modular game rules.\\n- Features:\\n  - Playable emoji wave defense\\n  - Browser automation hooks\\n  - Readable workflow report\\n- Modules:\\n  - src/game/model.js\\n  - src/game/update.js\\n  - src/game/render.js\\n  - src/game/text-state.js\\n  - src/main.js\\n\\n## EPIC-GAME-002 Expansion Packs\\n\\n- Long-term vision: add bosses, modifiers, and optional co-op input without rewriting the core simulation.\\n- Outcome: content packs plug into the existing wave, render, and scoring surfaces.\\n\\nEpics\\nEPIC-GAME-001 Star Lane Defense\\nEPIC-GAME-002 Expansion Packs\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"198e0f3966009aa0cfd38b895a383f570c484008\",\n    \"scope\": \"file\",\n    \"refId\": \"project-brief.md\",\n    \"title\": \"project-brief.md\",\n    \"body\": \"# Project Brief\\n\\n## Overview\\n\\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\\n\\n## Long-Term Vision\\n\\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\\n\\n## EPIC-GAME-001 Star Lane Defense\\n\\n### Vision\\n\\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\\n\\n### Features\\n\\n- Immediate play start with readable controls\\n- Perspective-staged emoji enemy waves\\n- Player movement, shooting, enemy fire, scoring, lives, and restart\\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\\n- Workflow-facing docs and a clear verification report\\n\\n### Modules\\n\\n- `model`: state bootstrapping, wave generation, progression metadata\\n- `update`: motion, cooldowns, collisions, win/lose flow\\n- `render`: perspective projection, scene drawing, HUD\\n- `text-state`: concise automation payload\\n- `main`: browser loop, input wiring, fullscreen handling\\n\\n## Non-Goals\\n\\n- Networked multiplayer\\n- Monetization\\n- Asset pipelines beyond browser-native emoji rendering\\n\\nProject Brief\\nOverview\\nLong-Term Vision\\nEPIC-GAME-001 Star Lane Defense\\nVision\\nFeatures\\nModules\\nNon-Goals\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  }\n]\n",
+      "stderr": "",
+      "summary": "[",
+      "structuredPayload": [
+        {
+          "id": "d7abb94483466f80e134f9d874b68694d7f777e1",
+          "scope": "entity",
+          "refId": "EPIC-GAME-001",
+          "title": "EPIC-GAME-001 Star Lane Defense",
+          "body": "{\"summary\":\"\",\"userStories\":[],\"ticketBatches\":[],\"graphNotes\":[],\"id\":\"EPIC-GAME-001\",\"lane\":null,\"state\":\"open\",\"parentId\":null}",
+          "tags": [
+            "epic",
+            "EPIC-GAME-001",
+            "open"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.529Z"
+        },
+        {
+          "id": "0878cc973c968068d48e1f84b04e938acd8d1289",
+          "scope": "symbol",
+          "refId": "74f304ec4686634bdb84c95e8f320c7df1312d48",
+          "title": "heading EPIC-GAME-001 Star Lane Defense",
+          "body": "epics.md\nlocal heading",
+          "tags": [
+            "heading",
+            "local",
+            "epics.md",
+            "EPIC-GAME-001 Star Lane Defense"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        },
+        {
+          "id": "1b6ba23bff534e3a1ca1cb27cd41201b1f99b502",
+          "scope": "symbol",
+          "refId": "d7027b41fe0664bae83b01c6b4488025e87715ca",
+          "title": "heading EPIC-GAME-001 Star Lane Defense",
+          "body": "project-brief.md\nlocal heading",
+          "tags": [
+            "heading",
+            "local",
+            "project-brief.md",
+            "EPIC-GAME-001 Star Lane Defense"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        },
+        {
+          "id": "171564d559f23f3ad4be66c9b5228c86aa650f09",
+          "scope": "file",
+          "refId": "epics.md",
+          "title": "epics.md",
+          "body": "# Epics\n\n## EPIC-GAME-001 Star Lane Defense\n\n- Long-term vision: turn the first playable wave-defense loop into a reusable arcade framework with alternate formations, boss encounters, and drop-in renderers.\n- Outcome: a polished first-play experience with deterministic automation and modular game rules.\n- Features:\n  - Playable emoji wave defense\n  - Browser automation hooks\n  - Readable workflow report\n- Modules:\n  - src/game/model.js\n  - src/game/update.js\n  - src/game/render.js\n  - src/game/text-state.js\n  - src/main.js\n\n## EPIC-GAME-002 Expansion Packs\n\n- Long-term vision: add bosses, modifiers, and optional co-op input without rewriting the core simulation.\n- Outcome: content packs plug into the existing wave, render, and scoring surfaces.\n\nEpics\nEPIC-GAME-001 Star Lane Defense\nEPIC-GAME-002 Expansion Packs",
+          "tags": [
+            "markdown",
+            "doc"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        },
+        {
+          "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+          "scope": "file",
+          "refId": "project-brief.md",
+          "title": "project-brief.md",
+          "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+          "tags": [
+            "markdown",
+            "doc"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        }
+      ],
+      "evidence": [
+        {
+          "command": "ai-workflow project search EPIC-GAME-001 --json"
+        },
+        {
+          "snippet": "[\n  {\n    \"id\": \"d7abb94483466f80e134f9d874b68694d7f777e1\",\n    \"scope\": \"entity\",\n    \"refId\": \"EPIC-GAME-001\",\n    \"title\": \"EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"{\\\"summary\\\":\\\"\\\",\\\"userStories\\\":[],\\\"ticketBatches\\\":[],\\\"graphNotes\\\":[],\\\"id\\\":\\\"EPIC-GAME-001\\\",\\\"lane\\\":null,\\\"state\\\":\\\"open\\\",\\\"parentId\\\":null}\",\n    \"tags\": [\n      \"epic\",\n      \"EPIC-GAME-001\",\n      \"open\"\n    ],\n"
+        }
+      ],
+      "artifacts": [],
+      "classification": "completed"
+    }
+  ],
+  "executedGraph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "action",
+        "type": "search",
+        "action": {
+          "type": "search",
+          "query": "EPIC-GAME-001"
+        },
+        "dependsOn": [],
+        "status": "ok",
+        "execution": {
+          "action": {
+            "type": "search",
+            "query": "EPIC-GAME-001"
+          },
+          "command": "ai-workflow project search EPIC-GAME-001 --json",
+          "mutation": false,
+          "ok": true,
+          "stdout": "[\n  {\n    \"id\": \"d7abb94483466f80e134f9d874b68694d7f777e1\",\n    \"scope\": \"entity\",\n    \"refId\": \"EPIC-GAME-001\",\n    \"title\": \"EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"{\\\"summary\\\":\\\"\\\",\\\"userStories\\\":[],\\\"ticketBatches\\\":[],\\\"graphNotes\\\":[],\\\"id\\\":\\\"EPIC-GAME-001\\\",\\\"lane\\\":null,\\\"state\\\":\\\"open\\\",\\\"parentId\\\":null}\",\n    \"tags\": [\n      \"epic\",\n      \"EPIC-GAME-001\",\n      \"open\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.529Z\"\n  },\n  {\n    \"id\": \"0878cc973c968068d48e1f84b04e938acd8d1289\",\n    \"scope\": \"symbol\",\n    \"refId\": \"74f304ec4686634bdb84c95e8f320c7df1312d48\",\n    \"title\": \"heading EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"epics.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"epics.md\",\n      \"EPIC-GAME-001 Star Lane Defense\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"1b6ba23bff534e3a1ca1cb27cd41201b1f99b502\",\n    \"scope\": \"symbol\",\n    \"refId\": \"d7027b41fe0664bae83b01c6b4488025e87715ca\",\n    \"title\": \"heading EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"project-brief.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"project-brief.md\",\n      \"EPIC-GAME-001 Star Lane Defense\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"171564d559f23f3ad4be66c9b5228c86aa650f09\",\n    \"scope\": \"file\",\n    \"refId\": \"epics.md\",\n    \"title\": \"epics.md\",\n    \"body\": \"# Epics\\n\\n## EPIC-GAME-001 Star Lane Defense\\n\\n- Long-term vision: turn the first playable wave-defense loop into a reusable arcade framework with alternate formations, boss encounters, and drop-in renderers.\\n- Outcome: a polished first-play experience with deterministic automation and modular game rules.\\n- Features:\\n  - Playable emoji wave defense\\n  - Browser automation hooks\\n  - Readable workflow report\\n- Modules:\\n  - src/game/model.js\\n  - src/game/update.js\\n  - src/game/render.js\\n  - src/game/text-state.js\\n  - src/main.js\\n\\n## EPIC-GAME-002 Expansion Packs\\n\\n- Long-term vision: add bosses, modifiers, and optional co-op input without rewriting the core simulation.\\n- Outcome: content packs plug into the existing wave, render, and scoring surfaces.\\n\\nEpics\\nEPIC-GAME-001 Star Lane Defense\\nEPIC-GAME-002 Expansion Packs\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"198e0f3966009aa0cfd38b895a383f570c484008\",\n    \"scope\": \"file\",\n    \"refId\": \"project-brief.md\",\n    \"title\": \"project-brief.md\",\n    \"body\": \"# Project Brief\\n\\n## Overview\\n\\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\\n\\n## Long-Term Vision\\n\\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\\n\\n## EPIC-GAME-001 Star Lane Defense\\n\\n### Vision\\n\\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\\n\\n### Features\\n\\n- Immediate play start with readable controls\\n- Perspective-staged emoji enemy waves\\n- Player movement, shooting, enemy fire, scoring, lives, and restart\\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\\n- Workflow-facing docs and a clear verification report\\n\\n### Modules\\n\\n- `model`: state bootstrapping, wave generation, progression metadata\\n- `update`: motion, cooldowns, collisions, win/lose flow\\n- `render`: perspective projection, scene drawing, HUD\\n- `text-state`: concise automation payload\\n- `main`: browser loop, input wiring, fullscreen handling\\n\\n## Non-Goals\\n\\n- Networked multiplayer\\n- Monetization\\n- Asset pipelines beyond browser-native emoji rendering\\n\\nProject Brief\\nOverview\\nLong-Term Vision\\nEPIC-GAME-001 Star Lane Defense\\nVision\\nFeatures\\nModules\\nNon-Goals\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  }\n]\n",
+          "stderr": "",
+          "summary": "[",
+          "structuredPayload": [
+            {
+              "id": "d7abb94483466f80e134f9d874b68694d7f777e1",
+              "scope": "entity",
+              "refId": "EPIC-GAME-001",
+              "title": "EPIC-GAME-001 Star Lane Defense",
+              "body": "{\"summary\":\"\",\"userStories\":[],\"ticketBatches\":[],\"graphNotes\":[],\"id\":\"EPIC-GAME-001\",\"lane\":null,\"state\":\"open\",\"parentId\":null}",
+              "tags": [
+                "epic",
+                "EPIC-GAME-001",
+                "open"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.529Z"
+            },
+            {
+              "id": "0878cc973c968068d48e1f84b04e938acd8d1289",
+              "scope": "symbol",
+              "refId": "74f304ec4686634bdb84c95e8f320c7df1312d48",
+              "title": "heading EPIC-GAME-001 Star Lane Defense",
+              "body": "epics.md\nlocal heading",
+              "tags": [
+                "heading",
+                "local",
+                "epics.md",
+                "EPIC-GAME-001 Star Lane Defense"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "1b6ba23bff534e3a1ca1cb27cd41201b1f99b502",
+              "scope": "symbol",
+              "refId": "d7027b41fe0664bae83b01c6b4488025e87715ca",
+              "title": "heading EPIC-GAME-001 Star Lane Defense",
+              "body": "project-brief.md\nlocal heading",
+              "tags": [
+                "heading",
+                "local",
+                "project-brief.md",
+                "EPIC-GAME-001 Star Lane Defense"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "171564d559f23f3ad4be66c9b5228c86aa650f09",
+              "scope": "file",
+              "refId": "epics.md",
+              "title": "epics.md",
+              "body": "# Epics\n\n## EPIC-GAME-001 Star Lane Defense\n\n- Long-term vision: turn the first playable wave-defense loop into a reusable arcade framework with alternate formations, boss encounters, and drop-in renderers.\n- Outcome: a polished first-play experience with deterministic automation and modular game rules.\n- Features:\n  - Playable emoji wave defense\n  - Browser automation hooks\n  - Readable workflow report\n- Modules:\n  - src/game/model.js\n  - src/game/update.js\n  - src/game/render.js\n  - src/game/text-state.js\n  - src/main.js\n\n## EPIC-GAME-002 Expansion Packs\n\n- Long-term vision: add bosses, modifiers, and optional co-op input without rewriting the core simulation.\n- Outcome: content packs plug into the existing wave, render, and scoring surfaces.\n\nEpics\nEPIC-GAME-001 Star Lane Defense\nEPIC-GAME-002 Expansion Packs",
+              "tags": [
+                "markdown",
+                "doc"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+              "scope": "file",
+              "refId": "project-brief.md",
+              "title": "project-brief.md",
+              "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+              "tags": [
+                "markdown",
+                "doc"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            }
+          ],
+          "evidence": [
+            {
+              "command": "ai-workflow project search EPIC-GAME-001 --json"
+            },
+            {
+              "snippet": "[\n  {\n    \"id\": \"d7abb94483466f80e134f9d874b68694d7f777e1\",\n    \"scope\": \"entity\",\n    \"refId\": \"EPIC-GAME-001\",\n    \"title\": \"EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"{\\\"summary\\\":\\\"\\\",\\\"userStories\\\":[],\\\"ticketBatches\\\":[],\\\"graphNotes\\\":[],\\\"id\\\":\\\"EPIC-GAME-001\\\",\\\"lane\\\":null,\\\"state\\\":\\\"open\\\",\\\"parentId\\\":null}\",\n    \"tags\": [\n      \"epic\",\n      \"EPIC-GAME-001\",\n      \"open\"\n    ],\n"
+            }
+          ],
+          "artifacts": [],
+          "classification": "completed"
+        },
+        "result": {
+          "summary": "[",
+          "structuredPayload": [
+            {
+              "id": "d7abb94483466f80e134f9d874b68694d7f777e1",
+              "scope": "entity",
+              "refId": "EPIC-GAME-001",
+              "title": "EPIC-GAME-001 Star Lane Defense",
+              "body": "{\"summary\":\"\",\"userStories\":[],\"ticketBatches\":[],\"graphNotes\":[],\"id\":\"EPIC-GAME-001\",\"lane\":null,\"state\":\"open\",\"parentId\":null}",
+              "tags": [
+                "epic",
+                "EPIC-GAME-001",
+                "open"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.529Z"
+            },
+            {
+              "id": "0878cc973c968068d48e1f84b04e938acd8d1289",
+              "scope": "symbol",
+              "refId": "74f304ec4686634bdb84c95e8f320c7df1312d48",
+              "title": "heading EPIC-GAME-001 Star Lane Defense",
+              "body": "epics.md\nlocal heading",
+              "tags": [
+                "heading",
+                "local",
+                "epics.md",
+                "EPIC-GAME-001 Star Lane Defense"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "1b6ba23bff534e3a1ca1cb27cd41201b1f99b502",
+              "scope": "symbol",
+              "refId": "d7027b41fe0664bae83b01c6b4488025e87715ca",
+              "title": "heading EPIC-GAME-001 Star Lane Defense",
+              "body": "project-brief.md\nlocal heading",
+              "tags": [
+                "heading",
+                "local",
+                "project-brief.md",
+                "EPIC-GAME-001 Star Lane Defense"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "171564d559f23f3ad4be66c9b5228c86aa650f09",
+              "scope": "file",
+              "refId": "epics.md",
+              "title": "epics.md",
+              "body": "# Epics\n\n## EPIC-GAME-001 Star Lane Defense\n\n- Long-term vision: turn the first playable wave-defense loop into a reusable arcade framework with alternate formations, boss encounters, and drop-in renderers.\n- Outcome: a polished first-play experience with deterministic automation and modular game rules.\n- Features:\n  - Playable emoji wave defense\n  - Browser automation hooks\n  - Readable workflow report\n- Modules:\n  - src/game/model.js\n  - src/game/update.js\n  - src/game/render.js\n  - src/game/text-state.js\n  - src/main.js\n\n## EPIC-GAME-002 Expansion Packs\n\n- Long-term vision: add bosses, modifiers, and optional co-op input without rewriting the core simulation.\n- Outcome: content packs plug into the existing wave, render, and scoring surfaces.\n\nEpics\nEPIC-GAME-001 Star Lane Defense\nEPIC-GAME-002 Expansion Packs",
+              "tags": [
+                "markdown",
+                "doc"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+              "scope": "file",
+              "refId": "project-brief.md",
+              "title": "project-brief.md",
+              "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+              "tags": [
+                "markdown",
+                "doc"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            }
+          ],
+          "evidence": [
+            {
+              "command": "ai-workflow project search EPIC-GAME-001 --json"
+            },
+            {
+              "snippet": "[\n  {\n    \"id\": \"d7abb94483466f80e134f9d874b68694d7f777e1\",\n    \"scope\": \"entity\",\n    \"refId\": \"EPIC-GAME-001\",\n    \"title\": \"EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"{\\\"summary\\\":\\\"\\\",\\\"userStories\\\":[],\\\"ticketBatches\\\":[],\\\"graphNotes\\\":[],\\\"id\\\":\\\"EPIC-GAME-001\\\",\\\"lane\\\":null,\\\"state\\\":\\\"open\\\",\\\"parentId\\\":null}\",\n    \"tags\": [\n      \"epic\",\n      \"EPIC-GAME-001\",\n      \"open\"\n    ],\n"
+            }
+          ],
+          "artifacts": [],
+          "classification": "completed",
+          "ok": true
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "synthesize",
+        "type": "synthesize",
+        "dependsOn": [
+          "n1"
+        ],
+        "status": "ok",
+        "execution": null,
+        "result": {
+          "summary": "Synthesized 1 successful prerequisite node.",
+          "structuredPayload": {
+            "dependencyIds": [
+              "n1"
+            ],
+            "completed": 1,
+            "failed": 0
+          },
+          "evidence": [
+            {
+              "node": "n1",
+              "classification": "completed"
+            }
+          ],
+          "artifacts": [],
+          "classification": "synthesized",
+          "ok": true
+        }
+      }
+    ],
+    "executions": [
+      {
+        "action": {
+          "type": "search",
+          "query": "EPIC-GAME-001"
+        },
+        "command": "ai-workflow project search EPIC-GAME-001 --json",
+        "mutation": false,
+        "ok": true,
+        "stdout": "[\n  {\n    \"id\": \"d7abb94483466f80e134f9d874b68694d7f777e1\",\n    \"scope\": \"entity\",\n    \"refId\": \"EPIC-GAME-001\",\n    \"title\": \"EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"{\\\"summary\\\":\\\"\\\",\\\"userStories\\\":[],\\\"ticketBatches\\\":[],\\\"graphNotes\\\":[],\\\"id\\\":\\\"EPIC-GAME-001\\\",\\\"lane\\\":null,\\\"state\\\":\\\"open\\\",\\\"parentId\\\":null}\",\n    \"tags\": [\n      \"epic\",\n      \"EPIC-GAME-001\",\n      \"open\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.529Z\"\n  },\n  {\n    \"id\": \"0878cc973c968068d48e1f84b04e938acd8d1289\",\n    \"scope\": \"symbol\",\n    \"refId\": \"74f304ec4686634bdb84c95e8f320c7df1312d48\",\n    \"title\": \"heading EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"epics.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"epics.md\",\n      \"EPIC-GAME-001 Star Lane Defense\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"1b6ba23bff534e3a1ca1cb27cd41201b1f99b502\",\n    \"scope\": \"symbol\",\n    \"refId\": \"d7027b41fe0664bae83b01c6b4488025e87715ca\",\n    \"title\": \"heading EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"project-brief.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"project-brief.md\",\n      \"EPIC-GAME-001 Star Lane Defense\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"171564d559f23f3ad4be66c9b5228c86aa650f09\",\n    \"scope\": \"file\",\n    \"refId\": \"epics.md\",\n    \"title\": \"epics.md\",\n    \"body\": \"# Epics\\n\\n## EPIC-GAME-001 Star Lane Defense\\n\\n- Long-term vision: turn the first playable wave-defense loop into a reusable arcade framework with alternate formations, boss encounters, and drop-in renderers.\\n- Outcome: a polished first-play experience with deterministic automation and modular game rules.\\n- Features:\\n  - Playable emoji wave defense\\n  - Browser automation hooks\\n  - Readable workflow report\\n- Modules:\\n  - src/game/model.js\\n  - src/game/update.js\\n  - src/game/render.js\\n  - src/game/text-state.js\\n  - src/main.js\\n\\n## EPIC-GAME-002 Expansion Packs\\n\\n- Long-term vision: add bosses, modifiers, and optional co-op input without rewriting the core simulation.\\n- Outcome: content packs plug into the existing wave, render, and scoring surfaces.\\n\\nEpics\\nEPIC-GAME-001 Star Lane Defense\\nEPIC-GAME-002 Expansion Packs\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"198e0f3966009aa0cfd38b895a383f570c484008\",\n    \"scope\": \"file\",\n    \"refId\": \"project-brief.md\",\n    \"title\": \"project-brief.md\",\n    \"body\": \"# Project Brief\\n\\n## Overview\\n\\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\\n\\n## Long-Term Vision\\n\\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\\n\\n## EPIC-GAME-001 Star Lane Defense\\n\\n### Vision\\n\\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\\n\\n### Features\\n\\n- Immediate play start with readable controls\\n- Perspective-staged emoji enemy waves\\n- Player movement, shooting, enemy fire, scoring, lives, and restart\\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\\n- Workflow-facing docs and a clear verification report\\n\\n### Modules\\n\\n- `model`: state bootstrapping, wave generation, progression metadata\\n- `update`: motion, cooldowns, collisions, win/lose flow\\n- `render`: perspective projection, scene drawing, HUD\\n- `text-state`: concise automation payload\\n- `main`: browser loop, input wiring, fullscreen handling\\n\\n## Non-Goals\\n\\n- Networked multiplayer\\n- Monetization\\n- Asset pipelines beyond browser-native emoji rendering\\n\\nProject Brief\\nOverview\\nLong-Term Vision\\nEPIC-GAME-001 Star Lane Defense\\nVision\\nFeatures\\nModules\\nNon-Goals\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  }\n]\n",
+        "stderr": "",
+        "summary": "[",
+        "structuredPayload": [
+          {
+            "id": "d7abb94483466f80e134f9d874b68694d7f777e1",
+            "scope": "entity",
+            "refId": "EPIC-GAME-001",
+            "title": "EPIC-GAME-001 Star Lane Defense",
+            "body": "{\"summary\":\"\",\"userStories\":[],\"ticketBatches\":[],\"graphNotes\":[],\"id\":\"EPIC-GAME-001\",\"lane\":null,\"state\":\"open\",\"parentId\":null}",
+            "tags": [
+              "epic",
+              "EPIC-GAME-001",
+              "open"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.529Z"
+          },
+          {
+            "id": "0878cc973c968068d48e1f84b04e938acd8d1289",
+            "scope": "symbol",
+            "refId": "74f304ec4686634bdb84c95e8f320c7df1312d48",
+            "title": "heading EPIC-GAME-001 Star Lane Defense",
+            "body": "epics.md\nlocal heading",
+            "tags": [
+              "heading",
+              "local",
+              "epics.md",
+              "EPIC-GAME-001 Star Lane Defense"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          },
+          {
+            "id": "1b6ba23bff534e3a1ca1cb27cd41201b1f99b502",
+            "scope": "symbol",
+            "refId": "d7027b41fe0664bae83b01c6b4488025e87715ca",
+            "title": "heading EPIC-GAME-001 Star Lane Defense",
+            "body": "project-brief.md\nlocal heading",
+            "tags": [
+              "heading",
+              "local",
+              "project-brief.md",
+              "EPIC-GAME-001 Star Lane Defense"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          },
+          {
+            "id": "171564d559f23f3ad4be66c9b5228c86aa650f09",
+            "scope": "file",
+            "refId": "epics.md",
+            "title": "epics.md",
+            "body": "# Epics\n\n## EPIC-GAME-001 Star Lane Defense\n\n- Long-term vision: turn the first playable wave-defense loop into a reusable arcade framework with alternate formations, boss encounters, and drop-in renderers.\n- Outcome: a polished first-play experience with deterministic automation and modular game rules.\n- Features:\n  - Playable emoji wave defense\n  - Browser automation hooks\n  - Readable workflow report\n- Modules:\n  - src/game/model.js\n  - src/game/update.js\n  - src/game/render.js\n  - src/game/text-state.js\n  - src/main.js\n\n## EPIC-GAME-002 Expansion Packs\n\n- Long-term vision: add bosses, modifiers, and optional co-op input without rewriting the core simulation.\n- Outcome: content packs plug into the existing wave, render, and scoring surfaces.\n\nEpics\nEPIC-GAME-001 Star Lane Defense\nEPIC-GAME-002 Expansion Packs",
+            "tags": [
+              "markdown",
+              "doc"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          },
+          {
+            "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+            "scope": "file",
+            "refId": "project-brief.md",
+            "title": "project-brief.md",
+            "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+            "tags": [
+              "markdown",
+              "doc"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          }
+        ],
+        "evidence": [
+          {
+            "command": "ai-workflow project search EPIC-GAME-001 --json"
+          },
+          {
+            "snippet": "[\n  {\n    \"id\": \"d7abb94483466f80e134f9d874b68694d7f777e1\",\n    \"scope\": \"entity\",\n    \"refId\": \"EPIC-GAME-001\",\n    \"title\": \"EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"{\\\"summary\\\":\\\"\\\",\\\"userStories\\\":[],\\\"ticketBatches\\\":[],\\\"graphNotes\\\":[],\\\"id\\\":\\\"EPIC-GAME-001\\\",\\\"lane\\\":null,\\\"state\\\":\\\"open\\\",\\\"parentId\\\":null}\",\n    \"tags\": [\n      \"epic\",\n      \"EPIC-GAME-001\",\n      \"open\"\n    ],\n"
+          }
+        ],
+        "artifacts": [],
+        "classification": "completed"
+      }
+    ],
+    "branchPath": []
+  },
+  "continuationState": {
+    "request": "Can you look up EPIC-GAME-001 in the generated project and show me whether the long-term vision and module split are there?",
+    "active": false,
+    "intent": {
+      "version": "1",
+      "capability": "project-planning",
+      "objective": "Handle the current shell request.",
+      "subject": null,
+      "taskClass": null,
+      "scope": "repo-targeted",
+      "risk": "low",
+      "responseStyle": {
+        "detail": "normal",
+        "format": "paragraphs",
+        "includeExamples": false
+      },
+      "needsRepoContext": true,
+      "needsMutation": false,
+      "safeToAutoExecute": false,
+      "followUpMode": "new-request",
+      "references": {
+        "tickets": [],
+        "files": [],
+        "modules": [],
+        "graphNodeIds": [],
+        "evidence": []
+      },
+      "directAnswerOnly": false
+    },
+    "lastReply": null,
+    "focus": {
+      "taskClass": null,
+      "subject": "EPIC-GAME-001",
+      "searchQuery": "EPIC-GAME-001",
+      "statusQuery": null
+    },
+    "references": {
+      "tickets": [],
+      "files": [],
+      "modules": [],
+      "graphNodeIds": [
+        "n1",
+        "n2"
+      ],
+      "evidence": [
+        "[",
+        "Synthesized 1 successful prerequisite node."
+      ]
+    },
+    "graph": {
+      "nodes": [
+        {
+          "id": "n1",
+          "kind": "action",
+          "type": "search",
+          "dependsOn": [],
+          "status": "ok",
+          "result": {
+            "summary": "[",
+            "structuredPayload": [
+              {
+                "id": "d7abb94483466f80e134f9d874b68694d7f777e1",
+                "scope": "entity",
+                "refId": "EPIC-GAME-001",
+                "title": "EPIC-GAME-001 Star Lane Defense",
+                "body": "{\"summary\":\"\",\"userStories\":[],\"ticketBatches\":[],\"graphNotes\":[],\"id\":\"EPIC-GAME-001\",\"lane\":null,\"state\":\"open\",\"parentId\":null}",
+                "tags": [
+                  "epic",
+                  "EPIC-GAME-001",
+                  "open"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.529Z"
+              },
+              {
+                "id": "0878cc973c968068d48e1f84b04e938acd8d1289",
+                "scope": "symbol",
+                "refId": "74f304ec4686634bdb84c95e8f320c7df1312d48",
+                "title": "heading EPIC-GAME-001 Star Lane Defense",
+                "body": "epics.md\nlocal heading",
+                "tags": [
+                  "heading",
+                  "local",
+                  "epics.md",
+                  "EPIC-GAME-001 Star Lane Defense"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              },
+              {
+                "id": "1b6ba23bff534e3a1ca1cb27cd41201b1f99b502",
+                "scope": "symbol",
+                "refId": "d7027b41fe0664bae83b01c6b4488025e87715ca",
+                "title": "heading EPIC-GAME-001 Star Lane Defense",
+                "body": "project-brief.md\nlocal heading",
+                "tags": [
+                  "heading",
+                  "local",
+                  "project-brief.md",
+                  "EPIC-GAME-001 Star Lane Defense"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              },
+              {
+                "id": "171564d559f23f3ad4be66c9b5228c86aa650f09",
+                "scope": "file",
+                "refId": "epics.md",
+                "title": "epics.md",
+                "body": "# Epics\n\n## EPIC-GAME-001 Star Lane Defense\n\n- Long-term vision: turn the first playable wave-defense loop into a reusable arcade framework with alternate formations, boss encounters, and drop-in renderers.\n- Outcome: a polished first-play experience with deterministic automation and modular game rules.\n- Features:\n  - Playable emoji wave defense\n  - Browser automation hooks\n  - Readable workflow report\n- Modules:\n  - src/game/model.js\n  - src/game/update.js\n  - src/game/render.js\n  - src/game/text-state.js\n  - src/main.js\n\n## EPIC-GAME-002 Expansion Packs\n\n- Long-term vision: add bosses, modifiers, and optional co-op input without rewriting the core simulation.\n- Outcome: content packs plug into the existing wave, render, and scoring surfaces.\n\nEpics\nEPIC-GAME-001 Star Lane Defense\nEPIC-GAME-002 Expansion Packs",
+                "tags": [
+                  "markdown",
+                  "doc"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              },
+              {
+                "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+                "scope": "file",
+                "refId": "project-brief.md",
+                "title": "project-brief.md",
+                "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+                "tags": [
+                  "markdown",
+                  "doc"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              }
+            ],
+            "evidence": [
+              {
+                "command": "ai-workflow project search EPIC-GAME-001 --json"
+              },
+              {
+                "snippet": "[\n  {\n    \"id\": \"d7abb94483466f80e134f9d874b68694d7f777e1\",\n    \"scope\": \"entity\",\n    \"refId\": \"EPIC-GAME-001\",\n    \"title\": \"EPIC-GAME-001 Star Lane Defense\",\n    \"body\": \"{\\\"summary\\\":\\\"\\\",\\\"userStories\\\":[],\\\"ticketBatches\\\":[],\\\"graphNotes\\\":[],\\\"id\\\":\\\"EPIC-GAME-001\\\",\\\"lane\\\":null,\\\"state\\\":\\\"open\\\",\\\"parentId\\\":null}\",\n    \"tags\": [\n      \"epic\",\n      \"EPIC-GAME-001\",\n      \"open\"\n    ],\n"
+              }
+            ],
+            "artifacts": [],
+            "classification": "completed",
+            "ok": true
+          }
+        },
+        {
+          "id": "n2",
+          "kind": "synthesize",
+          "type": "synthesize",
+          "dependsOn": [
+            "n1"
+          ],
+          "status": "ok",
+          "result": {
+            "summary": "Synthesized 1 successful prerequisite node.",
+            "structuredPayload": {
+              "dependencyIds": [
+                "n1"
+              ],
+              "completed": 1,
+              "failed": 0
+            },
+            "evidence": [
+              {
+                "node": "n1",
+                "classification": "completed"
+              }
+            ],
+            "artifacts": [],
+            "classification": "synthesized",
+            "ok": true
+          }
+        }
+      ],
+      "branchPath": []
+    },
+    "outcome": {
+      "planKind": "plan",
+      "failed": [],
+      "pending": []
+    }
+  },
+  "preRendered": true,
+  "recovery": null,
+  "assistantReply": null
+}

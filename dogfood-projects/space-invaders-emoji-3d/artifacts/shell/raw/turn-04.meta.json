@@ -1,0 +1,7 @@
+{
+  "turn": 4,
+  "cwd": "/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d",
+  "promptPath": "/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d/artifacts/shell/raw/turn-04.prompt.txt",
+  "stdoutPath": "/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d/artifacts/shell/raw/turn-04.stdout.log",
+  "stderrPath": "/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d/artifacts/shell/raw/turn-04.stderr.log"
+}

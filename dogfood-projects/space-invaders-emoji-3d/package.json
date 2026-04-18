@@ -1,0 +1,10 @@
+{
+  "name": "space-invaders-emoji-3d",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "serve": "node scripts/dev-server.mjs",
+    "test": "node --test tests/game-logic.test.mjs"
+  }
+}

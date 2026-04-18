@@ -1,0 +1,8 @@
+{
+  "id": "programming-dogfood-build",
+  "stability": "beta",
+  "category": "execution",
+  "summary": "Build the dedicated dogfood game project inside an existing target folder, including the playable modular emoji Space Invaders variant and build-phase artifacts.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/programming-dogfood-build.mjs"
+}

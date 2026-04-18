@@ -1,0 +1,682 @@
+{
+  "taskClass": "artifact-evaluation",
+  "generatedAt": "2026-04-18T17:58:07.215Z",
+  "fingerprint": "b31b533f25d29b25766a63937e6cc2cc575118db",
+  "source": "heuristic+web+ai",
+  "evaluator": {
+    "providerId": "google",
+    "modelId": "gemini-2.0-pro-exp"
+  },
+  "evidence": {
+    "generatedAt": "2026-04-18T17:58:06.857Z",
+    "taskClass": "artifact-evaluation",
+    "profiles": [
+      {
+        "family": "claude-3-5-haiku",
+        "query": "claude-3-5-haiku vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.847Z",
+        "fingerprint": "02b5d408b97d9f29b942bff8eee015fb816d9865",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0,
+          "taskFit": 0
+        }
+      },
+      {
+        "family": "claude-3-5-sonnet",
+        "query": "claude-3-5-sonnet vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.835Z",
+        "fingerprint": "49eb54c39da744070c872f8251f7cf17fc36e3bb",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0,
+          "taskFit": 0
+        }
+      },
+      {
+        "family": "deepseek-r1",
+        "query": "deepseek-r1 vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.853Z",
+        "fingerprint": "49e76785403bed5fc5c648fa556cd8e6ddc03fb3",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0,
+          "taskFit": 0
+        }
+      },
+      {
+        "family": "fluffy/l3-8b-stheno-v3.2",
+        "query": "fluffy/l3-8b-stheno-v3.2 vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.833Z",
+        "fingerprint": "041d1ccd87c0a06005b890fc1126b7457624e373",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0,
+          "taskFit": 0
+        }
+      },
+      {
+        "family": "fluffy/llama-3.1-8b-stheno-v3.4",
+        "query": "fluffy/llama-3.1-8b-stheno-v3.4 vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.831Z",
+        "fingerprint": "b3ee74c4524e92fd84d1a4ef0d0a9b333ce3c899",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0,
+          "taskFit": 0
+        }
+      },
+      {
+        "family": "gemini-2.0-flash",
+        "query": "gemini-2.0-flash vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.854Z",
+        "fingerprint": "4c2980dde13d9c154365b8b09f5056a691acc951",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0,
+          "taskFit": 0
+        }
+      },
+      {
+        "family": "gemini-2.0-pro-exp",
+        "query": "gemini-2.0-pro-exp vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.836Z",
+        "fingerprint": "9def3cb9f203aea7d52c241f142b9d71e6599417",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0,
+          "taskFit": 0
+        }
+      },
+      {
+        "family": "gemma4",
+        "query": "gemma4 vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.856Z",
+        "fingerprint": "54336d85662060f6f14c95475f4130b3a07a192e",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0,
+          "taskFit": 0
+        }
+      }
+    ],
+    "byFamily": {
+      "claude-3-5-haiku": {
+        "family": "claude-3-5-haiku",
+        "query": "claude-3-5-haiku vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.847Z",
+        "fingerprint": "02b5d408b97d9f29b942bff8eee015fb816d9865",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0
+        }
+      },
+      "claude-3-5-sonnet": {
+        "family": "claude-3-5-sonnet",
+        "query": "claude-3-5-sonnet vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.835Z",
+        "fingerprint": "49eb54c39da744070c872f8251f7cf17fc36e3bb",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0
+        }
+      },
+      "deepseek-r1": {
+        "family": "deepseek-r1",
+        "query": "deepseek-r1 vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.853Z",
+        "fingerprint": "49e76785403bed5fc5c648fa556cd8e6ddc03fb3",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0
+        }
+      },
+      "fluffy/l3-8b-stheno-v3.2": {
+        "family": "fluffy/l3-8b-stheno-v3.2",
+        "query": "fluffy/l3-8b-stheno-v3.2 vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.833Z",
+        "fingerprint": "041d1ccd87c0a06005b890fc1126b7457624e373",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0
+        }
+      },
+      "fluffy/llama-3.1-8b-stheno-v3.4": {
+        "family": "fluffy/llama-3.1-8b-stheno-v3.4",
+        "query": "fluffy/llama-3.1-8b-stheno-v3.4 vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.831Z",
+        "fingerprint": "b3ee74c4524e92fd84d1a4ef0d0a9b333ce3c899",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0
+        }
+      },
+      "gemini-2.0-flash": {
+        "family": "gemini-2.0-flash",
+        "query": "gemini-2.0-flash vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.854Z",
+        "fingerprint": "4c2980dde13d9c154365b8b09f5056a691acc951",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0
+        }
+      },
+      "gemini-2.0-pro-exp": {
+        "family": "gemini-2.0-pro-exp",
+        "query": "gemini-2.0-pro-exp vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.836Z",
+        "fingerprint": "9def3cb9f203aea7d52c241f142b9d71e6599417",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0
+        }
+      },
+      "gemma4": {
+        "family": "gemma4",
+        "query": "gemma4 vision multimodal benchmark",
+        "source": "duckduckgo",
+        "generatedAt": "2026-04-18T17:58:06.856Z",
+        "fingerprint": "54336d85662060f6f14c95475f4130b3a07a192e",
+        "results": [],
+        "signals": {
+          "logic": 0,
+          "strategy": 0,
+          "prose": 0,
+          "visual": 0,
+          "speed": 0
+        }
+      }
+    }
+  },
+  "models": [
+    {
+      "providerId": "anthropic",
+      "modelId": "claude-3-5-sonnet",
+      "local": false,
+      "quality": "high",
+      "costTier": 4,
+      "sizeB": null,
+      "capabilities": {
+        "logic": 5,
+        "prose": 5,
+        "creative": 5,
+        "visual": 3,
+        "data": 4,
+        "strategy": 5
+      },
+      "fitScore": 100,
+      "fitReasons": [
+        "capability fit 86.5/100",
+        "quality high",
+        "remote provider",
+        "model family fit +8.0",
+        "cost signal +2.0"
+      ],
+      "source": "heuristic+web"
+    },
+    {
+      "providerId": "google",
+      "modelId": "gemini-2.0-pro-exp",
+      "local": false,
+      "quality": "high",
+      "costTier": 4,
+      "sizeB": null,
+      "capabilities": {
+        "logic": 5,
+        "prose": 4,
+        "creative": 5,
+        "visual": 4,
+        "data": 4,
+        "strategy": 5
+      },
+      "fitScore": 100,
+      "fitReasons": [
+        "capability fit 86.0/100",
+        "quality high",
+        "remote provider",
+        "model family fit +8.0",
+        "cost signal +2.0"
+      ],
+      "source": "heuristic+web"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "hermes3:8b",
+      "local": true,
+      "quality": "medium",
+      "costTier": 1,
+      "sizeB": 4.3,
+      "capabilities": {
+        "logic": 2.9,
+        "strategy": 3.2,
+        "creative": 3.9,
+        "visual": 0,
+        "prose": 4.6
+      },
+      "fitScore": 100,
+      "fitReasons": [
+        "capability fit 66.9/100",
+        "quality medium",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic"
+    },
+    {
+      "providerId": "openai",
+      "modelId": "gpt-4o",
+      "local": false,
+      "quality": "high",
+      "costTier": 5,
+      "sizeB": null,
+      "capabilities": {
+        "logic": 5,
+        "prose": 4,
+        "creative": 4,
+        "visual": 4,
+        "data": 5,
+        "strategy": 5
+      },
+      "fitScore": 100,
+      "fitReasons": [
+        "capability fit 82.0/100",
+        "quality high",
+        "remote provider",
+        "model family fit +8.0",
+        "cost signal -4.0"
+      ],
+      "source": "heuristic"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "fluffy/llama-3.1-8b-stheno-v3.4:latest",
+      "local": true,
+      "quality": "medium",
+      "costTier": 1,
+      "sizeB": 4.6,
+      "capabilities": {
+        "logic": 2.5,
+        "strategy": 2.5,
+        "prose": 3,
+        "creative": 3.5,
+        "visual": 0
+      },
+      "fitScore": 98,
+      "fitReasons": [
+        "capability fit 61.5/100",
+        "quality medium",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic+web"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "gemma4:e4b",
+      "local": true,
+      "quality": "medium",
+      "costTier": 1,
+      "sizeB": 8.9,
+      "capabilities": {
+        "logic": 2.5,
+        "strategy": 2.5,
+        "prose": 2.5,
+        "creative": 2.5,
+        "visual": 0
+      },
+      "fitScore": 94,
+      "fitReasons": [
+        "capability fit 57.5/100",
+        "quality medium",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic+web"
+    },
+    {
+      "providerId": "google",
+      "modelId": "gemini-2.0-flash",
+      "local": false,
+      "quality": "medium",
+      "costTier": 2,
+      "sizeB": null,
+      "capabilities": {
+        "logic": 3,
+        "prose": 3,
+        "creative": 3,
+        "visual": 4,
+        "data": 5,
+        "strategy": 3
+      },
+      "fitScore": 91,
+      "fitReasons": [
+        "capability fit 69.0/100",
+        "quality medium",
+        "remote provider",
+        "model family fit +8.0",
+        "cost signal +2.0"
+      ],
+      "source": "heuristic+web"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "deepseek-r1:8b",
+      "local": true,
+      "quality": "medium",
+      "costTier": 1,
+      "sizeB": 4.9,
+      "capabilities": {
+        "logic": 3,
+        "strategy": 4.2,
+        "creative": 2.2,
+        "visual": 0,
+        "prose": 3.1
+      },
+      "fitScore": 90,
+      "fitReasons": [
+        "capability fit 54.0/100",
+        "quality medium",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic+web"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "fluffy/l3-8b-stheno-v3.2:latest",
+      "local": true,
+      "quality": "medium",
+      "costTier": 1,
+      "sizeB": 4.6,
+      "capabilities": {
+        "logic": 2.5,
+        "strategy": 2.5,
+        "prose": 2.5,
+        "creative": 3.5,
+        "visual": 0
+      },
+      "fitScore": 90,
+      "fitReasons": [
+        "capability fit 54.0/100",
+        "quality medium",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic+web"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "fluffy/l3-8b-stheno-v3.2:q5_K_M",
+      "local": true,
+      "quality": "medium",
+      "costTier": 1,
+      "sizeB": 5.3,
+      "capabilities": {
+        "logic": 2.5,
+        "strategy": 2.5,
+        "prose": 2.5,
+        "creative": 3.5,
+        "visual": 0
+      },
+      "fitScore": 90,
+      "fitReasons": [
+        "capability fit 54.0/100",
+        "quality medium",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic+web"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "moondream:latest",
+      "local": true,
+      "quality": "low",
+      "costTier": 1,
+      "sizeB": 1.6,
+      "capabilities": {
+        "logic": 0.2,
+        "strategy": 0.7,
+        "creative": 1,
+        "visual": 3.5,
+        "prose": 2.2
+      },
+      "fitScore": 82,
+      "fitReasons": [
+        "capability fit 51.5/100",
+        "quality low",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "qwen2.5-coder:7b",
+      "local": true,
+      "quality": "low",
+      "costTier": 1,
+      "sizeB": 4.4,
+      "capabilities": {
+        "logic": 3.9,
+        "strategy": 3.2,
+        "creative": 2.5,
+        "visual": 0,
+        "prose": 3.8
+      },
+      "fitScore": 80,
+      "fitReasons": [
+        "capability fit 50.3/100",
+        "quality low",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic"
+    },
+    {
+      "providerId": "anthropic",
+      "modelId": "claude-3-5-haiku",
+      "local": false,
+      "quality": "medium",
+      "costTier": 2,
+      "sizeB": null,
+      "capabilities": {
+        "logic": 4,
+        "prose": 3,
+        "creative": 2,
+        "visual": 2,
+        "data": 5,
+        "strategy": 3
+      },
+      "fitScore": 78,
+      "fitReasons": [
+        "capability fit 55.5/100",
+        "quality medium",
+        "remote provider",
+        "model family fit +8.0",
+        "cost signal +2.0"
+      ],
+      "source": "heuristic+web"
+    },
+    {
+      "providerId": "openai",
+      "modelId": "gpt-4o-mini",
+      "local": false,
+      "quality": "medium",
+      "costTier": 2,
+      "sizeB": null,
+      "capabilities": {
+        "logic": 3,
+        "prose": 3,
+        "creative": 2,
+        "visual": 2,
+        "data": 5,
+        "strategy": 3
+      },
+      "fitScore": 70,
+      "fitReasons": [
+        "capability fit 53.5/100",
+        "quality medium",
+        "remote provider",
+        "model family fit +8.0",
+        "cost signal -4.0"
+      ],
+      "source": "heuristic"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "qwen2.5-coder:7b-instruct-q4_K_M",
+      "local": true,
+      "quality": "low",
+      "costTier": 1,
+      "sizeB": 4.4,
+      "capabilities": {
+        "logic": 2.5,
+        "strategy": 1.5,
+        "prose": 1.5,
+        "creative": 1.5,
+        "visual": 0
+      },
+      "fitScore": 64,
+      "fitReasons": [
+        "capability fit 34.0/100",
+        "quality low",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "kimi-k2.5:cloud",
+      "local": true,
+      "quality": "low",
+      "costTier": 1,
+      "sizeB": null,
+      "capabilities": {
+        "logic": 1.5,
+        "strategy": 1.5,
+        "prose": 1.5,
+        "creative": 1.5,
+        "visual": 0
+      },
+      "fitScore": 60,
+      "fitReasons": [
+        "capability fit 30.0/100",
+        "quality low",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic"
+    },
+    {
+      "providerId": "ollama",
+      "modelId": "nomic-embed-text:latest",
+      "local": true,
+      "quality": "low",
+      "costTier": 1,
+      "sizeB": 0.3,
+      "capabilities": {
+        "logic": 1.5,
+        "strategy": 1.5,
+        "prose": 1.5,
+        "creative": 1.5,
+        "visual": 0
+      },
+      "fitScore": 60,
+      "fitReasons": [
+        "capability fit 30.0/100",
+        "quality low",
+        "local provider",
+        "hardware fit +4.0",
+        "cost signal +8.0"
+      ],
+      "source": "heuristic"
+    }
+  ]
+}

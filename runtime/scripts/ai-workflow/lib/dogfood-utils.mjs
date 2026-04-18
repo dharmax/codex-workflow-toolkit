@@ -319,7 +319,7 @@ function buildScenarioResult({ id, description, command, result, validationHints
 
 function extractModelTrace(stdout, stderr) {
   const combined = `${stdout ?? ""}\n${stderr ?? ""}`;
-  const match = combined.match(/\[trace\][^\n]*->\s*([^\n]+)/i);
+  const match = combined.match(/(?:\[trace\]|\[progress\]\s+planning and running)\s*[^\n]*->\s*([^\n]+)/i);
   return match ? match[1].trim() : null;
 }
 

@@ -55,7 +55,8 @@ export function validateEvaluateReadinessRequest(request) {
       time_budget_ms: Number.isFinite(Number(payload.constraints?.time_budget_ms))
         ? Math.max(0, Number(payload.constraints.time_budget_ms))
         : 15000,
-      guideline_mode: String(payload.constraints?.guideline_mode ?? "advisory")
+      guideline_mode: String(payload.constraints?.guideline_mode ?? "advisory"),
+      active_guardrails: normalizeActiveGuardrails(payload.constraints?.active_guardrails)
     },
     inputs: {
       tickets_scope: String(payload.inputs?.tickets_scope ?? "active_and_blocked"),
@@ -149,4 +150,44 @@ function validateEvidenceItems(evidence) {
 
 function getMajorVersion(value) {
   return String(value ?? "").trim().split(".")[0];
+}
+
+function normalizeActiveGuardrails(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item, index) => normalizeActiveGuardrail(item, index))
+    .filter(Boolean);
+}
+
+function normalizeActiveGuardrail(item, index) {
+  if (typeof item === "string") {
+    const summary = item.trim();
+    if (!summary) {
+      return null;
+    }
+    return {
+      id: `guardrail_${index + 1}`,
+      summary,
+      severity: "advisory",
+      source: "host"
+    };
+  }
+
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const summary = String(item.summary ?? item.text ?? "").trim();
+  if (!summary) {
+    return null;
+  }
+
+  return {
+    id: String(item.id ?? `guardrail_${index + 1}`),
+    summary,
+    severity: String(item.severity ?? "advisory"),
+    source: String(item.sourceLabel ?? item.source ?? "host")
+  };
 }

@@ -929,6 +929,76 @@ test("smart codelet runner resolves a project-registered codelet from the workfl
   }
 });
 
+test("smart codelet runner falls back when the first routed provider fails", { concurrency: false }, async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-smart-codelet-fallback-"));
+  const primaryProviderId = `mock-smart-primary-${Date.now()}`;
+  const fallbackProviderId = `mock-smart-fallback-${Date.now()}`;
+
+  try {
+    await runNode([path.join(repoRoot, "scripts", "init-project.mjs"), "--target", targetRoot]);
+    await writeFile(path.join(targetRoot, ".ai-workflow", "config.json"), JSON.stringify({
+      providers: {
+        [primaryProviderId]: {
+          apiKey: "primary-key",
+          models: ["smart-v1"]
+        },
+        [fallbackProviderId]: {
+          apiKey: "fallback-key",
+          models: ["smart-v2"]
+        },
+        openai: {
+          enabled: false
+        },
+        anthropic: {
+          enabled: false
+        },
+        google: {
+          enabled: false
+        },
+        ollama: {
+          enabled: false
+        }
+      }
+    }, null, 2), "utf8");
+
+    registerProvider(primaryProviderId, {
+      generate: async () => {
+        throw new Error("Gemini API key is blocked for Generative Language API.");
+      }
+    });
+    registerProvider(fallbackProviderId, {
+      generate: async ({ modelId, prompt }) => {
+        assert.equal(modelId, "smart-v2");
+        assert.match(prompt, /Codelet id: codelet-observer/);
+        return {
+          providerId: fallbackProviderId,
+          modelId,
+          response: JSON.stringify({
+            summary: "Fallback smart codelet route succeeded.",
+            observations: ["The runner retried the next routed provider."],
+            candidate_codelets: [],
+            suggested_actions: ["Keep route diagnostics in the final payload."],
+            docs_to_update: [],
+            needs_human_review: false
+          })
+        };
+      }
+    });
+
+    const payload = await runSmartCodelet(
+      ["--root", targetRoot, "--provider", primaryProviderId, "--model", "smart-v1", "--json"],
+      { AIWF_CODELET_ID: "codelet-observer" }
+    );
+
+    assert.equal(payload.result.summary, "Fallback smart codelet route succeeded.");
+    assert.equal(payload.diagnostics.failedAttempts, 1);
+    assert.equal(payload.diagnostics.successfulProviderId, fallbackProviderId);
+    assert.equal(payload.route.providers[primaryProviderId].apiKey, "[redacted]");
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("workflow mutations refresh kanban and DB projections immediately", { concurrency: false }, async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "ai-workflow-live-refresh-"));
 

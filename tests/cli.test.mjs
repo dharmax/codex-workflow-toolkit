@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { execFile, spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { installAgents } from "../cli/lib/install.mjs";
+import { planShellRequestWithAgent } from "../cli/lib/shell.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -262,7 +263,7 @@ test("metrics command explains real-vs-mock scoring and degraded real traffic", 
         `import { openWorkflowStore } from ${JSON.stringify(path.join(repoRoot, "core", "db", "sqlite-store.mjs"))};`,
         "const store = await openWorkflowStore({ projectRoot: process.cwd() });",
         "store.appendMetric({ taskClass: 'shell-planning', capability: 'strategy', providerId: 'ollama', modelId: 'mock-model', promptTokens: 20, completionTokens: 10, latencyMs: 1, success: true, createdAt: '2026-04-09T09:00:00.000Z' });",
-        "store.appendMetric({ taskClass: 'shell-planning', capability: 'strategy', providerId: 'ollama', modelId: 'hermes3:8b', promptTokens: 100, completionTokens: 30, latencyMs: 20003, success: false, errorMessage: 'timeout', createdAt: '2026-04-09T09:15:00.000Z' });",
+        "store.appendMetric({ taskClass: 'shell-planning', capability: 'strategy', providerId: 'ollama', modelId: 'hermes3:8b', promptTokens: 100, completionTokens: 30, latencyMs: 20003, success: false, errorMessage: 'timeout', details: { stage: 'shell-planner', attemptCount: 1, fallbackUsed: false, failedAttempts: 1, failedLatencyMs: 20003 }, createdAt: '2026-04-09T09:15:00.000Z' });",
         "store.close();"
       ].join(" ")
     ], { cwd: targetRoot });
@@ -281,6 +282,8 @@ test("metrics command explains real-vs-mock scoring and degraded real traffic", 
     assert.match(textResult.stdout, /Quality basis:/);
     assert.match(textResult.stdout, /based on real traffic/);
     assert.match(textResult.stdout, /1 real \/ 1 mock calls/);
+    assert.match(textResult.stdout, /Fallback: 1 run\(s\), 0 recovered, 1 failed attempt\(s\), 20s wasted/);
+    assert.match(textResult.stdout, /Stages: shell-planner 0% success over 1 call/);
     assert.match(textResult.stdout, /Alert: Real traffic is degraded/);
   } finally {
     await cleanup(targetRoot);
@@ -618,6 +621,15 @@ test("shell creates a Telegram remote-control epic end to end in mutating mode",
         providers: {
           ollama: {
             host: "http://127.0.0.1:11434"
+          },
+          google: {
+            enabled: false
+          },
+          openai: {
+            enabled: false
+          },
+          anthropic: {
+            enabled: false
           }
         }
       }, null, 2),
@@ -1183,9 +1195,9 @@ test("one-shot AI shell requests report non-interactive progress and selected mo
   }
 });
 
-test("one-shot AI shell falls back cleanly after a bounded Ollama timeout", async () => {
+test("shell planner records timeout diagnostics after a bounded Ollama timeout", async () => {
   const projectRoot = await makeTempDir();
-  const preloadPath = path.join(projectRoot, "shell-timeout-preload.mjs");
+  const originalFetch = globalThis.fetch;
 
   try {
     await writeFile(
@@ -1205,61 +1217,71 @@ test("one-shot AI shell falls back cleanly after a bounded Ollama timeout", asyn
       }, null, 2),
       "utf8"
     );
-    await writeFile(
-      preloadPath,
-      [
-        "const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));",
-        "globalThis.fetch = async (url, init) => {",
-        "  const text = String(url);",
-        "  if (text.includes('duckduckgo')) {",
-        "    return { ok: true, async text() { return '<html><body></body></html>'; } };",
-        "  }",
-        "  if (text.endsWith('/api/tags')) {",
-        "    return {",
-        "      ok: true,",
-        "      async json() {",
-        "        return { models: [{ name: 'hermes3:8b', size: Math.round(4.3 * 1024 ** 3) }, { name: 'qwen2.5-coder:7b', size: Math.round(4.4 * 1024 ** 3) }] };",
-        "      }",
-        "    };",
-        "  }",
-        "  if (text.endsWith('/api/generate')) {",
-        "    await new Promise((resolve, reject) => {",
-        "      const timer = setTimeout(resolve, 100);",
-        "      if (init?.signal) {",
-        "        init.signal.addEventListener('abort', () => {",
-        "          clearTimeout(timer);",
-        "          reject(init.signal.reason ?? new Error('aborted'));",
-        "        }, { once: true });",
-        "      }",
-        "    });",
-        "    return { ok: true, async json() { return { response: JSON.stringify({ kind: 'reply', confidence: 0.9, reason: 'late', reply: 'late reply' }) }; } };",
-        "  }",
-        "  throw new Error(`Unexpected fetch URL: ${text}`);",
-        "};"
-      ].join("\n"),
-      "utf8"
-    );
 
-    const result = await runNode([
-      path.join(repoRoot, "cli", "ai-workflow.mjs"),
-      "shell",
-      "fix it",
-      "--json",
-      "--trace"
-    ], {
-      cwd: projectRoot,
-      env: {
-        ...process.env,
-        NODE_OPTIONS: `--import=${preloadPath}`,
-        AI_WORKFLOW_SHELL_PLANNER_TIMEOUT_MS: "25"
+    globalThis.fetch = async (url, init) => {
+      const text = String(url);
+      if (text.includes("duckduckgo")) {
+        return { ok: true, async text() { return "<html><body></body></html>"; } };
       }
-    });
+      if (text.endsWith("/api/tags")) {
+        return {
+          ok: true,
+          async json() {
+            return {
+              models: [
+                { name: "hermes3:8b", size: Math.round(4.3 * 1024 ** 3) },
+                { name: "qwen2.5-coder:7b", size: Math.round(4.4 * 1024 ** 3) }
+              ]
+            };
+          }
+        };
+      }
+      if (text.endsWith("/api/generate")) {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, 100);
+          if (init?.signal) {
+            init.signal.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(init.signal.reason ?? new Error("aborted"));
+            }, { once: true });
+          }
+        });
+        return {
+          ok: true,
+          async json() {
+            return {
+              response: JSON.stringify({ kind: "reply", confidence: 0.9, reason: "late", reply: "late reply" })
+            };
+          }
+        };
+      }
+      throw new Error(`Unexpected fetch URL: ${text}`);
+    };
 
-    assert.equal(result.code, 0, result.stderr || result.stdout);
-    const payload = JSON.parse(result.stdout);
-    assert.equal(payload.plan.planner.mode, "ai-fallback-to-heuristic");
-    assert.match(result.stderr, /planner timed out after 25ms/);
-    assert.equal((result.stderr.match(/\[trace\] planner request ->/g) ?? []).length, 1);
+    await assert.rejects(
+      planShellRequestWithAgent("fix it", {
+        root: projectRoot,
+        plannerTimeoutMs: 25,
+        planner: {
+          providerId: "ollama",
+          modelId: "hermes3:8b",
+          host: "http://127.0.0.1:11434",
+          apiKey: null,
+          baseUrl: null
+        },
+        plannerContext: {
+          root: projectRoot,
+          toolkitCodelets: [],
+          projectCodelets: [],
+          summary: { activeTickets: [] },
+          providerState: { providers: {} },
+          guidelines: [],
+          manual: [],
+          activeGuardrails: []
+        }
+      }),
+      /planner timed out after 25ms/
+    );
 
     const metricsResult = await runNode([
       path.join(repoRoot, "cli", "ai-workflow.mjs"),
@@ -1272,7 +1294,10 @@ test("one-shot AI shell falls back cleanly after a bounded Ollama timeout", asyn
     assert.equal(metrics.windows.latestSession.calls, 1);
     assert.equal(metrics.windows.latestSession.localCalls, 1);
     assert.equal(metrics.windows.latestSession.quality.successRate, 0);
+    assert.equal(metrics.windows.latestSession.diagnostics.byStage[0].stage, "shell-planner");
+    assert.equal(metrics.windows.latestSession.diagnostics.failedAttempts, 1);
   } finally {
+    globalThis.fetch = originalFetch;
     await cleanup(projectRoot);
   }
 });

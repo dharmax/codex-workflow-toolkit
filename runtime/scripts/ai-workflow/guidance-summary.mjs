@@ -2,6 +2,7 @@
 
 import path from "node:path";
 import { parseArgs, printAndExit, splitCsv } from "./lib/cli.mjs";
+import { compileActiveGuardrails } from "./lib/active-guardrails.mjs";
 import { exists, isWorkflowStatePath, normalizePath, readText } from "./lib/fs-utils.mjs";
 import { compactGuidanceItems, deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
 import { getChanges, isGitRepo } from "./lib/git-utils.mjs";
@@ -78,12 +79,22 @@ const [agents, contributing, executionProtocol, enforcement, guidelines, manual,
 ]);
 
 const seenGuidance = new Set();
+const activeGuardrails = compileActiveGuardrails({
+  agents,
+  contributing,
+  executionProtocol,
+  enforcement,
+  projectGuidelines: guidelines,
+  manual,
+  knowledge
+}, { keywords, limit: 8 });
 const summary = {
   root,
   ticket: ticket ? { id: ticket.id, title: ticket.title, section: ticket.section } : null,
   ticketSourcePath,
   files: uniqueFiles,
   keywords,
+  activeGuardrails,
   validationPlan: inferValidationPlan({ ticket, files: uniqueFiles }),
   sections: {
     agents: compactGuidanceItems(summarizeGuidance(agents, keywords, { alwaysIncludeTop: true, limit: 4, fallbackLimit: 4 }), { seenNormalized: seenGuidance }),
@@ -120,6 +131,12 @@ if (uniqueFiles.length) {
 
 if (missingFiles.length) {
   lines.push(`Missing guidance files: ${missingFiles.join(", ")}`);
+}
+
+lines.push("");
+lines.push("Active Guardrails");
+for (const item of summary.activeGuardrails) {
+  lines.push(`- [${item.severity}] ${item.summary} (${item.sourceLabel})`);
 }
 
 lines.push("");

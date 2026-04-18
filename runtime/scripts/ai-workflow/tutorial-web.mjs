@@ -5,6 +5,7 @@ import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs, printAndExit } from "./lib/cli.mjs";
+import { loadProjectActiveGuardrails, selectActiveGuardrails } from "./lib/active-guardrails.mjs";
 import { resolveOperatingContext } from "../../../core/lib/operating-context.mjs";
 import { evaluateProjectReadiness } from "../../../core/services/sync.mjs";
 import { resolveHostRequest } from "../../../core/services/host-resolver.mjs";
@@ -65,6 +66,8 @@ const server = http.createServer(async (req, res) => {
     const goalType = String(url.searchParams.get("goal") ?? "beta_readiness");
     const question = String(url.searchParams.get("question") ?? `Is this project ready for ${goalType.replace(/_/g, " ")}?`);
     const projectRoot = context.mode === "tool-dev" ? context.evidenceRoot : context.repairTargetRoot;
+    const activeGuardrails = await loadProjectActiveGuardrails(projectRoot, { limit: 8 }).catch(() => []);
+    const relevantGuardrails = selectActiveGuardrails(activeGuardrails, question, { limit: 4, fallbackLimit: 2 });
 
     try {
       const response = await evaluateProjectReadiness({
@@ -81,7 +84,8 @@ const server = http.createServer(async (req, res) => {
             allow_mutation: false,
             context_budget: "medium",
             time_budget_ms: 15000,
-            guideline_mode: "advisory"
+            guideline_mode: relevantGuardrails.length ? "active" : "advisory",
+            active_guardrails: relevantGuardrails
           },
           inputs: {
             tickets_scope: "active_and_blocked",

@@ -1,0 +1,1243 @@
+{
+  "input": "Please create a new feature for a modular, expandable 3d canvas Space Invaders-style game that uses emoji ships. I want the long-term vision, epics, features, modules, planning notes, tests, and debugging expectations to be part of the work.",
+  "plan": {
+    "kind": "plan",
+    "actions": [
+      {
+        "type": "status_query",
+        "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+        "entityType": "ticket"
+      }
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": "n1",
+          "kind": "action",
+          "type": "status_query",
+          "action": {
+            "type": "status_query",
+            "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+            "entityType": "ticket"
+          },
+          "dependsOn": [],
+          "status": "pending"
+        },
+        {
+          "id": "n2",
+          "kind": "synthesize",
+          "type": "synthesize",
+          "dependsOn": [
+            "n1"
+          ],
+          "status": "pending"
+        }
+      ]
+    },
+    "confidence": 0.96,
+    "reason": "Complex goal-directed request routed through staged core planning.",
+    "strategy": "Likely remaining priorities from current metadata: TKT-SHELL-TRANSCRIPT-001 (6).",
+    "planner": {
+      "mode": "staged-core",
+      "reason": "Complex goal-directed request."
+    },
+    "presentation": "assistant-first"
+  },
+  "executed": [
+    {
+      "action": {
+        "type": "status_query",
+        "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+        "entityType": "ticket"
+      },
+      "command": "ai-workflow project status d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 --type ticket --json",
+      "mutation": false,
+      "ok": true,
+      "stdout": "Ticket: d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 | in progress | Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships\nModular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships [ticket]\nStatus: in progress\n4 related dirty files.\nFiles: tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs, tests/manual-docs.test.mjs, tests/providers.test.mjs, tests/shell-chat.test.mjs, tests/shell-human-language.test.mjs\nFreshness: db sync 2026-04-18T17:46:12.103Z | 4 dirty files\n\nEvidence:\n- Dirty files: runtime/scripts/ai-workflow/programming-dogfood-build.mjs, cli/lib/shell.mjs, runtime/scripts/ai-workflow/programming-dogfood.mjs, cli/lib/main.mjs\n- Linked tests: tests/workflow-db.test.mjs, tests/shell.test.mjs, tests/shell-human-language.test.mjs, tests/shell-chat.test.mjs\n- Related nodes: mentionsGameInRequest (symbol), generateWithAnthropic (symbol), probeWorkspaceState (symbol), withWorkspaceMutation (symbol), withWorkspaceMutationGuardDisabled (symbol)\n- Workflow DB last synced at 2026-04-18T17:46:12.103Z.\n\nTests:\n- tests/workflow-db.test.mjs [unknown]\n- tests/shell.test.mjs [unknown]\n- tests/shell-human-language.test.mjs [unknown]\n- tests/shell-chat.test.mjs [unknown]\n- tests/providers.test.mjs [unknown]\n- tests/manual-docs.test.mjs [unknown]\n- tests/intent.test.mjs [unknown]\n- tests/cli.test.mjs [unknown]\n\nRelated:\n- relates_to: mentionsGameInRequest [symbol]\n- relates_to: generateWithAnthropic [symbol]\n- relates_to: probeWorkspaceState [symbol]\n- relates_to: withWorkspaceMutation [symbol]\n- relates_to: withWorkspaceMutationGuardDisabled [symbol]\n- relates_to: mentionsGameInPriorContext [symbol]\n- relates_to: runtime/scripts/ai-workflow/programming-dogfood-build.mjs [file]\n- relates_to: core/services/providers.mjs [file]\n- relates_to: cli/lib/shell.mjs [file]\n- relates_to: runtime/scripts/ai-workflow/programming-dogfood.mjs [file]\n\nReview focus: confirm tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs still match the ticket scope and linked verification.\nResume prompt: continue d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 by inspecting tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs before mutating.\n",
+      "stderr": "",
+      "structuredPayload": {
+        "ok": true,
+        "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+        "id": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+        "type": "ticket",
+        "title": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships",
+        "status": "in progress",
+        "summary": "4 related dirty files.",
+        "freshness": {
+          "dbSyncAt": "2026-04-18T17:46:12.103Z",
+          "latestTestAt": null,
+          "dirtyFiles": 4
+        },
+        "evidence": [
+          "Dirty files: runtime/scripts/ai-workflow/programming-dogfood-build.mjs, cli/lib/shell.mjs, runtime/scripts/ai-workflow/programming-dogfood.mjs, cli/lib/main.mjs",
+          "Linked tests: tests/workflow-db.test.mjs, tests/shell.test.mjs, tests/shell-human-language.test.mjs, tests/shell-chat.test.mjs",
+          "Related nodes: mentionsGameInRequest (symbol), generateWithAnthropic (symbol), probeWorkspaceState (symbol), withWorkspaceMutation (symbol), withWorkspaceMutationGuardDisabled (symbol)",
+          "Workflow DB last synced at 2026-04-18T17:46:12.103Z."
+        ],
+        "related": [
+          {
+            "id": "symbol:4062d1bccdfc02e5163123dc468450f04445ce20",
+            "type": "symbol",
+            "title": "mentionsGameInRequest",
+            "relation": "relates_to"
+          },
+          {
+            "id": "symbol:4f053505416f54a8207f8cebced60d990c2a22f4",
+            "type": "symbol",
+            "title": "generateWithAnthropic",
+            "relation": "relates_to"
+          },
+          {
+            "id": "symbol:5e9118dd1b3e80e1e9095b2bd4fc5becc4210f34",
+            "type": "symbol",
+            "title": "probeWorkspaceState",
+            "relation": "relates_to"
+          },
+          {
+            "id": "symbol:671def56f887ed528d8cc4f3d7d5eb0c6ea4cb02",
+            "type": "symbol",
+            "title": "withWorkspaceMutation",
+            "relation": "relates_to"
+          },
+          {
+            "id": "symbol:2a4e5dab982d718e4c029ef6c16a9a93d1b748f6",
+            "type": "symbol",
+            "title": "withWorkspaceMutationGuardDisabled",
+            "relation": "relates_to"
+          },
+          {
+            "id": "symbol:0317319b3e06c7dbb67194ced2d6ff3186add08e",
+            "type": "symbol",
+            "title": "mentionsGameInPriorContext",
+            "relation": "relates_to"
+          },
+          {
+            "id": "file:runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+            "type": "file",
+            "title": "runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+            "relation": "relates_to"
+          },
+          {
+            "id": "file:core/services/providers.mjs",
+            "type": "file",
+            "title": "core/services/providers.mjs",
+            "relation": "relates_to"
+          },
+          {
+            "id": "file:cli/lib/shell.mjs",
+            "type": "file",
+            "title": "cli/lib/shell.mjs",
+            "relation": "relates_to"
+          },
+          {
+            "id": "file:runtime/scripts/ai-workflow/programming-dogfood.mjs",
+            "type": "file",
+            "title": "runtime/scripts/ai-workflow/programming-dogfood.mjs",
+            "relation": "relates_to"
+          },
+          {
+            "id": "file:core/lib/workspace-mutation.mjs",
+            "type": "file",
+            "title": "core/lib/workspace-mutation.mjs",
+            "relation": "relates_to"
+          },
+          {
+            "id": "file:cli/lib/main.mjs",
+            "type": "file",
+            "title": "cli/lib/main.mjs",
+            "relation": "relates_to"
+          }
+        ],
+        "tests": [
+          {
+            "id": "test:tests/workflow-db.test.mjs",
+            "title": "tests/workflow-db.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          },
+          {
+            "id": "test:tests/shell.test.mjs",
+            "title": "tests/shell.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          },
+          {
+            "id": "test:tests/shell-human-language.test.mjs",
+            "title": "tests/shell-human-language.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          },
+          {
+            "id": "test:tests/shell-chat.test.mjs",
+            "title": "tests/shell-chat.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          },
+          {
+            "id": "test:tests/providers.test.mjs",
+            "title": "tests/providers.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          },
+          {
+            "id": "test:tests/manual-docs.test.mjs",
+            "title": "tests/manual-docs.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          },
+          {
+            "id": "test:tests/intent.test.mjs",
+            "title": "tests/intent.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          },
+          {
+            "id": "test:tests/cli.test.mjs",
+            "title": "tests/cli.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          },
+          {
+            "id": "test:tests/artifact-verification.test.mjs",
+            "title": "tests/artifact-verification.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          },
+          {
+            "id": "test:tests/ai-workflow-cli.test.mjs",
+            "title": "tests/ai-workflow-cli.test.mjs",
+            "latestStatus": null,
+            "recordedAt": null,
+            "source": null,
+            "summary": null,
+            "targets": []
+          }
+        ],
+        "latestTestResult": {
+          "status": "unknown",
+          "recordedAt": null,
+          "total": 10,
+          "known": 0,
+          "passing": 0,
+          "failing": 0
+        },
+        "provenance": "manual"
+      },
+      "summary": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships in progress",
+      "evidence": [
+        {
+          "command": "ai-workflow project status d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 --type ticket --json"
+        },
+        {
+          "snippet": "Ticket: d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 | in progress | Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships\nModular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships [ticket]\nStatus: in progress\n4 related dirty files.\nFiles: tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs, tests/manual-docs"
+        }
+      ],
+      "artifacts": [],
+      "classification": "completed"
+    }
+  ],
+  "executedGraph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "action",
+        "type": "status_query",
+        "action": {
+          "type": "status_query",
+          "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+          "entityType": "ticket"
+        },
+        "dependsOn": [],
+        "status": "ok",
+        "execution": {
+          "action": {
+            "type": "status_query",
+            "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+            "entityType": "ticket"
+          },
+          "command": "ai-workflow project status d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 --type ticket --json",
+          "mutation": false,
+          "ok": true,
+          "stdout": "Ticket: d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 | in progress | Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships\nModular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships [ticket]\nStatus: in progress\n4 related dirty files.\nFiles: tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs, tests/manual-docs.test.mjs, tests/providers.test.mjs, tests/shell-chat.test.mjs, tests/shell-human-language.test.mjs\nFreshness: db sync 2026-04-18T17:46:12.103Z | 4 dirty files\n\nEvidence:\n- Dirty files: runtime/scripts/ai-workflow/programming-dogfood-build.mjs, cli/lib/shell.mjs, runtime/scripts/ai-workflow/programming-dogfood.mjs, cli/lib/main.mjs\n- Linked tests: tests/workflow-db.test.mjs, tests/shell.test.mjs, tests/shell-human-language.test.mjs, tests/shell-chat.test.mjs\n- Related nodes: mentionsGameInRequest (symbol), generateWithAnthropic (symbol), probeWorkspaceState (symbol), withWorkspaceMutation (symbol), withWorkspaceMutationGuardDisabled (symbol)\n- Workflow DB last synced at 2026-04-18T17:46:12.103Z.\n\nTests:\n- tests/workflow-db.test.mjs [unknown]\n- tests/shell.test.mjs [unknown]\n- tests/shell-human-language.test.mjs [unknown]\n- tests/shell-chat.test.mjs [unknown]\n- tests/providers.test.mjs [unknown]\n- tests/manual-docs.test.mjs [unknown]\n- tests/intent.test.mjs [unknown]\n- tests/cli.test.mjs [unknown]\n\nRelated:\n- relates_to: mentionsGameInRequest [symbol]\n- relates_to: generateWithAnthropic [symbol]\n- relates_to: probeWorkspaceState [symbol]\n- relates_to: withWorkspaceMutation [symbol]\n- relates_to: withWorkspaceMutationGuardDisabled [symbol]\n- relates_to: mentionsGameInPriorContext [symbol]\n- relates_to: runtime/scripts/ai-workflow/programming-dogfood-build.mjs [file]\n- relates_to: core/services/providers.mjs [file]\n- relates_to: cli/lib/shell.mjs [file]\n- relates_to: runtime/scripts/ai-workflow/programming-dogfood.mjs [file]\n\nReview focus: confirm tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs still match the ticket scope and linked verification.\nResume prompt: continue d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 by inspecting tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs before mutating.\n",
+          "stderr": "",
+          "structuredPayload": {
+            "ok": true,
+            "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+            "id": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+            "type": "ticket",
+            "title": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships",
+            "status": "in progress",
+            "summary": "4 related dirty files.",
+            "freshness": {
+              "dbSyncAt": "2026-04-18T17:46:12.103Z",
+              "latestTestAt": null,
+              "dirtyFiles": 4
+            },
+            "evidence": [
+              "Dirty files: runtime/scripts/ai-workflow/programming-dogfood-build.mjs, cli/lib/shell.mjs, runtime/scripts/ai-workflow/programming-dogfood.mjs, cli/lib/main.mjs",
+              "Linked tests: tests/workflow-db.test.mjs, tests/shell.test.mjs, tests/shell-human-language.test.mjs, tests/shell-chat.test.mjs",
+              "Related nodes: mentionsGameInRequest (symbol), generateWithAnthropic (symbol), probeWorkspaceState (symbol), withWorkspaceMutation (symbol), withWorkspaceMutationGuardDisabled (symbol)",
+              "Workflow DB last synced at 2026-04-18T17:46:12.103Z."
+            ],
+            "related": [
+              {
+                "id": "symbol:4062d1bccdfc02e5163123dc468450f04445ce20",
+                "type": "symbol",
+                "title": "mentionsGameInRequest",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:4f053505416f54a8207f8cebced60d990c2a22f4",
+                "type": "symbol",
+                "title": "generateWithAnthropic",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:5e9118dd1b3e80e1e9095b2bd4fc5becc4210f34",
+                "type": "symbol",
+                "title": "probeWorkspaceState",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:671def56f887ed528d8cc4f3d7d5eb0c6ea4cb02",
+                "type": "symbol",
+                "title": "withWorkspaceMutation",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:2a4e5dab982d718e4c029ef6c16a9a93d1b748f6",
+                "type": "symbol",
+                "title": "withWorkspaceMutationGuardDisabled",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:0317319b3e06c7dbb67194ced2d6ff3186add08e",
+                "type": "symbol",
+                "title": "mentionsGameInPriorContext",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+                "type": "file",
+                "title": "runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:core/services/providers.mjs",
+                "type": "file",
+                "title": "core/services/providers.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:cli/lib/shell.mjs",
+                "type": "file",
+                "title": "cli/lib/shell.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:runtime/scripts/ai-workflow/programming-dogfood.mjs",
+                "type": "file",
+                "title": "runtime/scripts/ai-workflow/programming-dogfood.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:core/lib/workspace-mutation.mjs",
+                "type": "file",
+                "title": "core/lib/workspace-mutation.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:cli/lib/main.mjs",
+                "type": "file",
+                "title": "cli/lib/main.mjs",
+                "relation": "relates_to"
+              }
+            ],
+            "tests": [
+              {
+                "id": "test:tests/workflow-db.test.mjs",
+                "title": "tests/workflow-db.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/shell.test.mjs",
+                "title": "tests/shell.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/shell-human-language.test.mjs",
+                "title": "tests/shell-human-language.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/shell-chat.test.mjs",
+                "title": "tests/shell-chat.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/providers.test.mjs",
+                "title": "tests/providers.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/manual-docs.test.mjs",
+                "title": "tests/manual-docs.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/intent.test.mjs",
+                "title": "tests/intent.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/cli.test.mjs",
+                "title": "tests/cli.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/artifact-verification.test.mjs",
+                "title": "tests/artifact-verification.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/ai-workflow-cli.test.mjs",
+                "title": "tests/ai-workflow-cli.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              }
+            ],
+            "latestTestResult": {
+              "status": "unknown",
+              "recordedAt": null,
+              "total": 10,
+              "known": 0,
+              "passing": 0,
+              "failing": 0
+            },
+            "provenance": "manual"
+          },
+          "summary": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships in progress",
+          "evidence": [
+            {
+              "command": "ai-workflow project status d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 --type ticket --json"
+            },
+            {
+              "snippet": "Ticket: d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 | in progress | Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships\nModular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships [ticket]\nStatus: in progress\n4 related dirty files.\nFiles: tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs, tests/manual-docs"
+            }
+          ],
+          "artifacts": [],
+          "classification": "completed"
+        },
+        "result": {
+          "summary": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships in progress",
+          "structuredPayload": {
+            "ok": true,
+            "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+            "id": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+            "type": "ticket",
+            "title": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships",
+            "status": "in progress",
+            "summary": "4 related dirty files.",
+            "freshness": {
+              "dbSyncAt": "2026-04-18T17:46:12.103Z",
+              "latestTestAt": null,
+              "dirtyFiles": 4
+            },
+            "evidence": [
+              "Dirty files: runtime/scripts/ai-workflow/programming-dogfood-build.mjs, cli/lib/shell.mjs, runtime/scripts/ai-workflow/programming-dogfood.mjs, cli/lib/main.mjs",
+              "Linked tests: tests/workflow-db.test.mjs, tests/shell.test.mjs, tests/shell-human-language.test.mjs, tests/shell-chat.test.mjs",
+              "Related nodes: mentionsGameInRequest (symbol), generateWithAnthropic (symbol), probeWorkspaceState (symbol), withWorkspaceMutation (symbol), withWorkspaceMutationGuardDisabled (symbol)",
+              "Workflow DB last synced at 2026-04-18T17:46:12.103Z."
+            ],
+            "related": [
+              {
+                "id": "symbol:4062d1bccdfc02e5163123dc468450f04445ce20",
+                "type": "symbol",
+                "title": "mentionsGameInRequest",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:4f053505416f54a8207f8cebced60d990c2a22f4",
+                "type": "symbol",
+                "title": "generateWithAnthropic",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:5e9118dd1b3e80e1e9095b2bd4fc5becc4210f34",
+                "type": "symbol",
+                "title": "probeWorkspaceState",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:671def56f887ed528d8cc4f3d7d5eb0c6ea4cb02",
+                "type": "symbol",
+                "title": "withWorkspaceMutation",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:2a4e5dab982d718e4c029ef6c16a9a93d1b748f6",
+                "type": "symbol",
+                "title": "withWorkspaceMutationGuardDisabled",
+                "relation": "relates_to"
+              },
+              {
+                "id": "symbol:0317319b3e06c7dbb67194ced2d6ff3186add08e",
+                "type": "symbol",
+                "title": "mentionsGameInPriorContext",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+                "type": "file",
+                "title": "runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:core/services/providers.mjs",
+                "type": "file",
+                "title": "core/services/providers.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:cli/lib/shell.mjs",
+                "type": "file",
+                "title": "cli/lib/shell.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:runtime/scripts/ai-workflow/programming-dogfood.mjs",
+                "type": "file",
+                "title": "runtime/scripts/ai-workflow/programming-dogfood.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:core/lib/workspace-mutation.mjs",
+                "type": "file",
+                "title": "core/lib/workspace-mutation.mjs",
+                "relation": "relates_to"
+              },
+              {
+                "id": "file:cli/lib/main.mjs",
+                "type": "file",
+                "title": "cli/lib/main.mjs",
+                "relation": "relates_to"
+              }
+            ],
+            "tests": [
+              {
+                "id": "test:tests/workflow-db.test.mjs",
+                "title": "tests/workflow-db.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/shell.test.mjs",
+                "title": "tests/shell.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/shell-human-language.test.mjs",
+                "title": "tests/shell-human-language.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/shell-chat.test.mjs",
+                "title": "tests/shell-chat.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/providers.test.mjs",
+                "title": "tests/providers.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/manual-docs.test.mjs",
+                "title": "tests/manual-docs.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/intent.test.mjs",
+                "title": "tests/intent.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/cli.test.mjs",
+                "title": "tests/cli.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/artifact-verification.test.mjs",
+                "title": "tests/artifact-verification.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              },
+              {
+                "id": "test:tests/ai-workflow-cli.test.mjs",
+                "title": "tests/ai-workflow-cli.test.mjs",
+                "latestStatus": null,
+                "recordedAt": null,
+                "source": null,
+                "summary": null,
+                "targets": []
+              }
+            ],
+            "latestTestResult": {
+              "status": "unknown",
+              "recordedAt": null,
+              "total": 10,
+              "known": 0,
+              "passing": 0,
+              "failing": 0
+            },
+            "provenance": "manual"
+          },
+          "evidence": [
+            {
+              "command": "ai-workflow project status d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 --type ticket --json"
+            },
+            {
+              "snippet": "Ticket: d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 | in progress | Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships\nModular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships [ticket]\nStatus: in progress\n4 related dirty files.\nFiles: tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs, tests/manual-docs"
+            }
+          ],
+          "artifacts": [],
+          "classification": "completed",
+          "ok": true
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "synthesize",
+        "type": "synthesize",
+        "dependsOn": [
+          "n1"
+        ],
+        "status": "ok",
+        "execution": null,
+        "result": {
+          "summary": "Synthesized 1 successful prerequisite node.",
+          "structuredPayload": {
+            "dependencyIds": [
+              "n1"
+            ],
+            "completed": 1,
+            "failed": 0
+          },
+          "evidence": [
+            {
+              "node": "n1",
+              "classification": "completed"
+            }
+          ],
+          "artifacts": [],
+          "classification": "synthesized",
+          "ok": true
+        }
+      }
+    ],
+    "executions": [
+      {
+        "action": {
+          "type": "status_query",
+          "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+          "entityType": "ticket"
+        },
+        "command": "ai-workflow project status d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 --type ticket --json",
+        "mutation": false,
+        "ok": true,
+        "stdout": "Ticket: d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 | in progress | Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships\nModular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships [ticket]\nStatus: in progress\n4 related dirty files.\nFiles: tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs, tests/manual-docs.test.mjs, tests/providers.test.mjs, tests/shell-chat.test.mjs, tests/shell-human-language.test.mjs\nFreshness: db sync 2026-04-18T17:46:12.103Z | 4 dirty files\n\nEvidence:\n- Dirty files: runtime/scripts/ai-workflow/programming-dogfood-build.mjs, cli/lib/shell.mjs, runtime/scripts/ai-workflow/programming-dogfood.mjs, cli/lib/main.mjs\n- Linked tests: tests/workflow-db.test.mjs, tests/shell.test.mjs, tests/shell-human-language.test.mjs, tests/shell-chat.test.mjs\n- Related nodes: mentionsGameInRequest (symbol), generateWithAnthropic (symbol), probeWorkspaceState (symbol), withWorkspaceMutation (symbol), withWorkspaceMutationGuardDisabled (symbol)\n- Workflow DB last synced at 2026-04-18T17:46:12.103Z.\n\nTests:\n- tests/workflow-db.test.mjs [unknown]\n- tests/shell.test.mjs [unknown]\n- tests/shell-human-language.test.mjs [unknown]\n- tests/shell-chat.test.mjs [unknown]\n- tests/providers.test.mjs [unknown]\n- tests/manual-docs.test.mjs [unknown]\n- tests/intent.test.mjs [unknown]\n- tests/cli.test.mjs [unknown]\n\nRelated:\n- relates_to: mentionsGameInRequest [symbol]\n- relates_to: generateWithAnthropic [symbol]\n- relates_to: probeWorkspaceState [symbol]\n- relates_to: withWorkspaceMutation [symbol]\n- relates_to: withWorkspaceMutationGuardDisabled [symbol]\n- relates_to: mentionsGameInPriorContext [symbol]\n- relates_to: runtime/scripts/ai-workflow/programming-dogfood-build.mjs [file]\n- relates_to: core/services/providers.mjs [file]\n- relates_to: cli/lib/shell.mjs [file]\n- relates_to: runtime/scripts/ai-workflow/programming-dogfood.mjs [file]\n\nReview focus: confirm tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs still match the ticket scope and linked verification.\nResume prompt: continue d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 by inspecting tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs before mutating.\n",
+        "stderr": "",
+        "structuredPayload": {
+          "ok": true,
+          "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+          "id": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+          "type": "ticket",
+          "title": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships",
+          "status": "in progress",
+          "summary": "4 related dirty files.",
+          "freshness": {
+            "dbSyncAt": "2026-04-18T17:46:12.103Z",
+            "latestTestAt": null,
+            "dirtyFiles": 4
+          },
+          "evidence": [
+            "Dirty files: runtime/scripts/ai-workflow/programming-dogfood-build.mjs, cli/lib/shell.mjs, runtime/scripts/ai-workflow/programming-dogfood.mjs, cli/lib/main.mjs",
+            "Linked tests: tests/workflow-db.test.mjs, tests/shell.test.mjs, tests/shell-human-language.test.mjs, tests/shell-chat.test.mjs",
+            "Related nodes: mentionsGameInRequest (symbol), generateWithAnthropic (symbol), probeWorkspaceState (symbol), withWorkspaceMutation (symbol), withWorkspaceMutationGuardDisabled (symbol)",
+            "Workflow DB last synced at 2026-04-18T17:46:12.103Z."
+          ],
+          "related": [
+            {
+              "id": "symbol:4062d1bccdfc02e5163123dc468450f04445ce20",
+              "type": "symbol",
+              "title": "mentionsGameInRequest",
+              "relation": "relates_to"
+            },
+            {
+              "id": "symbol:4f053505416f54a8207f8cebced60d990c2a22f4",
+              "type": "symbol",
+              "title": "generateWithAnthropic",
+              "relation": "relates_to"
+            },
+            {
+              "id": "symbol:5e9118dd1b3e80e1e9095b2bd4fc5becc4210f34",
+              "type": "symbol",
+              "title": "probeWorkspaceState",
+              "relation": "relates_to"
+            },
+            {
+              "id": "symbol:671def56f887ed528d8cc4f3d7d5eb0c6ea4cb02",
+              "type": "symbol",
+              "title": "withWorkspaceMutation",
+              "relation": "relates_to"
+            },
+            {
+              "id": "symbol:2a4e5dab982d718e4c029ef6c16a9a93d1b748f6",
+              "type": "symbol",
+              "title": "withWorkspaceMutationGuardDisabled",
+              "relation": "relates_to"
+            },
+            {
+              "id": "symbol:0317319b3e06c7dbb67194ced2d6ff3186add08e",
+              "type": "symbol",
+              "title": "mentionsGameInPriorContext",
+              "relation": "relates_to"
+            },
+            {
+              "id": "file:runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+              "type": "file",
+              "title": "runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+              "relation": "relates_to"
+            },
+            {
+              "id": "file:core/services/providers.mjs",
+              "type": "file",
+              "title": "core/services/providers.mjs",
+              "relation": "relates_to"
+            },
+            {
+              "id": "file:cli/lib/shell.mjs",
+              "type": "file",
+              "title": "cli/lib/shell.mjs",
+              "relation": "relates_to"
+            },
+            {
+              "id": "file:runtime/scripts/ai-workflow/programming-dogfood.mjs",
+              "type": "file",
+              "title": "runtime/scripts/ai-workflow/programming-dogfood.mjs",
+              "relation": "relates_to"
+            },
+            {
+              "id": "file:core/lib/workspace-mutation.mjs",
+              "type": "file",
+              "title": "core/lib/workspace-mutation.mjs",
+              "relation": "relates_to"
+            },
+            {
+              "id": "file:cli/lib/main.mjs",
+              "type": "file",
+              "title": "cli/lib/main.mjs",
+              "relation": "relates_to"
+            }
+          ],
+          "tests": [
+            {
+              "id": "test:tests/workflow-db.test.mjs",
+              "title": "tests/workflow-db.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            },
+            {
+              "id": "test:tests/shell.test.mjs",
+              "title": "tests/shell.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            },
+            {
+              "id": "test:tests/shell-human-language.test.mjs",
+              "title": "tests/shell-human-language.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            },
+            {
+              "id": "test:tests/shell-chat.test.mjs",
+              "title": "tests/shell-chat.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            },
+            {
+              "id": "test:tests/providers.test.mjs",
+              "title": "tests/providers.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            },
+            {
+              "id": "test:tests/manual-docs.test.mjs",
+              "title": "tests/manual-docs.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            },
+            {
+              "id": "test:tests/intent.test.mjs",
+              "title": "tests/intent.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            },
+            {
+              "id": "test:tests/cli.test.mjs",
+              "title": "tests/cli.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            },
+            {
+              "id": "test:tests/artifact-verification.test.mjs",
+              "title": "tests/artifact-verification.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            },
+            {
+              "id": "test:tests/ai-workflow-cli.test.mjs",
+              "title": "tests/ai-workflow-cli.test.mjs",
+              "latestStatus": null,
+              "recordedAt": null,
+              "source": null,
+              "summary": null,
+              "targets": []
+            }
+          ],
+          "latestTestResult": {
+            "status": "unknown",
+            "recordedAt": null,
+            "total": 10,
+            "known": 0,
+            "passing": 0,
+            "failing": 0
+          },
+          "provenance": "manual"
+        },
+        "summary": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships in progress",
+        "evidence": [
+          {
+            "command": "ai-workflow project status d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 --type ticket --json"
+          },
+          {
+            "snippet": "Ticket: d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 | in progress | Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships\nModular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships [ticket]\nStatus: in progress\n4 related dirty files.\nFiles: tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs, tests/manual-docs"
+          }
+        ],
+        "artifacts": [],
+        "classification": "completed"
+      }
+    ],
+    "branchPath": []
+  },
+  "continuationState": {
+    "request": "Please create a new feature for a modular, expandable 3d canvas Space Invaders-style game that uses emoji ships. I want the long-term vision, epics, features, modules, planning notes, tests, and debugging expectations to be part of the work.",
+    "active": false,
+    "intent": null,
+    "lastReply": null,
+    "focus": {
+      "taskClass": null,
+      "subject": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+      "searchQuery": null,
+      "statusQuery": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752"
+    },
+    "references": {
+      "tickets": [
+        "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752"
+      ],
+      "files": [],
+      "modules": [],
+      "graphNodeIds": [
+        "n1",
+        "n2"
+      ],
+      "evidence": [
+        "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships in progress",
+        "Synthesized 1 successful prerequisite node."
+      ]
+    },
+    "graph": {
+      "nodes": [
+        {
+          "id": "n1",
+          "kind": "action",
+          "type": "status_query",
+          "dependsOn": [],
+          "status": "ok",
+          "result": {
+            "summary": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships in progress",
+            "structuredPayload": {
+              "ok": true,
+              "query": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+              "id": "d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752",
+              "type": "ticket",
+              "title": "Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships",
+              "status": "in progress",
+              "summary": "4 related dirty files.",
+              "freshness": {
+                "dbSyncAt": "2026-04-18T17:46:12.103Z",
+                "latestTestAt": null,
+                "dirtyFiles": 4
+              },
+              "evidence": [
+                "Dirty files: runtime/scripts/ai-workflow/programming-dogfood-build.mjs, cli/lib/shell.mjs, runtime/scripts/ai-workflow/programming-dogfood.mjs, cli/lib/main.mjs",
+                "Linked tests: tests/workflow-db.test.mjs, tests/shell.test.mjs, tests/shell-human-language.test.mjs, tests/shell-chat.test.mjs",
+                "Related nodes: mentionsGameInRequest (symbol), generateWithAnthropic (symbol), probeWorkspaceState (symbol), withWorkspaceMutation (symbol), withWorkspaceMutationGuardDisabled (symbol)",
+                "Workflow DB last synced at 2026-04-18T17:46:12.103Z."
+              ],
+              "related": [
+                {
+                  "id": "symbol:4062d1bccdfc02e5163123dc468450f04445ce20",
+                  "type": "symbol",
+                  "title": "mentionsGameInRequest",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "symbol:4f053505416f54a8207f8cebced60d990c2a22f4",
+                  "type": "symbol",
+                  "title": "generateWithAnthropic",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "symbol:5e9118dd1b3e80e1e9095b2bd4fc5becc4210f34",
+                  "type": "symbol",
+                  "title": "probeWorkspaceState",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "symbol:671def56f887ed528d8cc4f3d7d5eb0c6ea4cb02",
+                  "type": "symbol",
+                  "title": "withWorkspaceMutation",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "symbol:2a4e5dab982d718e4c029ef6c16a9a93d1b748f6",
+                  "type": "symbol",
+                  "title": "withWorkspaceMutationGuardDisabled",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "symbol:0317319b3e06c7dbb67194ced2d6ff3186add08e",
+                  "type": "symbol",
+                  "title": "mentionsGameInPriorContext",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "file:runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+                  "type": "file",
+                  "title": "runtime/scripts/ai-workflow/programming-dogfood-build.mjs",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "file:core/services/providers.mjs",
+                  "type": "file",
+                  "title": "core/services/providers.mjs",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "file:cli/lib/shell.mjs",
+                  "type": "file",
+                  "title": "cli/lib/shell.mjs",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "file:runtime/scripts/ai-workflow/programming-dogfood.mjs",
+                  "type": "file",
+                  "title": "runtime/scripts/ai-workflow/programming-dogfood.mjs",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "file:core/lib/workspace-mutation.mjs",
+                  "type": "file",
+                  "title": "core/lib/workspace-mutation.mjs",
+                  "relation": "relates_to"
+                },
+                {
+                  "id": "file:cli/lib/main.mjs",
+                  "type": "file",
+                  "title": "cli/lib/main.mjs",
+                  "relation": "relates_to"
+                }
+              ],
+              "tests": [
+                {
+                  "id": "test:tests/workflow-db.test.mjs",
+                  "title": "tests/workflow-db.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                },
+                {
+                  "id": "test:tests/shell.test.mjs",
+                  "title": "tests/shell.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                },
+                {
+                  "id": "test:tests/shell-human-language.test.mjs",
+                  "title": "tests/shell-human-language.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                },
+                {
+                  "id": "test:tests/shell-chat.test.mjs",
+                  "title": "tests/shell-chat.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                },
+                {
+                  "id": "test:tests/providers.test.mjs",
+                  "title": "tests/providers.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                },
+                {
+                  "id": "test:tests/manual-docs.test.mjs",
+                  "title": "tests/manual-docs.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                },
+                {
+                  "id": "test:tests/intent.test.mjs",
+                  "title": "tests/intent.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                },
+                {
+                  "id": "test:tests/cli.test.mjs",
+                  "title": "tests/cli.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                },
+                {
+                  "id": "test:tests/artifact-verification.test.mjs",
+                  "title": "tests/artifact-verification.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                },
+                {
+                  "id": "test:tests/ai-workflow-cli.test.mjs",
+                  "title": "tests/ai-workflow-cli.test.mjs",
+                  "latestStatus": null,
+                  "recordedAt": null,
+                  "source": null,
+                  "summary": null,
+                  "targets": []
+                }
+              ],
+              "latestTestResult": {
+                "status": "unknown",
+                "recordedAt": null,
+                "total": 10,
+                "known": 0,
+                "passing": 0,
+                "failing": 0
+              },
+              "provenance": "manual"
+            },
+            "evidence": [
+              {
+                "command": "ai-workflow project status d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 --type ticket --json"
+              },
+              {
+                "snippet": "Ticket: d90a89c1cc0ce2a2b88e14a1479d9abf96c6a752 | in progress | Modular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships\nModular, Expandable 3D Canvas Space Invaders-style Game with Emoji Ships [ticket]\nStatus: in progress\n4 related dirty files.\nFiles: tests/ai-workflow-cli.test.mjs, tests/artifact-verification.test.mjs, tests/cli.test.mjs, tests/intent.test.mjs, tests/manual-docs"
+              }
+            ],
+            "artifacts": [],
+            "classification": "completed",
+            "ok": true
+          }
+        },
+        {
+          "id": "n2",
+          "kind": "synthesize",
+          "type": "synthesize",
+          "dependsOn": [
+            "n1"
+          ],
+          "status": "ok",
+          "result": {
+            "summary": "Synthesized 1 successful prerequisite node.",
+            "structuredPayload": {
+              "dependencyIds": [
+                "n1"
+              ],
+              "completed": 1,
+              "failed": 0
+            },
+            "evidence": [
+              {
+                "node": "n1",
+                "classification": "completed"
+              }
+            ],
+            "artifacts": [],
+            "classification": "synthesized",
+            "ok": true
+          }
+        }
+      ],
+      "branchPath": []
+    },
+    "outcome": {
+      "planKind": "plan",
+      "failed": [],
+      "pending": []
+    }
+  },
+  "preRendered": true,
+  "recovery": null,
+  "assistantReply": null
+}

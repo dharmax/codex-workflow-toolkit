@@ -1,0 +1,1 @@
+Please build that into a dedicated programming dogfood project in "/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d" from scratch, and reply in JSON so I can inspect the result.

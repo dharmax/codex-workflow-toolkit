@@ -1,6 +1,7 @@
 import { evaluateProjectReadiness, getProjectSummary } from "./sync.mjs";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import { loadProjectActiveGuardrails, selectActiveGuardrails } from "../../runtime/scripts/ai-workflow/lib/active-guardrails.mjs";
 
 const CURRENT_WORK_RE = /\b(working on right now|working on now|what are we working on|what were working on|current work|current focus|in progress right now|currently in progress)\b/i;
 const READINESS_RE = /\b(ready|readiness|before beta|before release|for beta|for release|for handoff)\b/i;
@@ -31,6 +32,8 @@ export async function resolveHostRequest({
 
   const readinessGoal = extractReadinessGoal(normalizedText);
   if (readinessGoal) {
+    const activeGuardrails = await loadProjectActiveGuardrails(projectRoot, { limit: 8 }).catch(() => []);
+    const relevantGuardrails = selectActiveGuardrails(activeGuardrails, normalizedText, { limit: 4, fallbackLimit: 2 });
     const summary = await getProjectSummary({ projectRoot });
     const payload = await evaluateProjectReadiness({
       projectRoot,
@@ -46,7 +49,8 @@ export async function resolveHostRequest({
           allow_mutation: false,
           context_budget: "medium",
           time_budget_ms: 15000,
-          guideline_mode: "advisory"
+          guideline_mode: relevantGuardrails.length ? "active" : "advisory",
+          active_guardrails: relevantGuardrails
         },
         inputs: {
           tickets_scope: "active_and_blocked",

@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS metrics (
   latency_ms INTEGER,
   success INTEGER NOT NULL,
   error_message TEXT,
+  details_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
 

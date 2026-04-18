@@ -1,0 +1,718 @@
+{
+  "input": "Can you find Emoji Star Lanes in the generated project and show me where the title and main game files ended up?",
+  "plan": {
+    "kind": "plan",
+    "actions": [
+      {
+        "type": "search",
+        "query": "Emoji Star Lanes"
+      }
+    ],
+    "graph": {
+      "nodes": [
+        {
+          "id": "n1",
+          "kind": "action",
+          "type": "search",
+          "action": {
+            "type": "search",
+            "query": "Emoji Star Lanes"
+          },
+          "dependsOn": [],
+          "status": "pending"
+        },
+        {
+          "id": "n2",
+          "kind": "synthesize",
+          "type": "synthesize",
+          "dependsOn": [
+            "n1"
+          ],
+          "status": "pending"
+        }
+      ]
+    },
+    "confidence": 0.95,
+    "reason": "Explicit search request.",
+    "assistantReply": null,
+    "intent": {
+      "version": "1",
+      "capability": "project-planning",
+      "objective": "Handle the current shell request.",
+      "subject": null,
+      "taskClass": null,
+      "scope": "repo-targeted",
+      "risk": "low",
+      "responseStyle": {
+        "detail": "normal",
+        "format": "paragraphs",
+        "includeExamples": false
+      },
+      "needsRepoContext": true,
+      "needsMutation": false,
+      "safeToAutoExecute": false,
+      "followUpMode": "new-request",
+      "references": {
+        "tickets": [],
+        "files": [],
+        "modules": [],
+        "graphNodeIds": [],
+        "evidence": []
+      },
+      "directAnswerOnly": false
+    },
+    "finalAnswerPolicy": {
+      "verbosity": "normal",
+      "format": "paragraphs",
+      "includeEvidence": true,
+      "includeNextSteps": true,
+      "includeExamples": false
+    },
+    "executionGraph": {
+      "nodes": [
+        {
+          "id": "n1",
+          "kind": "action",
+          "type": "search",
+          "action": {
+            "type": "search",
+            "query": "Emoji Star Lanes"
+          },
+          "dependsOn": [],
+          "status": "pending"
+        },
+        {
+          "id": "n2",
+          "kind": "synthesize",
+          "type": "synthesize",
+          "dependsOn": [
+            "n1"
+          ],
+          "status": "pending"
+        }
+      ]
+    },
+    "focusTaskClass": null
+  },
+  "executed": [
+    {
+      "action": {
+        "type": "search",
+        "query": "Emoji Star Lanes"
+      },
+      "command": "ai-workflow project search \"Emoji Star Lanes\" --json",
+      "mutation": false,
+      "ok": true,
+      "stdout": "[\n  {\n    \"id\": \"ac48a8e6215fa2ab8b62df67182b79611f9f99ed\",\n    \"scope\": \"symbol\",\n    \"refId\": \"5ed9554ad8c959391299546e4da9211cab954b4c\",\n    \"title\": \"heading Emoji Star Lanes\",\n    \"body\": \"README.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"README.md\",\n      \"Emoji Star Lanes\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"c6d10d3de7c1f66de5cc8662007f9b2b46f2ca16\",\n    \"scope\": \"file\",\n    \"refId\": \"index.html\",\n    \"title\": \"index.html\",\n    \"body\": \"<!doctype html>\\n<html lang=\\\"en\\\">\\n  <head>\\n    <meta charset=\\\"UTF-8\\\" />\\n    <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1.0\\\" />\\n    <title>Emoji Star Lanes</title>\\n    <link rel=\\\"stylesheet\\\" href=\\\"./styles.css\\\" />\\n  </head>\\n  <body>\\n    <canvas id=\\\"game\\\" aria-label=\\\"Emoji Star Lanes\\\"></canvas>\\n    <script type=\\\"module\\\" src=\\\"./src/main.js\\\"></script>\\n  </body>\\n  </html>\\n\\n#game\",\n    \"tags\": [\n      \"html\",\n      \"markup\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"198e0f3966009aa0cfd38b895a383f570c484008\",\n    \"scope\": \"file\",\n    \"refId\": \"project-brief.md\",\n    \"title\": \"project-brief.md\",\n    \"body\": \"# Project Brief\\n\\n## Overview\\n\\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\\n\\n## Long-Term Vision\\n\\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\\n\\n## EPIC-GAME-001 Star Lane Defense\\n\\n### Vision\\n\\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\\n\\n### Features\\n\\n- Immediate play start with readable controls\\n- Perspective-staged emoji enemy waves\\n- Player movement, shooting, enemy fire, scoring, lives, and restart\\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\\n- Workflow-facing docs and a clear verification report\\n\\n### Modules\\n\\n- `model`: state bootstrapping, wave generation, progression metadata\\n- `update`: motion, cooldowns, collisions, win/lose flow\\n- `render`: perspective projection, scene drawing, HUD\\n- `text-state`: concise automation payload\\n- `main`: browser loop, input wiring, fullscreen handling\\n\\n## Non-Goals\\n\\n- Networked multiplayer\\n- Monetization\\n- Asset pipelines beyond browser-native emoji rendering\\n\\nProject Brief\\nOverview\\nLong-Term Vision\\nEPIC-GAME-001 Star Lane Defense\\nVision\\nFeatures\\nModules\\nNon-Goals\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"d69f6f423c0ce106fdf1a95b7e04777650c7bba3\",\n    \"scope\": \"file\",\n    \"refId\": \"README.md\",\n    \"title\": \"README.md\",\n    \"body\": \"# Emoji Star Lanes\\n\\nA modular canvas game built as an ai-workflow programming dogfood target.\\n\\n## Run\\n\\n```bash\\nnpm test\\nnpm run dev\\n```\\n\\nThe dev server prefers port `4173` and falls back to a free port if that port is already busy.\\n\\n## Controls\\n\\n- `Enter` or `Space`: start / restart\\n- `Arrow keys` or `A D`: move\\n- `Space`: shoot\\n- `F`: fullscreen\\n\\n## Files\\n\\n- `src/game/model.js`: state creation and wave generation\\n- `src/game/update.js`: gameplay rules\\n- `src/game/render.js`: canvas rendering and perspective projection\\n- `src/game/text-state.js`: deterministic automation surface\\n- `tests/game-logic.test.mjs`: core rules regression coverage\\n\\nEmoji Star Lanes\\nRun\\nControls\\nFiles\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"0da5cd5b6ba95ff979a2d4eabe733c45b6dea510\",\n    \"scope\": \"file\",\n    \"refId\": \"scripts/dev-server.mjs\",\n    \"title\": \"scripts/dev-server.mjs\",\n    \"body\": \"#!/usr/bin/env node\\n\\nimport http from \\\"node:http\\\";\\nimport path from \\\"node:path\\\";\\nimport { fileURLToPath } from \\\"node:url\\\";\\nimport { readFile } from \\\"node:fs/promises\\\";\\n\\nconst root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), \\\"..\\\");\\nconst preferredPort = Number.parseInt(String(process.env.PORT ?? \\\"4173\\\"), 10) || 4173;\\nconst host = process.env.HOST || \\\"127.0.0.1\\\";\\n\\nconst MIME_TYPES = new Map([\\n  [\\\".html\\\", \\\"text/html; charset=utf-8\\\"],\\n  [\\\".js\\\", \\\"text/javascript; charset=utf-8\\\"],\\n  [\\\".css\\\", \\\"text/css; charset=utf-8\\\"],\\n  [\\\".json\\\", \\\"application/json; charset=utf-8\\\"],\\n  [\\\".png\\\", \\\"image/png\\\"],\\n  [\\\".jpg\\\", \\\"image/jpeg\\\"],\\n  [\\\".jpeg\\\", \\\"image/jpeg\\\"],\\n  [\\\".svg\\\", \\\"image/svg+xml; charset=utf-8\\\"],\\n  [\\\".ico\\\", \\\"image/x-icon\\\"]\\n]);\\n\\nfunction resolveRequestPath(urlPath) {\\n  const pathname = decodeURIComponent(String(urlPath || \\\"/\\\").split(\\\"?\\\")[0]);\\n  const normalized = pathname === \\\"/\\\" ? \\\"/index.html\\\" : pathname;\\n  const filePath = path.resolve(root, \\\".\\\" + normalized);\\n  if (!filePath.startsWith(root)) {\\n    return null;\\n  }\\n  return filePath;\\n}\\n\\nconst server = http.createServer(async (request, response) => {\\n  const filePath = resolveRequestPath(request.url);\\n  if (!filePath) {\\n    response.writeHead(403);\\n    response.end(\\\"Forbidden\\\");\\n    return;\\n  }\\n  try {\\n    const body = await readFile(filePath);\\n    response.writeHead(200, {\\n      \\\"Content-Type\\\": MIME_TYPES.get(path.extname(filePath)) || \\\"application/octet-stream\\\",\\n      \\\"Cache-Control\\\": \\\"no-cache\\\"\\n    });\\n    response.end(body);\\n  } catch (error) {\\n    if (error?.code === \\\"ENOENT\\\") {\\n      response.writeHead(404);\\n      response.end(\\\"Not found\\\");\\n      return;\\n    }\\n    response.writeHead(500);\\n    response.end(String(error?.message ?? error));\\n  }\\n});\\n\\nfunction start(port) {\\n  server.listen(port, host, () => {\\n    const address = server.address();\\n    const finalPort = typeof address === \\\"object\\\" && address ? address.port : port;\\n    process.stdout.write(\\\"Serving Emoji Star Lanes at http://\\\" + host + \\\":\\\" + finalPort + \\\"\\\\n\\\");\\n  });\\n}\\n\\nserver.on(\\\"error\\\", (error) => {\\n  if (error?.code === \\\"EADDRINUSE\\\") {\\n    process.stderr.write(\\\"Port \\\" + preferredPort + \\\" is busy; falling back to a free port.\\\\n\\\");\\n    start(0);\\n    return;\\n  }\\n  throw error;\\n});\\n\\nfor (const signal of [\\\"SIGINT\\\", \\\"SIGTERM\\\"]) {\\n  process.on(signal, () => {\\n    server.close(() => process.exit(0));\\n  });\\n}\\n\\nstart(preferredPort);\\n\\nnode:http\\nnode:path\\nnode:url\\nnode:fs/promises\\nresolveRequestPath\\nstart\\nroot\\npreferredPort\\nhost\\nMIME_TYPES\\npathname\\nnormalized\\nfilePath\\nserver\\nbody\\naddress\\nfinalPort\",\n    \"tags\": [\n      \"mjs\",\n      \"code\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"d99b8985f2a5f018ec1506989020e4ccecaf0036\",\n    \"scope\": \"file\",\n    \"refId\": \"src/game/render.js\",\n    \"title\": \"src/game/render.js\",\n    \"body\": \"function projectPoint(entity, width, height) {\\n  const depth = 1 / (1 + (entity.z * 0.8));\\n  return {\\n    x: width / 2 + (entity.x * width * 0.36 * depth),\\n    y: (height * 0.82) - (entity.y * height * 0.4 * depth) - (entity.z * 34),\\n    scale: Math.max(0.42, depth * 1.8)\\n  };\\n}\\n\\nfunction drawEmoji(ctx, emoji, entity, width, height) {\\n  const projected = projectPoint(entity, width, height);\\n  ctx.save();\\n  ctx.font = `${Math.round(44 * projected.scale)}px \\\"Segoe UI Emoji\\\", \\\"Apple Color Emoji\\\", sans-serif`;\\n  ctx.textAlign = \\\"center\\\";\\n  ctx.textBaseline = \\\"middle\\\";\\n  ctx.fillText(emoji, projected.x, projected.y);\\n  ctx.restore();\\n}\\n\\nfunction drawStarfield(ctx, state, width, height) {\\n  for (const star of state.stars) {\\n    const projected = projectPoint(star, width, height);\\n    ctx.fillStyle = \\\"rgba(201, 242, 255, 0.7)\\\";\\n    ctx.beginPath();\\n    ctx.arc(projected.x, projected.y, Math.max(1, projected.scale * 1.6), 0, Math.PI * 2);\\n    ctx.fill();\\n  }\\n}\\n\\nfunction drawFloorGrid(ctx, width, height) {\\n  ctx.save();\\n  ctx.strokeStyle = \\\"rgba(84, 205, 255, 0.16)\\\";\\n  ctx.lineWidth = 1;\\n  for (let index = -5; index <= 5; index += 1) {\\n    ctx.beginPath();\\n    ctx.moveTo(width / 2, height * 0.82);\\n    ctx.lineTo(width / 2 + (index * width * 0.12), height);\\n    ctx.stroke();\\n  }\\n  for (let row = 0; row < 7; row += 1) {\\n    const y = height * (0.82 + (row * 0.035));\\n    ctx.beginPath();\\n    ctx.moveTo(width * 0.18, y);\\n    ctx.lineTo(width * 0.82, y);\\n    ctx.stroke();\\n  }\\n  ctx.restore();\\n}\\n\\nexport function renderScene(ctx, state, canvas) {\\n  const width = canvas.width;\\n  const height = canvas.height;\\n  const background = ctx.createLinearGradient(0, 0, 0, height);\\n  background.addColorStop(0, \\\"#09111b\\\");\\n  background.addColorStop(0.5, \\\"#11233a\\\");\\n  background.addColorStop(1, \\\"#1f5f5b\\\");\\n  ctx.fillStyle = background;\\n  ctx.fillRect(0, 0, width, height);\\n\\n  drawStarfield(ctx, state, width, height);\\n  drawFloorGrid(ctx, width, height);\\n\\n  for (const enemy of state.enemies) {\\n    drawEmoji(ctx, \\\"👾\\\", { x: enemy.x + state.formation.offsetX, y: enemy.y, z: enemy.z }, width, height);\\n  }\\n  for (const bullet of state.bullets) {\\n    drawEmoji(ctx, \\\"✨\\\", bullet, width, height);\\n  }\\n  for (const shot of state.enemyShots) {\\n    drawEmoji(ctx, \\\"💥\\\", shot, width, height);\\n  }\\n  for (const explosion of state.explosions) {\\n    drawEmoji(ctx, \\\"💥\\\", explosion, width, height);\\n  }\\n\\n  drawEmoji(ctx, \\\"🚀\\\", state.player, width, height);\\n\\n  ctx.save();\\n  ctx.fillStyle = \\\"rgba(236, 247, 255, 0.92)\\\";\\n  ctx.font = '600 18px Inter, sans-serif';\\n  ctx.textAlign = \\\"left\\\";\\n  ctx.fillText(`Score ${state.score}`, 22, 32);\\n  ctx.fillText(`Lives ${state.lives}`, 22, 58);\\n  ctx.fillText(`Wave ${state.level}`, 22, 84);\\n  ctx.restore();\\n\\n  if (state.mode === \\\"start\\\" || state.mode === \\\"gameover\\\") {\\n    ctx.save();\\n    ctx.fillStyle = \\\"rgba(4, 10, 18, 0.62)\\\";\\n    ctx.fillRect(0, 0, width, height);\\n    ctx.fillStyle = \\\"#ecf7ff\\\";\\n    ctx.textAlign = \\\"center\\\";\\n    ctx.font = '700 42px Inter, sans-serif';\\n    ctx.fillText(state.mode === \\\"start\\\" ? \\\"Emoji Star Lanes\\\" : \\\"Restart the Run\\\", width / 2, height * 0.32);\\n    ctx.font = '500 20px Inter, sans-serif';\\n    ctx.fillText(\\\"Move with arrows or A / D. Shoot with Space. Fullscreen with F.\\\", width / 2, height * 0.39);\\n    ctx.fillText(state.mode === \\\"start\\\" ? \\\"Press Enter or Space to launch.\\\" : \\\"Press Enter or Space to restart.\\\", width / 2, height * 0.45);\\n    ctx.restore();\\n  }\\n}\\n\\nprojectPoint\\ndrawEmoji\\ndrawStarfield\\ndrawFloorGrid\\nrenderScene\\ndepth\\nprojected\\nindex\\nrow\\ny\\nwidth\\nheight\\nbackground\",\n    \"tags\": [\n      \"js\",\n      \"code\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  }\n]\n",
+      "stderr": "",
+      "summary": "[",
+      "structuredPayload": [
+        {
+          "id": "ac48a8e6215fa2ab8b62df67182b79611f9f99ed",
+          "scope": "symbol",
+          "refId": "5ed9554ad8c959391299546e4da9211cab954b4c",
+          "title": "heading Emoji Star Lanes",
+          "body": "README.md\nlocal heading",
+          "tags": [
+            "heading",
+            "local",
+            "README.md",
+            "Emoji Star Lanes"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        },
+        {
+          "id": "c6d10d3de7c1f66de5cc8662007f9b2b46f2ca16",
+          "scope": "file",
+          "refId": "index.html",
+          "title": "index.html",
+          "body": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Emoji Star Lanes</title>\n    <link rel=\"stylesheet\" href=\"./styles.css\" />\n  </head>\n  <body>\n    <canvas id=\"game\" aria-label=\"Emoji Star Lanes\"></canvas>\n    <script type=\"module\" src=\"./src/main.js\"></script>\n  </body>\n  </html>\n\n#game",
+          "tags": [
+            "html",
+            "markup"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        },
+        {
+          "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+          "scope": "file",
+          "refId": "project-brief.md",
+          "title": "project-brief.md",
+          "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+          "tags": [
+            "markdown",
+            "doc"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        },
+        {
+          "id": "d69f6f423c0ce106fdf1a95b7e04777650c7bba3",
+          "scope": "file",
+          "refId": "README.md",
+          "title": "README.md",
+          "body": "# Emoji Star Lanes\n\nA modular canvas game built as an ai-workflow programming dogfood target.\n\n## Run\n\n```bash\nnpm test\nnpm run dev\n```\n\nThe dev server prefers port `4173` and falls back to a free port if that port is already busy.\n\n## Controls\n\n- `Enter` or `Space`: start / restart\n- `Arrow keys` or `A D`: move\n- `Space`: shoot\n- `F`: fullscreen\n\n## Files\n\n- `src/game/model.js`: state creation and wave generation\n- `src/game/update.js`: gameplay rules\n- `src/game/render.js`: canvas rendering and perspective projection\n- `src/game/text-state.js`: deterministic automation surface\n- `tests/game-logic.test.mjs`: core rules regression coverage\n\nEmoji Star Lanes\nRun\nControls\nFiles",
+          "tags": [
+            "markdown",
+            "doc"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        },
+        {
+          "id": "0da5cd5b6ba95ff979a2d4eabe733c45b6dea510",
+          "scope": "file",
+          "refId": "scripts/dev-server.mjs",
+          "title": "scripts/dev-server.mjs",
+          "body": "#!/usr/bin/env node\n\nimport http from \"node:http\";\nimport path from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\nimport { readFile } from \"node:fs/promises\";\n\nconst root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), \"..\");\nconst preferredPort = Number.parseInt(String(process.env.PORT ?? \"4173\"), 10) || 4173;\nconst host = process.env.HOST || \"127.0.0.1\";\n\nconst MIME_TYPES = new Map([\n  [\".html\", \"text/html; charset=utf-8\"],\n  [\".js\", \"text/javascript; charset=utf-8\"],\n  [\".css\", \"text/css; charset=utf-8\"],\n  [\".json\", \"application/json; charset=utf-8\"],\n  [\".png\", \"image/png\"],\n  [\".jpg\", \"image/jpeg\"],\n  [\".jpeg\", \"image/jpeg\"],\n  [\".svg\", \"image/svg+xml; charset=utf-8\"],\n  [\".ico\", \"image/x-icon\"]\n]);\n\nfunction resolveRequestPath(urlPath) {\n  const pathname = decodeURIComponent(String(urlPath || \"/\").split(\"?\")[0]);\n  const normalized = pathname === \"/\" ? \"/index.html\" : pathname;\n  const filePath = path.resolve(root, \".\" + normalized);\n  if (!filePath.startsWith(root)) {\n    return null;\n  }\n  return filePath;\n}\n\nconst server = http.createServer(async (request, response) => {\n  const filePath = resolveRequestPath(request.url);\n  if (!filePath) {\n    response.writeHead(403);\n    response.end(\"Forbidden\");\n    return;\n  }\n  try {\n    const body = await readFile(filePath);\n    response.writeHead(200, {\n      \"Content-Type\": MIME_TYPES.get(path.extname(filePath)) || \"application/octet-stream\",\n      \"Cache-Control\": \"no-cache\"\n    });\n    response.end(body);\n  } catch (error) {\n    if (error?.code === \"ENOENT\") {\n      response.writeHead(404);\n      response.end(\"Not found\");\n      return;\n    }\n    response.writeHead(500);\n    response.end(String(error?.message ?? error));\n  }\n});\n\nfunction start(port) {\n  server.listen(port, host, () => {\n    const address = server.address();\n    const finalPort = typeof address === \"object\" && address ? address.port : port;\n    process.stdout.write(\"Serving Emoji Star Lanes at http://\" + host + \":\" + finalPort + \"\\n\");\n  });\n}\n\nserver.on(\"error\", (error) => {\n  if (error?.code === \"EADDRINUSE\") {\n    process.stderr.write(\"Port \" + preferredPort + \" is busy; falling back to a free port.\\n\");\n    start(0);\n    return;\n  }\n  throw error;\n});\n\nfor (const signal of [\"SIGINT\", \"SIGTERM\"]) {\n  process.on(signal, () => {\n    server.close(() => process.exit(0));\n  });\n}\n\nstart(preferredPort);\n\nnode:http\nnode:path\nnode:url\nnode:fs/promises\nresolveRequestPath\nstart\nroot\npreferredPort\nhost\nMIME_TYPES\npathname\nnormalized\nfilePath\nserver\nbody\naddress\nfinalPort",
+          "tags": [
+            "mjs",
+            "code"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        },
+        {
+          "id": "d99b8985f2a5f018ec1506989020e4ccecaf0036",
+          "scope": "file",
+          "refId": "src/game/render.js",
+          "title": "src/game/render.js",
+          "body": "function projectPoint(entity, width, height) {\n  const depth = 1 / (1 + (entity.z * 0.8));\n  return {\n    x: width / 2 + (entity.x * width * 0.36 * depth),\n    y: (height * 0.82) - (entity.y * height * 0.4 * depth) - (entity.z * 34),\n    scale: Math.max(0.42, depth * 1.8)\n  };\n}\n\nfunction drawEmoji(ctx, emoji, entity, width, height) {\n  const projected = projectPoint(entity, width, height);\n  ctx.save();\n  ctx.font = `${Math.round(44 * projected.scale)}px \"Segoe UI Emoji\", \"Apple Color Emoji\", sans-serif`;\n  ctx.textAlign = \"center\";\n  ctx.textBaseline = \"middle\";\n  ctx.fillText(emoji, projected.x, projected.y);\n  ctx.restore();\n}\n\nfunction drawStarfield(ctx, state, width, height) {\n  for (const star of state.stars) {\n    const projected = projectPoint(star, width, height);\n    ctx.fillStyle = \"rgba(201, 242, 255, 0.7)\";\n    ctx.beginPath();\n    ctx.arc(projected.x, projected.y, Math.max(1, projected.scale * 1.6), 0, Math.PI * 2);\n    ctx.fill();\n  }\n}\n\nfunction drawFloorGrid(ctx, width, height) {\n  ctx.save();\n  ctx.strokeStyle = \"rgba(84, 205, 255, 0.16)\";\n  ctx.lineWidth = 1;\n  for (let index = -5; index <= 5; index += 1) {\n    ctx.beginPath();\n    ctx.moveTo(width / 2, height * 0.82);\n    ctx.lineTo(width / 2 + (index * width * 0.12), height);\n    ctx.stroke();\n  }\n  for (let row = 0; row < 7; row += 1) {\n    const y = height * (0.82 + (row * 0.035));\n    ctx.beginPath();\n    ctx.moveTo(width * 0.18, y);\n    ctx.lineTo(width * 0.82, y);\n    ctx.stroke();\n  }\n  ctx.restore();\n}\n\nexport function renderScene(ctx, state, canvas) {\n  const width = canvas.width;\n  const height = canvas.height;\n  const background = ctx.createLinearGradient(0, 0, 0, height);\n  background.addColorStop(0, \"#09111b\");\n  background.addColorStop(0.5, \"#11233a\");\n  background.addColorStop(1, \"#1f5f5b\");\n  ctx.fillStyle = background;\n  ctx.fillRect(0, 0, width, height);\n\n  drawStarfield(ctx, state, width, height);\n  drawFloorGrid(ctx, width, height);\n\n  for (const enemy of state.enemies) {\n    drawEmoji(ctx, \"👾\", { x: enemy.x + state.formation.offsetX, y: enemy.y, z: enemy.z }, width, height);\n  }\n  for (const bullet of state.bullets) {\n    drawEmoji(ctx, \"✨\", bullet, width, height);\n  }\n  for (const shot of state.enemyShots) {\n    drawEmoji(ctx, \"💥\", shot, width, height);\n  }\n  for (const explosion of state.explosions) {\n    drawEmoji(ctx, \"💥\", explosion, width, height);\n  }\n\n  drawEmoji(ctx, \"🚀\", state.player, width, height);\n\n  ctx.save();\n  ctx.fillStyle = \"rgba(236, 247, 255, 0.92)\";\n  ctx.font = '600 18px Inter, sans-serif';\n  ctx.textAlign = \"left\";\n  ctx.fillText(`Score ${state.score}`, 22, 32);\n  ctx.fillText(`Lives ${state.lives}`, 22, 58);\n  ctx.fillText(`Wave ${state.level}`, 22, 84);\n  ctx.restore();\n\n  if (state.mode === \"start\" || state.mode === \"gameover\") {\n    ctx.save();\n    ctx.fillStyle = \"rgba(4, 10, 18, 0.62)\";\n    ctx.fillRect(0, 0, width, height);\n    ctx.fillStyle = \"#ecf7ff\";\n    ctx.textAlign = \"center\";\n    ctx.font = '700 42px Inter, sans-serif';\n    ctx.fillText(state.mode === \"start\" ? \"Emoji Star Lanes\" : \"Restart the Run\", width / 2, height * 0.32);\n    ctx.font = '500 20px Inter, sans-serif';\n    ctx.fillText(\"Move with arrows or A / D. Shoot with Space. Fullscreen with F.\", width / 2, height * 0.39);\n    ctx.fillText(state.mode === \"start\" ? \"Press Enter or Space to launch.\" : \"Press Enter or Space to restart.\", width / 2, height * 0.45);\n    ctx.restore();\n  }\n}\n\nprojectPoint\ndrawEmoji\ndrawStarfield\ndrawFloorGrid\nrenderScene\ndepth\nprojected\nindex\nrow\ny\nwidth\nheight\nbackground",
+          "tags": [
+            "js",
+            "code"
+          ],
+          "updatedAt": "2026-04-18T17:58:53.343Z"
+        }
+      ],
+      "evidence": [
+        {
+          "command": "ai-workflow project search \"Emoji Star Lanes\" --json"
+        },
+        {
+          "snippet": "[\n  {\n    \"id\": \"ac48a8e6215fa2ab8b62df67182b79611f9f99ed\",\n    \"scope\": \"symbol\",\n    \"refId\": \"5ed9554ad8c959391299546e4da9211cab954b4c\",\n    \"title\": \"heading Emoji Star Lanes\",\n    \"body\": \"README.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"README.md\",\n      \"Emoji Star Lanes\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"c6d10d3de7c1f66de5"
+        }
+      ],
+      "artifacts": [],
+      "classification": "completed"
+    }
+  ],
+  "executedGraph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "action",
+        "type": "search",
+        "action": {
+          "type": "search",
+          "query": "Emoji Star Lanes"
+        },
+        "dependsOn": [],
+        "status": "ok",
+        "execution": {
+          "action": {
+            "type": "search",
+            "query": "Emoji Star Lanes"
+          },
+          "command": "ai-workflow project search \"Emoji Star Lanes\" --json",
+          "mutation": false,
+          "ok": true,
+          "stdout": "[\n  {\n    \"id\": \"ac48a8e6215fa2ab8b62df67182b79611f9f99ed\",\n    \"scope\": \"symbol\",\n    \"refId\": \"5ed9554ad8c959391299546e4da9211cab954b4c\",\n    \"title\": \"heading Emoji Star Lanes\",\n    \"body\": \"README.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"README.md\",\n      \"Emoji Star Lanes\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"c6d10d3de7c1f66de5cc8662007f9b2b46f2ca16\",\n    \"scope\": \"file\",\n    \"refId\": \"index.html\",\n    \"title\": \"index.html\",\n    \"body\": \"<!doctype html>\\n<html lang=\\\"en\\\">\\n  <head>\\n    <meta charset=\\\"UTF-8\\\" />\\n    <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1.0\\\" />\\n    <title>Emoji Star Lanes</title>\\n    <link rel=\\\"stylesheet\\\" href=\\\"./styles.css\\\" />\\n  </head>\\n  <body>\\n    <canvas id=\\\"game\\\" aria-label=\\\"Emoji Star Lanes\\\"></canvas>\\n    <script type=\\\"module\\\" src=\\\"./src/main.js\\\"></script>\\n  </body>\\n  </html>\\n\\n#game\",\n    \"tags\": [\n      \"html\",\n      \"markup\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"198e0f3966009aa0cfd38b895a383f570c484008\",\n    \"scope\": \"file\",\n    \"refId\": \"project-brief.md\",\n    \"title\": \"project-brief.md\",\n    \"body\": \"# Project Brief\\n\\n## Overview\\n\\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\\n\\n## Long-Term Vision\\n\\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\\n\\n## EPIC-GAME-001 Star Lane Defense\\n\\n### Vision\\n\\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\\n\\n### Features\\n\\n- Immediate play start with readable controls\\n- Perspective-staged emoji enemy waves\\n- Player movement, shooting, enemy fire, scoring, lives, and restart\\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\\n- Workflow-facing docs and a clear verification report\\n\\n### Modules\\n\\n- `model`: state bootstrapping, wave generation, progression metadata\\n- `update`: motion, cooldowns, collisions, win/lose flow\\n- `render`: perspective projection, scene drawing, HUD\\n- `text-state`: concise automation payload\\n- `main`: browser loop, input wiring, fullscreen handling\\n\\n## Non-Goals\\n\\n- Networked multiplayer\\n- Monetization\\n- Asset pipelines beyond browser-native emoji rendering\\n\\nProject Brief\\nOverview\\nLong-Term Vision\\nEPIC-GAME-001 Star Lane Defense\\nVision\\nFeatures\\nModules\\nNon-Goals\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"d69f6f423c0ce106fdf1a95b7e04777650c7bba3\",\n    \"scope\": \"file\",\n    \"refId\": \"README.md\",\n    \"title\": \"README.md\",\n    \"body\": \"# Emoji Star Lanes\\n\\nA modular canvas game built as an ai-workflow programming dogfood target.\\n\\n## Run\\n\\n```bash\\nnpm test\\nnpm run dev\\n```\\n\\nThe dev server prefers port `4173` and falls back to a free port if that port is already busy.\\n\\n## Controls\\n\\n- `Enter` or `Space`: start / restart\\n- `Arrow keys` or `A D`: move\\n- `Space`: shoot\\n- `F`: fullscreen\\n\\n## Files\\n\\n- `src/game/model.js`: state creation and wave generation\\n- `src/game/update.js`: gameplay rules\\n- `src/game/render.js`: canvas rendering and perspective projection\\n- `src/game/text-state.js`: deterministic automation surface\\n- `tests/game-logic.test.mjs`: core rules regression coverage\\n\\nEmoji Star Lanes\\nRun\\nControls\\nFiles\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"0da5cd5b6ba95ff979a2d4eabe733c45b6dea510\",\n    \"scope\": \"file\",\n    \"refId\": \"scripts/dev-server.mjs\",\n    \"title\": \"scripts/dev-server.mjs\",\n    \"body\": \"#!/usr/bin/env node\\n\\nimport http from \\\"node:http\\\";\\nimport path from \\\"node:path\\\";\\nimport { fileURLToPath } from \\\"node:url\\\";\\nimport { readFile } from \\\"node:fs/promises\\\";\\n\\nconst root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), \\\"..\\\");\\nconst preferredPort = Number.parseInt(String(process.env.PORT ?? \\\"4173\\\"), 10) || 4173;\\nconst host = process.env.HOST || \\\"127.0.0.1\\\";\\n\\nconst MIME_TYPES = new Map([\\n  [\\\".html\\\", \\\"text/html; charset=utf-8\\\"],\\n  [\\\".js\\\", \\\"text/javascript; charset=utf-8\\\"],\\n  [\\\".css\\\", \\\"text/css; charset=utf-8\\\"],\\n  [\\\".json\\\", \\\"application/json; charset=utf-8\\\"],\\n  [\\\".png\\\", \\\"image/png\\\"],\\n  [\\\".jpg\\\", \\\"image/jpeg\\\"],\\n  [\\\".jpeg\\\", \\\"image/jpeg\\\"],\\n  [\\\".svg\\\", \\\"image/svg+xml; charset=utf-8\\\"],\\n  [\\\".ico\\\", \\\"image/x-icon\\\"]\\n]);\\n\\nfunction resolveRequestPath(urlPath) {\\n  const pathname = decodeURIComponent(String(urlPath || \\\"/\\\").split(\\\"?\\\")[0]);\\n  const normalized = pathname === \\\"/\\\" ? \\\"/index.html\\\" : pathname;\\n  const filePath = path.resolve(root, \\\".\\\" + normalized);\\n  if (!filePath.startsWith(root)) {\\n    return null;\\n  }\\n  return filePath;\\n}\\n\\nconst server = http.createServer(async (request, response) => {\\n  const filePath = resolveRequestPath(request.url);\\n  if (!filePath) {\\n    response.writeHead(403);\\n    response.end(\\\"Forbidden\\\");\\n    return;\\n  }\\n  try {\\n    const body = await readFile(filePath);\\n    response.writeHead(200, {\\n      \\\"Content-Type\\\": MIME_TYPES.get(path.extname(filePath)) || \\\"application/octet-stream\\\",\\n      \\\"Cache-Control\\\": \\\"no-cache\\\"\\n    });\\n    response.end(body);\\n  } catch (error) {\\n    if (error?.code === \\\"ENOENT\\\") {\\n      response.writeHead(404);\\n      response.end(\\\"Not found\\\");\\n      return;\\n    }\\n    response.writeHead(500);\\n    response.end(String(error?.message ?? error));\\n  }\\n});\\n\\nfunction start(port) {\\n  server.listen(port, host, () => {\\n    const address = server.address();\\n    const finalPort = typeof address === \\\"object\\\" && address ? address.port : port;\\n    process.stdout.write(\\\"Serving Emoji Star Lanes at http://\\\" + host + \\\":\\\" + finalPort + \\\"\\\\n\\\");\\n  });\\n}\\n\\nserver.on(\\\"error\\\", (error) => {\\n  if (error?.code === \\\"EADDRINUSE\\\") {\\n    process.stderr.write(\\\"Port \\\" + preferredPort + \\\" is busy; falling back to a free port.\\\\n\\\");\\n    start(0);\\n    return;\\n  }\\n  throw error;\\n});\\n\\nfor (const signal of [\\\"SIGINT\\\", \\\"SIGTERM\\\"]) {\\n  process.on(signal, () => {\\n    server.close(() => process.exit(0));\\n  });\\n}\\n\\nstart(preferredPort);\\n\\nnode:http\\nnode:path\\nnode:url\\nnode:fs/promises\\nresolveRequestPath\\nstart\\nroot\\npreferredPort\\nhost\\nMIME_TYPES\\npathname\\nnormalized\\nfilePath\\nserver\\nbody\\naddress\\nfinalPort\",\n    \"tags\": [\n      \"mjs\",\n      \"code\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"d99b8985f2a5f018ec1506989020e4ccecaf0036\",\n    \"scope\": \"file\",\n    \"refId\": \"src/game/render.js\",\n    \"title\": \"src/game/render.js\",\n    \"body\": \"function projectPoint(entity, width, height) {\\n  const depth = 1 / (1 + (entity.z * 0.8));\\n  return {\\n    x: width / 2 + (entity.x * width * 0.36 * depth),\\n    y: (height * 0.82) - (entity.y * height * 0.4 * depth) - (entity.z * 34),\\n    scale: Math.max(0.42, depth * 1.8)\\n  };\\n}\\n\\nfunction drawEmoji(ctx, emoji, entity, width, height) {\\n  const projected = projectPoint(entity, width, height);\\n  ctx.save();\\n  ctx.font = `${Math.round(44 * projected.scale)}px \\\"Segoe UI Emoji\\\", \\\"Apple Color Emoji\\\", sans-serif`;\\n  ctx.textAlign = \\\"center\\\";\\n  ctx.textBaseline = \\\"middle\\\";\\n  ctx.fillText(emoji, projected.x, projected.y);\\n  ctx.restore();\\n}\\n\\nfunction drawStarfield(ctx, state, width, height) {\\n  for (const star of state.stars) {\\n    const projected = projectPoint(star, width, height);\\n    ctx.fillStyle = \\\"rgba(201, 242, 255, 0.7)\\\";\\n    ctx.beginPath();\\n    ctx.arc(projected.x, projected.y, Math.max(1, projected.scale * 1.6), 0, Math.PI * 2);\\n    ctx.fill();\\n  }\\n}\\n\\nfunction drawFloorGrid(ctx, width, height) {\\n  ctx.save();\\n  ctx.strokeStyle = \\\"rgba(84, 205, 255, 0.16)\\\";\\n  ctx.lineWidth = 1;\\n  for (let index = -5; index <= 5; index += 1) {\\n    ctx.beginPath();\\n    ctx.moveTo(width / 2, height * 0.82);\\n    ctx.lineTo(width / 2 + (index * width * 0.12), height);\\n    ctx.stroke();\\n  }\\n  for (let row = 0; row < 7; row += 1) {\\n    const y = height * (0.82 + (row * 0.035));\\n    ctx.beginPath();\\n    ctx.moveTo(width * 0.18, y);\\n    ctx.lineTo(width * 0.82, y);\\n    ctx.stroke();\\n  }\\n  ctx.restore();\\n}\\n\\nexport function renderScene(ctx, state, canvas) {\\n  const width = canvas.width;\\n  const height = canvas.height;\\n  const background = ctx.createLinearGradient(0, 0, 0, height);\\n  background.addColorStop(0, \\\"#09111b\\\");\\n  background.addColorStop(0.5, \\\"#11233a\\\");\\n  background.addColorStop(1, \\\"#1f5f5b\\\");\\n  ctx.fillStyle = background;\\n  ctx.fillRect(0, 0, width, height);\\n\\n  drawStarfield(ctx, state, width, height);\\n  drawFloorGrid(ctx, width, height);\\n\\n  for (const enemy of state.enemies) {\\n    drawEmoji(ctx, \\\"👾\\\", { x: enemy.x + state.formation.offsetX, y: enemy.y, z: enemy.z }, width, height);\\n  }\\n  for (const bullet of state.bullets) {\\n    drawEmoji(ctx, \\\"✨\\\", bullet, width, height);\\n  }\\n  for (const shot of state.enemyShots) {\\n    drawEmoji(ctx, \\\"💥\\\", shot, width, height);\\n  }\\n  for (const explosion of state.explosions) {\\n    drawEmoji(ctx, \\\"💥\\\", explosion, width, height);\\n  }\\n\\n  drawEmoji(ctx, \\\"🚀\\\", state.player, width, height);\\n\\n  ctx.save();\\n  ctx.fillStyle = \\\"rgba(236, 247, 255, 0.92)\\\";\\n  ctx.font = '600 18px Inter, sans-serif';\\n  ctx.textAlign = \\\"left\\\";\\n  ctx.fillText(`Score ${state.score}`, 22, 32);\\n  ctx.fillText(`Lives ${state.lives}`, 22, 58);\\n  ctx.fillText(`Wave ${state.level}`, 22, 84);\\n  ctx.restore();\\n\\n  if (state.mode === \\\"start\\\" || state.mode === \\\"gameover\\\") {\\n    ctx.save();\\n    ctx.fillStyle = \\\"rgba(4, 10, 18, 0.62)\\\";\\n    ctx.fillRect(0, 0, width, height);\\n    ctx.fillStyle = \\\"#ecf7ff\\\";\\n    ctx.textAlign = \\\"center\\\";\\n    ctx.font = '700 42px Inter, sans-serif';\\n    ctx.fillText(state.mode === \\\"start\\\" ? \\\"Emoji Star Lanes\\\" : \\\"Restart the Run\\\", width / 2, height * 0.32);\\n    ctx.font = '500 20px Inter, sans-serif';\\n    ctx.fillText(\\\"Move with arrows or A / D. Shoot with Space. Fullscreen with F.\\\", width / 2, height * 0.39);\\n    ctx.fillText(state.mode === \\\"start\\\" ? \\\"Press Enter or Space to launch.\\\" : \\\"Press Enter or Space to restart.\\\", width / 2, height * 0.45);\\n    ctx.restore();\\n  }\\n}\\n\\nprojectPoint\\ndrawEmoji\\ndrawStarfield\\ndrawFloorGrid\\nrenderScene\\ndepth\\nprojected\\nindex\\nrow\\ny\\nwidth\\nheight\\nbackground\",\n    \"tags\": [\n      \"js\",\n      \"code\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  }\n]\n",
+          "stderr": "",
+          "summary": "[",
+          "structuredPayload": [
+            {
+              "id": "ac48a8e6215fa2ab8b62df67182b79611f9f99ed",
+              "scope": "symbol",
+              "refId": "5ed9554ad8c959391299546e4da9211cab954b4c",
+              "title": "heading Emoji Star Lanes",
+              "body": "README.md\nlocal heading",
+              "tags": [
+                "heading",
+                "local",
+                "README.md",
+                "Emoji Star Lanes"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "c6d10d3de7c1f66de5cc8662007f9b2b46f2ca16",
+              "scope": "file",
+              "refId": "index.html",
+              "title": "index.html",
+              "body": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Emoji Star Lanes</title>\n    <link rel=\"stylesheet\" href=\"./styles.css\" />\n  </head>\n  <body>\n    <canvas id=\"game\" aria-label=\"Emoji Star Lanes\"></canvas>\n    <script type=\"module\" src=\"./src/main.js\"></script>\n  </body>\n  </html>\n\n#game",
+              "tags": [
+                "html",
+                "markup"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+              "scope": "file",
+              "refId": "project-brief.md",
+              "title": "project-brief.md",
+              "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+              "tags": [
+                "markdown",
+                "doc"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "d69f6f423c0ce106fdf1a95b7e04777650c7bba3",
+              "scope": "file",
+              "refId": "README.md",
+              "title": "README.md",
+              "body": "# Emoji Star Lanes\n\nA modular canvas game built as an ai-workflow programming dogfood target.\n\n## Run\n\n```bash\nnpm test\nnpm run dev\n```\n\nThe dev server prefers port `4173` and falls back to a free port if that port is already busy.\n\n## Controls\n\n- `Enter` or `Space`: start / restart\n- `Arrow keys` or `A D`: move\n- `Space`: shoot\n- `F`: fullscreen\n\n## Files\n\n- `src/game/model.js`: state creation and wave generation\n- `src/game/update.js`: gameplay rules\n- `src/game/render.js`: canvas rendering and perspective projection\n- `src/game/text-state.js`: deterministic automation surface\n- `tests/game-logic.test.mjs`: core rules regression coverage\n\nEmoji Star Lanes\nRun\nControls\nFiles",
+              "tags": [
+                "markdown",
+                "doc"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "0da5cd5b6ba95ff979a2d4eabe733c45b6dea510",
+              "scope": "file",
+              "refId": "scripts/dev-server.mjs",
+              "title": "scripts/dev-server.mjs",
+              "body": "#!/usr/bin/env node\n\nimport http from \"node:http\";\nimport path from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\nimport { readFile } from \"node:fs/promises\";\n\nconst root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), \"..\");\nconst preferredPort = Number.parseInt(String(process.env.PORT ?? \"4173\"), 10) || 4173;\nconst host = process.env.HOST || \"127.0.0.1\";\n\nconst MIME_TYPES = new Map([\n  [\".html\", \"text/html; charset=utf-8\"],\n  [\".js\", \"text/javascript; charset=utf-8\"],\n  [\".css\", \"text/css; charset=utf-8\"],\n  [\".json\", \"application/json; charset=utf-8\"],\n  [\".png\", \"image/png\"],\n  [\".jpg\", \"image/jpeg\"],\n  [\".jpeg\", \"image/jpeg\"],\n  [\".svg\", \"image/svg+xml; charset=utf-8\"],\n  [\".ico\", \"image/x-icon\"]\n]);\n\nfunction resolveRequestPath(urlPath) {\n  const pathname = decodeURIComponent(String(urlPath || \"/\").split(\"?\")[0]);\n  const normalized = pathname === \"/\" ? \"/index.html\" : pathname;\n  const filePath = path.resolve(root, \".\" + normalized);\n  if (!filePath.startsWith(root)) {\n    return null;\n  }\n  return filePath;\n}\n\nconst server = http.createServer(async (request, response) => {\n  const filePath = resolveRequestPath(request.url);\n  if (!filePath) {\n    response.writeHead(403);\n    response.end(\"Forbidden\");\n    return;\n  }\n  try {\n    const body = await readFile(filePath);\n    response.writeHead(200, {\n      \"Content-Type\": MIME_TYPES.get(path.extname(filePath)) || \"application/octet-stream\",\n      \"Cache-Control\": \"no-cache\"\n    });\n    response.end(body);\n  } catch (error) {\n    if (error?.code === \"ENOENT\") {\n      response.writeHead(404);\n      response.end(\"Not found\");\n      return;\n    }\n    response.writeHead(500);\n    response.end(String(error?.message ?? error));\n  }\n});\n\nfunction start(port) {\n  server.listen(port, host, () => {\n    const address = server.address();\n    const finalPort = typeof address === \"object\" && address ? address.port : port;\n    process.stdout.write(\"Serving Emoji Star Lanes at http://\" + host + \":\" + finalPort + \"\\n\");\n  });\n}\n\nserver.on(\"error\", (error) => {\n  if (error?.code === \"EADDRINUSE\") {\n    process.stderr.write(\"Port \" + preferredPort + \" is busy; falling back to a free port.\\n\");\n    start(0);\n    return;\n  }\n  throw error;\n});\n\nfor (const signal of [\"SIGINT\", \"SIGTERM\"]) {\n  process.on(signal, () => {\n    server.close(() => process.exit(0));\n  });\n}\n\nstart(preferredPort);\n\nnode:http\nnode:path\nnode:url\nnode:fs/promises\nresolveRequestPath\nstart\nroot\npreferredPort\nhost\nMIME_TYPES\npathname\nnormalized\nfilePath\nserver\nbody\naddress\nfinalPort",
+              "tags": [
+                "mjs",
+                "code"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "d99b8985f2a5f018ec1506989020e4ccecaf0036",
+              "scope": "file",
+              "refId": "src/game/render.js",
+              "title": "src/game/render.js",
+              "body": "function projectPoint(entity, width, height) {\n  const depth = 1 / (1 + (entity.z * 0.8));\n  return {\n    x: width / 2 + (entity.x * width * 0.36 * depth),\n    y: (height * 0.82) - (entity.y * height * 0.4 * depth) - (entity.z * 34),\n    scale: Math.max(0.42, depth * 1.8)\n  };\n}\n\nfunction drawEmoji(ctx, emoji, entity, width, height) {\n  const projected = projectPoint(entity, width, height);\n  ctx.save();\n  ctx.font = `${Math.round(44 * projected.scale)}px \"Segoe UI Emoji\", \"Apple Color Emoji\", sans-serif`;\n  ctx.textAlign = \"center\";\n  ctx.textBaseline = \"middle\";\n  ctx.fillText(emoji, projected.x, projected.y);\n  ctx.restore();\n}\n\nfunction drawStarfield(ctx, state, width, height) {\n  for (const star of state.stars) {\n    const projected = projectPoint(star, width, height);\n    ctx.fillStyle = \"rgba(201, 242, 255, 0.7)\";\n    ctx.beginPath();\n    ctx.arc(projected.x, projected.y, Math.max(1, projected.scale * 1.6), 0, Math.PI * 2);\n    ctx.fill();\n  }\n}\n\nfunction drawFloorGrid(ctx, width, height) {\n  ctx.save();\n  ctx.strokeStyle = \"rgba(84, 205, 255, 0.16)\";\n  ctx.lineWidth = 1;\n  for (let index = -5; index <= 5; index += 1) {\n    ctx.beginPath();\n    ctx.moveTo(width / 2, height * 0.82);\n    ctx.lineTo(width / 2 + (index * width * 0.12), height);\n    ctx.stroke();\n  }\n  for (let row = 0; row < 7; row += 1) {\n    const y = height * (0.82 + (row * 0.035));\n    ctx.beginPath();\n    ctx.moveTo(width * 0.18, y);\n    ctx.lineTo(width * 0.82, y);\n    ctx.stroke();\n  }\n  ctx.restore();\n}\n\nexport function renderScene(ctx, state, canvas) {\n  const width = canvas.width;\n  const height = canvas.height;\n  const background = ctx.createLinearGradient(0, 0, 0, height);\n  background.addColorStop(0, \"#09111b\");\n  background.addColorStop(0.5, \"#11233a\");\n  background.addColorStop(1, \"#1f5f5b\");\n  ctx.fillStyle = background;\n  ctx.fillRect(0, 0, width, height);\n\n  drawStarfield(ctx, state, width, height);\n  drawFloorGrid(ctx, width, height);\n\n  for (const enemy of state.enemies) {\n    drawEmoji(ctx, \"👾\", { x: enemy.x + state.formation.offsetX, y: enemy.y, z: enemy.z }, width, height);\n  }\n  for (const bullet of state.bullets) {\n    drawEmoji(ctx, \"✨\", bullet, width, height);\n  }\n  for (const shot of state.enemyShots) {\n    drawEmoji(ctx, \"💥\", shot, width, height);\n  }\n  for (const explosion of state.explosions) {\n    drawEmoji(ctx, \"💥\", explosion, width, height);\n  }\n\n  drawEmoji(ctx, \"🚀\", state.player, width, height);\n\n  ctx.save();\n  ctx.fillStyle = \"rgba(236, 247, 255, 0.92)\";\n  ctx.font = '600 18px Inter, sans-serif';\n  ctx.textAlign = \"left\";\n  ctx.fillText(`Score ${state.score}`, 22, 32);\n  ctx.fillText(`Lives ${state.lives}`, 22, 58);\n  ctx.fillText(`Wave ${state.level}`, 22, 84);\n  ctx.restore();\n\n  if (state.mode === \"start\" || state.mode === \"gameover\") {\n    ctx.save();\n    ctx.fillStyle = \"rgba(4, 10, 18, 0.62)\";\n    ctx.fillRect(0, 0, width, height);\n    ctx.fillStyle = \"#ecf7ff\";\n    ctx.textAlign = \"center\";\n    ctx.font = '700 42px Inter, sans-serif';\n    ctx.fillText(state.mode === \"start\" ? \"Emoji Star Lanes\" : \"Restart the Run\", width / 2, height * 0.32);\n    ctx.font = '500 20px Inter, sans-serif';\n    ctx.fillText(\"Move with arrows or A / D. Shoot with Space. Fullscreen with F.\", width / 2, height * 0.39);\n    ctx.fillText(state.mode === \"start\" ? \"Press Enter or Space to launch.\" : \"Press Enter or Space to restart.\", width / 2, height * 0.45);\n    ctx.restore();\n  }\n}\n\nprojectPoint\ndrawEmoji\ndrawStarfield\ndrawFloorGrid\nrenderScene\ndepth\nprojected\nindex\nrow\ny\nwidth\nheight\nbackground",
+              "tags": [
+                "js",
+                "code"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            }
+          ],
+          "evidence": [
+            {
+              "command": "ai-workflow project search \"Emoji Star Lanes\" --json"
+            },
+            {
+              "snippet": "[\n  {\n    \"id\": \"ac48a8e6215fa2ab8b62df67182b79611f9f99ed\",\n    \"scope\": \"symbol\",\n    \"refId\": \"5ed9554ad8c959391299546e4da9211cab954b4c\",\n    \"title\": \"heading Emoji Star Lanes\",\n    \"body\": \"README.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"README.md\",\n      \"Emoji Star Lanes\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"c6d10d3de7c1f66de5"
+            }
+          ],
+          "artifacts": [],
+          "classification": "completed"
+        },
+        "result": {
+          "summary": "[",
+          "structuredPayload": [
+            {
+              "id": "ac48a8e6215fa2ab8b62df67182b79611f9f99ed",
+              "scope": "symbol",
+              "refId": "5ed9554ad8c959391299546e4da9211cab954b4c",
+              "title": "heading Emoji Star Lanes",
+              "body": "README.md\nlocal heading",
+              "tags": [
+                "heading",
+                "local",
+                "README.md",
+                "Emoji Star Lanes"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "c6d10d3de7c1f66de5cc8662007f9b2b46f2ca16",
+              "scope": "file",
+              "refId": "index.html",
+              "title": "index.html",
+              "body": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Emoji Star Lanes</title>\n    <link rel=\"stylesheet\" href=\"./styles.css\" />\n  </head>\n  <body>\n    <canvas id=\"game\" aria-label=\"Emoji Star Lanes\"></canvas>\n    <script type=\"module\" src=\"./src/main.js\"></script>\n  </body>\n  </html>\n\n#game",
+              "tags": [
+                "html",
+                "markup"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+              "scope": "file",
+              "refId": "project-brief.md",
+              "title": "project-brief.md",
+              "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+              "tags": [
+                "markdown",
+                "doc"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "d69f6f423c0ce106fdf1a95b7e04777650c7bba3",
+              "scope": "file",
+              "refId": "README.md",
+              "title": "README.md",
+              "body": "# Emoji Star Lanes\n\nA modular canvas game built as an ai-workflow programming dogfood target.\n\n## Run\n\n```bash\nnpm test\nnpm run dev\n```\n\nThe dev server prefers port `4173` and falls back to a free port if that port is already busy.\n\n## Controls\n\n- `Enter` or `Space`: start / restart\n- `Arrow keys` or `A D`: move\n- `Space`: shoot\n- `F`: fullscreen\n\n## Files\n\n- `src/game/model.js`: state creation and wave generation\n- `src/game/update.js`: gameplay rules\n- `src/game/render.js`: canvas rendering and perspective projection\n- `src/game/text-state.js`: deterministic automation surface\n- `tests/game-logic.test.mjs`: core rules regression coverage\n\nEmoji Star Lanes\nRun\nControls\nFiles",
+              "tags": [
+                "markdown",
+                "doc"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "0da5cd5b6ba95ff979a2d4eabe733c45b6dea510",
+              "scope": "file",
+              "refId": "scripts/dev-server.mjs",
+              "title": "scripts/dev-server.mjs",
+              "body": "#!/usr/bin/env node\n\nimport http from \"node:http\";\nimport path from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\nimport { readFile } from \"node:fs/promises\";\n\nconst root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), \"..\");\nconst preferredPort = Number.parseInt(String(process.env.PORT ?? \"4173\"), 10) || 4173;\nconst host = process.env.HOST || \"127.0.0.1\";\n\nconst MIME_TYPES = new Map([\n  [\".html\", \"text/html; charset=utf-8\"],\n  [\".js\", \"text/javascript; charset=utf-8\"],\n  [\".css\", \"text/css; charset=utf-8\"],\n  [\".json\", \"application/json; charset=utf-8\"],\n  [\".png\", \"image/png\"],\n  [\".jpg\", \"image/jpeg\"],\n  [\".jpeg\", \"image/jpeg\"],\n  [\".svg\", \"image/svg+xml; charset=utf-8\"],\n  [\".ico\", \"image/x-icon\"]\n]);\n\nfunction resolveRequestPath(urlPath) {\n  const pathname = decodeURIComponent(String(urlPath || \"/\").split(\"?\")[0]);\n  const normalized = pathname === \"/\" ? \"/index.html\" : pathname;\n  const filePath = path.resolve(root, \".\" + normalized);\n  if (!filePath.startsWith(root)) {\n    return null;\n  }\n  return filePath;\n}\n\nconst server = http.createServer(async (request, response) => {\n  const filePath = resolveRequestPath(request.url);\n  if (!filePath) {\n    response.writeHead(403);\n    response.end(\"Forbidden\");\n    return;\n  }\n  try {\n    const body = await readFile(filePath);\n    response.writeHead(200, {\n      \"Content-Type\": MIME_TYPES.get(path.extname(filePath)) || \"application/octet-stream\",\n      \"Cache-Control\": \"no-cache\"\n    });\n    response.end(body);\n  } catch (error) {\n    if (error?.code === \"ENOENT\") {\n      response.writeHead(404);\n      response.end(\"Not found\");\n      return;\n    }\n    response.writeHead(500);\n    response.end(String(error?.message ?? error));\n  }\n});\n\nfunction start(port) {\n  server.listen(port, host, () => {\n    const address = server.address();\n    const finalPort = typeof address === \"object\" && address ? address.port : port;\n    process.stdout.write(\"Serving Emoji Star Lanes at http://\" + host + \":\" + finalPort + \"\\n\");\n  });\n}\n\nserver.on(\"error\", (error) => {\n  if (error?.code === \"EADDRINUSE\") {\n    process.stderr.write(\"Port \" + preferredPort + \" is busy; falling back to a free port.\\n\");\n    start(0);\n    return;\n  }\n  throw error;\n});\n\nfor (const signal of [\"SIGINT\", \"SIGTERM\"]) {\n  process.on(signal, () => {\n    server.close(() => process.exit(0));\n  });\n}\n\nstart(preferredPort);\n\nnode:http\nnode:path\nnode:url\nnode:fs/promises\nresolveRequestPath\nstart\nroot\npreferredPort\nhost\nMIME_TYPES\npathname\nnormalized\nfilePath\nserver\nbody\naddress\nfinalPort",
+              "tags": [
+                "mjs",
+                "code"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            },
+            {
+              "id": "d99b8985f2a5f018ec1506989020e4ccecaf0036",
+              "scope": "file",
+              "refId": "src/game/render.js",
+              "title": "src/game/render.js",
+              "body": "function projectPoint(entity, width, height) {\n  const depth = 1 / (1 + (entity.z * 0.8));\n  return {\n    x: width / 2 + (entity.x * width * 0.36 * depth),\n    y: (height * 0.82) - (entity.y * height * 0.4 * depth) - (entity.z * 34),\n    scale: Math.max(0.42, depth * 1.8)\n  };\n}\n\nfunction drawEmoji(ctx, emoji, entity, width, height) {\n  const projected = projectPoint(entity, width, height);\n  ctx.save();\n  ctx.font = `${Math.round(44 * projected.scale)}px \"Segoe UI Emoji\", \"Apple Color Emoji\", sans-serif`;\n  ctx.textAlign = \"center\";\n  ctx.textBaseline = \"middle\";\n  ctx.fillText(emoji, projected.x, projected.y);\n  ctx.restore();\n}\n\nfunction drawStarfield(ctx, state, width, height) {\n  for (const star of state.stars) {\n    const projected = projectPoint(star, width, height);\n    ctx.fillStyle = \"rgba(201, 242, 255, 0.7)\";\n    ctx.beginPath();\n    ctx.arc(projected.x, projected.y, Math.max(1, projected.scale * 1.6), 0, Math.PI * 2);\n    ctx.fill();\n  }\n}\n\nfunction drawFloorGrid(ctx, width, height) {\n  ctx.save();\n  ctx.strokeStyle = \"rgba(84, 205, 255, 0.16)\";\n  ctx.lineWidth = 1;\n  for (let index = -5; index <= 5; index += 1) {\n    ctx.beginPath();\n    ctx.moveTo(width / 2, height * 0.82);\n    ctx.lineTo(width / 2 + (index * width * 0.12), height);\n    ctx.stroke();\n  }\n  for (let row = 0; row < 7; row += 1) {\n    const y = height * (0.82 + (row * 0.035));\n    ctx.beginPath();\n    ctx.moveTo(width * 0.18, y);\n    ctx.lineTo(width * 0.82, y);\n    ctx.stroke();\n  }\n  ctx.restore();\n}\n\nexport function renderScene(ctx, state, canvas) {\n  const width = canvas.width;\n  const height = canvas.height;\n  const background = ctx.createLinearGradient(0, 0, 0, height);\n  background.addColorStop(0, \"#09111b\");\n  background.addColorStop(0.5, \"#11233a\");\n  background.addColorStop(1, \"#1f5f5b\");\n  ctx.fillStyle = background;\n  ctx.fillRect(0, 0, width, height);\n\n  drawStarfield(ctx, state, width, height);\n  drawFloorGrid(ctx, width, height);\n\n  for (const enemy of state.enemies) {\n    drawEmoji(ctx, \"👾\", { x: enemy.x + state.formation.offsetX, y: enemy.y, z: enemy.z }, width, height);\n  }\n  for (const bullet of state.bullets) {\n    drawEmoji(ctx, \"✨\", bullet, width, height);\n  }\n  for (const shot of state.enemyShots) {\n    drawEmoji(ctx, \"💥\", shot, width, height);\n  }\n  for (const explosion of state.explosions) {\n    drawEmoji(ctx, \"💥\", explosion, width, height);\n  }\n\n  drawEmoji(ctx, \"🚀\", state.player, width, height);\n\n  ctx.save();\n  ctx.fillStyle = \"rgba(236, 247, 255, 0.92)\";\n  ctx.font = '600 18px Inter, sans-serif';\n  ctx.textAlign = \"left\";\n  ctx.fillText(`Score ${state.score}`, 22, 32);\n  ctx.fillText(`Lives ${state.lives}`, 22, 58);\n  ctx.fillText(`Wave ${state.level}`, 22, 84);\n  ctx.restore();\n\n  if (state.mode === \"start\" || state.mode === \"gameover\") {\n    ctx.save();\n    ctx.fillStyle = \"rgba(4, 10, 18, 0.62)\";\n    ctx.fillRect(0, 0, width, height);\n    ctx.fillStyle = \"#ecf7ff\";\n    ctx.textAlign = \"center\";\n    ctx.font = '700 42px Inter, sans-serif';\n    ctx.fillText(state.mode === \"start\" ? \"Emoji Star Lanes\" : \"Restart the Run\", width / 2, height * 0.32);\n    ctx.font = '500 20px Inter, sans-serif';\n    ctx.fillText(\"Move with arrows or A / D. Shoot with Space. Fullscreen with F.\", width / 2, height * 0.39);\n    ctx.fillText(state.mode === \"start\" ? \"Press Enter or Space to launch.\" : \"Press Enter or Space to restart.\", width / 2, height * 0.45);\n    ctx.restore();\n  }\n}\n\nprojectPoint\ndrawEmoji\ndrawStarfield\ndrawFloorGrid\nrenderScene\ndepth\nprojected\nindex\nrow\ny\nwidth\nheight\nbackground",
+              "tags": [
+                "js",
+                "code"
+              ],
+              "updatedAt": "2026-04-18T17:58:53.343Z"
+            }
+          ],
+          "evidence": [
+            {
+              "command": "ai-workflow project search \"Emoji Star Lanes\" --json"
+            },
+            {
+              "snippet": "[\n  {\n    \"id\": \"ac48a8e6215fa2ab8b62df67182b79611f9f99ed\",\n    \"scope\": \"symbol\",\n    \"refId\": \"5ed9554ad8c959391299546e4da9211cab954b4c\",\n    \"title\": \"heading Emoji Star Lanes\",\n    \"body\": \"README.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"README.md\",\n      \"Emoji Star Lanes\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"c6d10d3de7c1f66de5"
+            }
+          ],
+          "artifacts": [],
+          "classification": "completed",
+          "ok": true
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "synthesize",
+        "type": "synthesize",
+        "dependsOn": [
+          "n1"
+        ],
+        "status": "ok",
+        "execution": null,
+        "result": {
+          "summary": "Synthesized 1 successful prerequisite node.",
+          "structuredPayload": {
+            "dependencyIds": [
+              "n1"
+            ],
+            "completed": 1,
+            "failed": 0
+          },
+          "evidence": [
+            {
+              "node": "n1",
+              "classification": "completed"
+            }
+          ],
+          "artifacts": [],
+          "classification": "synthesized",
+          "ok": true
+        }
+      }
+    ],
+    "executions": [
+      {
+        "action": {
+          "type": "search",
+          "query": "Emoji Star Lanes"
+        },
+        "command": "ai-workflow project search \"Emoji Star Lanes\" --json",
+        "mutation": false,
+        "ok": true,
+        "stdout": "[\n  {\n    \"id\": \"ac48a8e6215fa2ab8b62df67182b79611f9f99ed\",\n    \"scope\": \"symbol\",\n    \"refId\": \"5ed9554ad8c959391299546e4da9211cab954b4c\",\n    \"title\": \"heading Emoji Star Lanes\",\n    \"body\": \"README.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"README.md\",\n      \"Emoji Star Lanes\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"c6d10d3de7c1f66de5cc8662007f9b2b46f2ca16\",\n    \"scope\": \"file\",\n    \"refId\": \"index.html\",\n    \"title\": \"index.html\",\n    \"body\": \"<!doctype html>\\n<html lang=\\\"en\\\">\\n  <head>\\n    <meta charset=\\\"UTF-8\\\" />\\n    <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1.0\\\" />\\n    <title>Emoji Star Lanes</title>\\n    <link rel=\\\"stylesheet\\\" href=\\\"./styles.css\\\" />\\n  </head>\\n  <body>\\n    <canvas id=\\\"game\\\" aria-label=\\\"Emoji Star Lanes\\\"></canvas>\\n    <script type=\\\"module\\\" src=\\\"./src/main.js\\\"></script>\\n  </body>\\n  </html>\\n\\n#game\",\n    \"tags\": [\n      \"html\",\n      \"markup\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"198e0f3966009aa0cfd38b895a383f570c484008\",\n    \"scope\": \"file\",\n    \"refId\": \"project-brief.md\",\n    \"title\": \"project-brief.md\",\n    \"body\": \"# Project Brief\\n\\n## Overview\\n\\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\\n\\n## Long-Term Vision\\n\\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\\n\\n## EPIC-GAME-001 Star Lane Defense\\n\\n### Vision\\n\\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\\n\\n### Features\\n\\n- Immediate play start with readable controls\\n- Perspective-staged emoji enemy waves\\n- Player movement, shooting, enemy fire, scoring, lives, and restart\\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\\n- Workflow-facing docs and a clear verification report\\n\\n### Modules\\n\\n- `model`: state bootstrapping, wave generation, progression metadata\\n- `update`: motion, cooldowns, collisions, win/lose flow\\n- `render`: perspective projection, scene drawing, HUD\\n- `text-state`: concise automation payload\\n- `main`: browser loop, input wiring, fullscreen handling\\n\\n## Non-Goals\\n\\n- Networked multiplayer\\n- Monetization\\n- Asset pipelines beyond browser-native emoji rendering\\n\\nProject Brief\\nOverview\\nLong-Term Vision\\nEPIC-GAME-001 Star Lane Defense\\nVision\\nFeatures\\nModules\\nNon-Goals\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"d69f6f423c0ce106fdf1a95b7e04777650c7bba3\",\n    \"scope\": \"file\",\n    \"refId\": \"README.md\",\n    \"title\": \"README.md\",\n    \"body\": \"# Emoji Star Lanes\\n\\nA modular canvas game built as an ai-workflow programming dogfood target.\\n\\n## Run\\n\\n```bash\\nnpm test\\nnpm run dev\\n```\\n\\nThe dev server prefers port `4173` and falls back to a free port if that port is already busy.\\n\\n## Controls\\n\\n- `Enter` or `Space`: start / restart\\n- `Arrow keys` or `A D`: move\\n- `Space`: shoot\\n- `F`: fullscreen\\n\\n## Files\\n\\n- `src/game/model.js`: state creation and wave generation\\n- `src/game/update.js`: gameplay rules\\n- `src/game/render.js`: canvas rendering and perspective projection\\n- `src/game/text-state.js`: deterministic automation surface\\n- `tests/game-logic.test.mjs`: core rules regression coverage\\n\\nEmoji Star Lanes\\nRun\\nControls\\nFiles\",\n    \"tags\": [\n      \"markdown\",\n      \"doc\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"0da5cd5b6ba95ff979a2d4eabe733c45b6dea510\",\n    \"scope\": \"file\",\n    \"refId\": \"scripts/dev-server.mjs\",\n    \"title\": \"scripts/dev-server.mjs\",\n    \"body\": \"#!/usr/bin/env node\\n\\nimport http from \\\"node:http\\\";\\nimport path from \\\"node:path\\\";\\nimport { fileURLToPath } from \\\"node:url\\\";\\nimport { readFile } from \\\"node:fs/promises\\\";\\n\\nconst root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), \\\"..\\\");\\nconst preferredPort = Number.parseInt(String(process.env.PORT ?? \\\"4173\\\"), 10) || 4173;\\nconst host = process.env.HOST || \\\"127.0.0.1\\\";\\n\\nconst MIME_TYPES = new Map([\\n  [\\\".html\\\", \\\"text/html; charset=utf-8\\\"],\\n  [\\\".js\\\", \\\"text/javascript; charset=utf-8\\\"],\\n  [\\\".css\\\", \\\"text/css; charset=utf-8\\\"],\\n  [\\\".json\\\", \\\"application/json; charset=utf-8\\\"],\\n  [\\\".png\\\", \\\"image/png\\\"],\\n  [\\\".jpg\\\", \\\"image/jpeg\\\"],\\n  [\\\".jpeg\\\", \\\"image/jpeg\\\"],\\n  [\\\".svg\\\", \\\"image/svg+xml; charset=utf-8\\\"],\\n  [\\\".ico\\\", \\\"image/x-icon\\\"]\\n]);\\n\\nfunction resolveRequestPath(urlPath) {\\n  const pathname = decodeURIComponent(String(urlPath || \\\"/\\\").split(\\\"?\\\")[0]);\\n  const normalized = pathname === \\\"/\\\" ? \\\"/index.html\\\" : pathname;\\n  const filePath = path.resolve(root, \\\".\\\" + normalized);\\n  if (!filePath.startsWith(root)) {\\n    return null;\\n  }\\n  return filePath;\\n}\\n\\nconst server = http.createServer(async (request, response) => {\\n  const filePath = resolveRequestPath(request.url);\\n  if (!filePath) {\\n    response.writeHead(403);\\n    response.end(\\\"Forbidden\\\");\\n    return;\\n  }\\n  try {\\n    const body = await readFile(filePath);\\n    response.writeHead(200, {\\n      \\\"Content-Type\\\": MIME_TYPES.get(path.extname(filePath)) || \\\"application/octet-stream\\\",\\n      \\\"Cache-Control\\\": \\\"no-cache\\\"\\n    });\\n    response.end(body);\\n  } catch (error) {\\n    if (error?.code === \\\"ENOENT\\\") {\\n      response.writeHead(404);\\n      response.end(\\\"Not found\\\");\\n      return;\\n    }\\n    response.writeHead(500);\\n    response.end(String(error?.message ?? error));\\n  }\\n});\\n\\nfunction start(port) {\\n  server.listen(port, host, () => {\\n    const address = server.address();\\n    const finalPort = typeof address === \\\"object\\\" && address ? address.port : port;\\n    process.stdout.write(\\\"Serving Emoji Star Lanes at http://\\\" + host + \\\":\\\" + finalPort + \\\"\\\\n\\\");\\n  });\\n}\\n\\nserver.on(\\\"error\\\", (error) => {\\n  if (error?.code === \\\"EADDRINUSE\\\") {\\n    process.stderr.write(\\\"Port \\\" + preferredPort + \\\" is busy; falling back to a free port.\\\\n\\\");\\n    start(0);\\n    return;\\n  }\\n  throw error;\\n});\\n\\nfor (const signal of [\\\"SIGINT\\\", \\\"SIGTERM\\\"]) {\\n  process.on(signal, () => {\\n    server.close(() => process.exit(0));\\n  });\\n}\\n\\nstart(preferredPort);\\n\\nnode:http\\nnode:path\\nnode:url\\nnode:fs/promises\\nresolveRequestPath\\nstart\\nroot\\npreferredPort\\nhost\\nMIME_TYPES\\npathname\\nnormalized\\nfilePath\\nserver\\nbody\\naddress\\nfinalPort\",\n    \"tags\": [\n      \"mjs\",\n      \"code\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"d99b8985f2a5f018ec1506989020e4ccecaf0036\",\n    \"scope\": \"file\",\n    \"refId\": \"src/game/render.js\",\n    \"title\": \"src/game/render.js\",\n    \"body\": \"function projectPoint(entity, width, height) {\\n  const depth = 1 / (1 + (entity.z * 0.8));\\n  return {\\n    x: width / 2 + (entity.x * width * 0.36 * depth),\\n    y: (height * 0.82) - (entity.y * height * 0.4 * depth) - (entity.z * 34),\\n    scale: Math.max(0.42, depth * 1.8)\\n  };\\n}\\n\\nfunction drawEmoji(ctx, emoji, entity, width, height) {\\n  const projected = projectPoint(entity, width, height);\\n  ctx.save();\\n  ctx.font = `${Math.round(44 * projected.scale)}px \\\"Segoe UI Emoji\\\", \\\"Apple Color Emoji\\\", sans-serif`;\\n  ctx.textAlign = \\\"center\\\";\\n  ctx.textBaseline = \\\"middle\\\";\\n  ctx.fillText(emoji, projected.x, projected.y);\\n  ctx.restore();\\n}\\n\\nfunction drawStarfield(ctx, state, width, height) {\\n  for (const star of state.stars) {\\n    const projected = projectPoint(star, width, height);\\n    ctx.fillStyle = \\\"rgba(201, 242, 255, 0.7)\\\";\\n    ctx.beginPath();\\n    ctx.arc(projected.x, projected.y, Math.max(1, projected.scale * 1.6), 0, Math.PI * 2);\\n    ctx.fill();\\n  }\\n}\\n\\nfunction drawFloorGrid(ctx, width, height) {\\n  ctx.save();\\n  ctx.strokeStyle = \\\"rgba(84, 205, 255, 0.16)\\\";\\n  ctx.lineWidth = 1;\\n  for (let index = -5; index <= 5; index += 1) {\\n    ctx.beginPath();\\n    ctx.moveTo(width / 2, height * 0.82);\\n    ctx.lineTo(width / 2 + (index * width * 0.12), height);\\n    ctx.stroke();\\n  }\\n  for (let row = 0; row < 7; row += 1) {\\n    const y = height * (0.82 + (row * 0.035));\\n    ctx.beginPath();\\n    ctx.moveTo(width * 0.18, y);\\n    ctx.lineTo(width * 0.82, y);\\n    ctx.stroke();\\n  }\\n  ctx.restore();\\n}\\n\\nexport function renderScene(ctx, state, canvas) {\\n  const width = canvas.width;\\n  const height = canvas.height;\\n  const background = ctx.createLinearGradient(0, 0, 0, height);\\n  background.addColorStop(0, \\\"#09111b\\\");\\n  background.addColorStop(0.5, \\\"#11233a\\\");\\n  background.addColorStop(1, \\\"#1f5f5b\\\");\\n  ctx.fillStyle = background;\\n  ctx.fillRect(0, 0, width, height);\\n\\n  drawStarfield(ctx, state, width, height);\\n  drawFloorGrid(ctx, width, height);\\n\\n  for (const enemy of state.enemies) {\\n    drawEmoji(ctx, \\\"👾\\\", { x: enemy.x + state.formation.offsetX, y: enemy.y, z: enemy.z }, width, height);\\n  }\\n  for (const bullet of state.bullets) {\\n    drawEmoji(ctx, \\\"✨\\\", bullet, width, height);\\n  }\\n  for (const shot of state.enemyShots) {\\n    drawEmoji(ctx, \\\"💥\\\", shot, width, height);\\n  }\\n  for (const explosion of state.explosions) {\\n    drawEmoji(ctx, \\\"💥\\\", explosion, width, height);\\n  }\\n\\n  drawEmoji(ctx, \\\"🚀\\\", state.player, width, height);\\n\\n  ctx.save();\\n  ctx.fillStyle = \\\"rgba(236, 247, 255, 0.92)\\\";\\n  ctx.font = '600 18px Inter, sans-serif';\\n  ctx.textAlign = \\\"left\\\";\\n  ctx.fillText(`Score ${state.score}`, 22, 32);\\n  ctx.fillText(`Lives ${state.lives}`, 22, 58);\\n  ctx.fillText(`Wave ${state.level}`, 22, 84);\\n  ctx.restore();\\n\\n  if (state.mode === \\\"start\\\" || state.mode === \\\"gameover\\\") {\\n    ctx.save();\\n    ctx.fillStyle = \\\"rgba(4, 10, 18, 0.62)\\\";\\n    ctx.fillRect(0, 0, width, height);\\n    ctx.fillStyle = \\\"#ecf7ff\\\";\\n    ctx.textAlign = \\\"center\\\";\\n    ctx.font = '700 42px Inter, sans-serif';\\n    ctx.fillText(state.mode === \\\"start\\\" ? \\\"Emoji Star Lanes\\\" : \\\"Restart the Run\\\", width / 2, height * 0.32);\\n    ctx.font = '500 20px Inter, sans-serif';\\n    ctx.fillText(\\\"Move with arrows or A / D. Shoot with Space. Fullscreen with F.\\\", width / 2, height * 0.39);\\n    ctx.fillText(state.mode === \\\"start\\\" ? \\\"Press Enter or Space to launch.\\\" : \\\"Press Enter or Space to restart.\\\", width / 2, height * 0.45);\\n    ctx.restore();\\n  }\\n}\\n\\nprojectPoint\\ndrawEmoji\\ndrawStarfield\\ndrawFloorGrid\\nrenderScene\\ndepth\\nprojected\\nindex\\nrow\\ny\\nwidth\\nheight\\nbackground\",\n    \"tags\": [\n      \"js\",\n      \"code\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  }\n]\n",
+        "stderr": "",
+        "summary": "[",
+        "structuredPayload": [
+          {
+            "id": "ac48a8e6215fa2ab8b62df67182b79611f9f99ed",
+            "scope": "symbol",
+            "refId": "5ed9554ad8c959391299546e4da9211cab954b4c",
+            "title": "heading Emoji Star Lanes",
+            "body": "README.md\nlocal heading",
+            "tags": [
+              "heading",
+              "local",
+              "README.md",
+              "Emoji Star Lanes"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          },
+          {
+            "id": "c6d10d3de7c1f66de5cc8662007f9b2b46f2ca16",
+            "scope": "file",
+            "refId": "index.html",
+            "title": "index.html",
+            "body": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Emoji Star Lanes</title>\n    <link rel=\"stylesheet\" href=\"./styles.css\" />\n  </head>\n  <body>\n    <canvas id=\"game\" aria-label=\"Emoji Star Lanes\"></canvas>\n    <script type=\"module\" src=\"./src/main.js\"></script>\n  </body>\n  </html>\n\n#game",
+            "tags": [
+              "html",
+              "markup"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          },
+          {
+            "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+            "scope": "file",
+            "refId": "project-brief.md",
+            "title": "project-brief.md",
+            "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+            "tags": [
+              "markdown",
+              "doc"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          },
+          {
+            "id": "d69f6f423c0ce106fdf1a95b7e04777650c7bba3",
+            "scope": "file",
+            "refId": "README.md",
+            "title": "README.md",
+            "body": "# Emoji Star Lanes\n\nA modular canvas game built as an ai-workflow programming dogfood target.\n\n## Run\n\n```bash\nnpm test\nnpm run dev\n```\n\nThe dev server prefers port `4173` and falls back to a free port if that port is already busy.\n\n## Controls\n\n- `Enter` or `Space`: start / restart\n- `Arrow keys` or `A D`: move\n- `Space`: shoot\n- `F`: fullscreen\n\n## Files\n\n- `src/game/model.js`: state creation and wave generation\n- `src/game/update.js`: gameplay rules\n- `src/game/render.js`: canvas rendering and perspective projection\n- `src/game/text-state.js`: deterministic automation surface\n- `tests/game-logic.test.mjs`: core rules regression coverage\n\nEmoji Star Lanes\nRun\nControls\nFiles",
+            "tags": [
+              "markdown",
+              "doc"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          },
+          {
+            "id": "0da5cd5b6ba95ff979a2d4eabe733c45b6dea510",
+            "scope": "file",
+            "refId": "scripts/dev-server.mjs",
+            "title": "scripts/dev-server.mjs",
+            "body": "#!/usr/bin/env node\n\nimport http from \"node:http\";\nimport path from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\nimport { readFile } from \"node:fs/promises\";\n\nconst root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), \"..\");\nconst preferredPort = Number.parseInt(String(process.env.PORT ?? \"4173\"), 10) || 4173;\nconst host = process.env.HOST || \"127.0.0.1\";\n\nconst MIME_TYPES = new Map([\n  [\".html\", \"text/html; charset=utf-8\"],\n  [\".js\", \"text/javascript; charset=utf-8\"],\n  [\".css\", \"text/css; charset=utf-8\"],\n  [\".json\", \"application/json; charset=utf-8\"],\n  [\".png\", \"image/png\"],\n  [\".jpg\", \"image/jpeg\"],\n  [\".jpeg\", \"image/jpeg\"],\n  [\".svg\", \"image/svg+xml; charset=utf-8\"],\n  [\".ico\", \"image/x-icon\"]\n]);\n\nfunction resolveRequestPath(urlPath) {\n  const pathname = decodeURIComponent(String(urlPath || \"/\").split(\"?\")[0]);\n  const normalized = pathname === \"/\" ? \"/index.html\" : pathname;\n  const filePath = path.resolve(root, \".\" + normalized);\n  if (!filePath.startsWith(root)) {\n    return null;\n  }\n  return filePath;\n}\n\nconst server = http.createServer(async (request, response) => {\n  const filePath = resolveRequestPath(request.url);\n  if (!filePath) {\n    response.writeHead(403);\n    response.end(\"Forbidden\");\n    return;\n  }\n  try {\n    const body = await readFile(filePath);\n    response.writeHead(200, {\n      \"Content-Type\": MIME_TYPES.get(path.extname(filePath)) || \"application/octet-stream\",\n      \"Cache-Control\": \"no-cache\"\n    });\n    response.end(body);\n  } catch (error) {\n    if (error?.code === \"ENOENT\") {\n      response.writeHead(404);\n      response.end(\"Not found\");\n      return;\n    }\n    response.writeHead(500);\n    response.end(String(error?.message ?? error));\n  }\n});\n\nfunction start(port) {\n  server.listen(port, host, () => {\n    const address = server.address();\n    const finalPort = typeof address === \"object\" && address ? address.port : port;\n    process.stdout.write(\"Serving Emoji Star Lanes at http://\" + host + \":\" + finalPort + \"\\n\");\n  });\n}\n\nserver.on(\"error\", (error) => {\n  if (error?.code === \"EADDRINUSE\") {\n    process.stderr.write(\"Port \" + preferredPort + \" is busy; falling back to a free port.\\n\");\n    start(0);\n    return;\n  }\n  throw error;\n});\n\nfor (const signal of [\"SIGINT\", \"SIGTERM\"]) {\n  process.on(signal, () => {\n    server.close(() => process.exit(0));\n  });\n}\n\nstart(preferredPort);\n\nnode:http\nnode:path\nnode:url\nnode:fs/promises\nresolveRequestPath\nstart\nroot\npreferredPort\nhost\nMIME_TYPES\npathname\nnormalized\nfilePath\nserver\nbody\naddress\nfinalPort",
+            "tags": [
+              "mjs",
+              "code"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          },
+          {
+            "id": "d99b8985f2a5f018ec1506989020e4ccecaf0036",
+            "scope": "file",
+            "refId": "src/game/render.js",
+            "title": "src/game/render.js",
+            "body": "function projectPoint(entity, width, height) {\n  const depth = 1 / (1 + (entity.z * 0.8));\n  return {\n    x: width / 2 + (entity.x * width * 0.36 * depth),\n    y: (height * 0.82) - (entity.y * height * 0.4 * depth) - (entity.z * 34),\n    scale: Math.max(0.42, depth * 1.8)\n  };\n}\n\nfunction drawEmoji(ctx, emoji, entity, width, height) {\n  const projected = projectPoint(entity, width, height);\n  ctx.save();\n  ctx.font = `${Math.round(44 * projected.scale)}px \"Segoe UI Emoji\", \"Apple Color Emoji\", sans-serif`;\n  ctx.textAlign = \"center\";\n  ctx.textBaseline = \"middle\";\n  ctx.fillText(emoji, projected.x, projected.y);\n  ctx.restore();\n}\n\nfunction drawStarfield(ctx, state, width, height) {\n  for (const star of state.stars) {\n    const projected = projectPoint(star, width, height);\n    ctx.fillStyle = \"rgba(201, 242, 255, 0.7)\";\n    ctx.beginPath();\n    ctx.arc(projected.x, projected.y, Math.max(1, projected.scale * 1.6), 0, Math.PI * 2);\n    ctx.fill();\n  }\n}\n\nfunction drawFloorGrid(ctx, width, height) {\n  ctx.save();\n  ctx.strokeStyle = \"rgba(84, 205, 255, 0.16)\";\n  ctx.lineWidth = 1;\n  for (let index = -5; index <= 5; index += 1) {\n    ctx.beginPath();\n    ctx.moveTo(width / 2, height * 0.82);\n    ctx.lineTo(width / 2 + (index * width * 0.12), height);\n    ctx.stroke();\n  }\n  for (let row = 0; row < 7; row += 1) {\n    const y = height * (0.82 + (row * 0.035));\n    ctx.beginPath();\n    ctx.moveTo(width * 0.18, y);\n    ctx.lineTo(width * 0.82, y);\n    ctx.stroke();\n  }\n  ctx.restore();\n}\n\nexport function renderScene(ctx, state, canvas) {\n  const width = canvas.width;\n  const height = canvas.height;\n  const background = ctx.createLinearGradient(0, 0, 0, height);\n  background.addColorStop(0, \"#09111b\");\n  background.addColorStop(0.5, \"#11233a\");\n  background.addColorStop(1, \"#1f5f5b\");\n  ctx.fillStyle = background;\n  ctx.fillRect(0, 0, width, height);\n\n  drawStarfield(ctx, state, width, height);\n  drawFloorGrid(ctx, width, height);\n\n  for (const enemy of state.enemies) {\n    drawEmoji(ctx, \"👾\", { x: enemy.x + state.formation.offsetX, y: enemy.y, z: enemy.z }, width, height);\n  }\n  for (const bullet of state.bullets) {\n    drawEmoji(ctx, \"✨\", bullet, width, height);\n  }\n  for (const shot of state.enemyShots) {\n    drawEmoji(ctx, \"💥\", shot, width, height);\n  }\n  for (const explosion of state.explosions) {\n    drawEmoji(ctx, \"💥\", explosion, width, height);\n  }\n\n  drawEmoji(ctx, \"🚀\", state.player, width, height);\n\n  ctx.save();\n  ctx.fillStyle = \"rgba(236, 247, 255, 0.92)\";\n  ctx.font = '600 18px Inter, sans-serif';\n  ctx.textAlign = \"left\";\n  ctx.fillText(`Score ${state.score}`, 22, 32);\n  ctx.fillText(`Lives ${state.lives}`, 22, 58);\n  ctx.fillText(`Wave ${state.level}`, 22, 84);\n  ctx.restore();\n\n  if (state.mode === \"start\" || state.mode === \"gameover\") {\n    ctx.save();\n    ctx.fillStyle = \"rgba(4, 10, 18, 0.62)\";\n    ctx.fillRect(0, 0, width, height);\n    ctx.fillStyle = \"#ecf7ff\";\n    ctx.textAlign = \"center\";\n    ctx.font = '700 42px Inter, sans-serif';\n    ctx.fillText(state.mode === \"start\" ? \"Emoji Star Lanes\" : \"Restart the Run\", width / 2, height * 0.32);\n    ctx.font = '500 20px Inter, sans-serif';\n    ctx.fillText(\"Move with arrows or A / D. Shoot with Space. Fullscreen with F.\", width / 2, height * 0.39);\n    ctx.fillText(state.mode === \"start\" ? \"Press Enter or Space to launch.\" : \"Press Enter or Space to restart.\", width / 2, height * 0.45);\n    ctx.restore();\n  }\n}\n\nprojectPoint\ndrawEmoji\ndrawStarfield\ndrawFloorGrid\nrenderScene\ndepth\nprojected\nindex\nrow\ny\nwidth\nheight\nbackground",
+            "tags": [
+              "js",
+              "code"
+            ],
+            "updatedAt": "2026-04-18T17:58:53.343Z"
+          }
+        ],
+        "evidence": [
+          {
+            "command": "ai-workflow project search \"Emoji Star Lanes\" --json"
+          },
+          {
+            "snippet": "[\n  {\n    \"id\": \"ac48a8e6215fa2ab8b62df67182b79611f9f99ed\",\n    \"scope\": \"symbol\",\n    \"refId\": \"5ed9554ad8c959391299546e4da9211cab954b4c\",\n    \"title\": \"heading Emoji Star Lanes\",\n    \"body\": \"README.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"README.md\",\n      \"Emoji Star Lanes\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"c6d10d3de7c1f66de5"
+          }
+        ],
+        "artifacts": [],
+        "classification": "completed"
+      }
+    ],
+    "branchPath": []
+  },
+  "continuationState": {
+    "request": "Can you find Emoji Star Lanes in the generated project and show me where the title and main game files ended up?",
+    "active": false,
+    "intent": {
+      "version": "1",
+      "capability": "project-planning",
+      "objective": "Handle the current shell request.",
+      "subject": null,
+      "taskClass": null,
+      "scope": "repo-targeted",
+      "risk": "low",
+      "responseStyle": {
+        "detail": "normal",
+        "format": "paragraphs",
+        "includeExamples": false
+      },
+      "needsRepoContext": true,
+      "needsMutation": false,
+      "safeToAutoExecute": false,
+      "followUpMode": "new-request",
+      "references": {
+        "tickets": [],
+        "files": [],
+        "modules": [],
+        "graphNodeIds": [],
+        "evidence": []
+      },
+      "directAnswerOnly": false
+    },
+    "lastReply": null,
+    "focus": {
+      "taskClass": null,
+      "subject": "Emoji Star Lanes",
+      "searchQuery": "Emoji Star Lanes",
+      "statusQuery": null
+    },
+    "references": {
+      "tickets": [],
+      "files": [],
+      "modules": [],
+      "graphNodeIds": [
+        "n1",
+        "n2"
+      ],
+      "evidence": [
+        "[",
+        "Synthesized 1 successful prerequisite node."
+      ]
+    },
+    "graph": {
+      "nodes": [
+        {
+          "id": "n1",
+          "kind": "action",
+          "type": "search",
+          "dependsOn": [],
+          "status": "ok",
+          "result": {
+            "summary": "[",
+            "structuredPayload": [
+              {
+                "id": "ac48a8e6215fa2ab8b62df67182b79611f9f99ed",
+                "scope": "symbol",
+                "refId": "5ed9554ad8c959391299546e4da9211cab954b4c",
+                "title": "heading Emoji Star Lanes",
+                "body": "README.md\nlocal heading",
+                "tags": [
+                  "heading",
+                  "local",
+                  "README.md",
+                  "Emoji Star Lanes"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              },
+              {
+                "id": "c6d10d3de7c1f66de5cc8662007f9b2b46f2ca16",
+                "scope": "file",
+                "refId": "index.html",
+                "title": "index.html",
+                "body": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Emoji Star Lanes</title>\n    <link rel=\"stylesheet\" href=\"./styles.css\" />\n  </head>\n  <body>\n    <canvas id=\"game\" aria-label=\"Emoji Star Lanes\"></canvas>\n    <script type=\"module\" src=\"./src/main.js\"></script>\n  </body>\n  </html>\n\n#game",
+                "tags": [
+                  "html",
+                  "markup"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              },
+              {
+                "id": "198e0f3966009aa0cfd38b895a383f570c484008",
+                "scope": "file",
+                "refId": "project-brief.md",
+                "title": "project-brief.md",
+                "body": "# Project Brief\n\n## Overview\n\nEmoji Star Lanes is a fast arcade defense game where the player steers a rocket through layered enemy formations rendered with a light 3D perspective.\n\n## Long-Term Vision\n\nBuild a reusable arcade framework where each wave pack, enemy behavior, and rendering style is swappable. The first release proves the gameplay loop and the workflow around planning, implementation, testing, debugging, and reporting.\n\n## EPIC-GAME-001 Star Lane Defense\n\n### Vision\n\nShip a polished first-play experience with a modular code layout, deterministic automation hooks, and enough architecture headroom for bosses, powerups, and alternate formations.\n\n### Features\n\n- Immediate play start with readable controls\n- Perspective-staged emoji enemy waves\n- Player movement, shooting, enemy fire, scoring, lives, and restart\n- Deterministic `window.advanceTime(ms)` and `window.render_game_to_text()`\n- Workflow-facing docs and a clear verification report\n\n### Modules\n\n- `model`: state bootstrapping, wave generation, progression metadata\n- `update`: motion, cooldowns, collisions, win/lose flow\n- `render`: perspective projection, scene drawing, HUD\n- `text-state`: concise automation payload\n- `main`: browser loop, input wiring, fullscreen handling\n\n## Non-Goals\n\n- Networked multiplayer\n- Monetization\n- Asset pipelines beyond browser-native emoji rendering\n\nProject Brief\nOverview\nLong-Term Vision\nEPIC-GAME-001 Star Lane Defense\nVision\nFeatures\nModules\nNon-Goals",
+                "tags": [
+                  "markdown",
+                  "doc"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              },
+              {
+                "id": "d69f6f423c0ce106fdf1a95b7e04777650c7bba3",
+                "scope": "file",
+                "refId": "README.md",
+                "title": "README.md",
+                "body": "# Emoji Star Lanes\n\nA modular canvas game built as an ai-workflow programming dogfood target.\n\n## Run\n\n```bash\nnpm test\nnpm run dev\n```\n\nThe dev server prefers port `4173` and falls back to a free port if that port is already busy.\n\n## Controls\n\n- `Enter` or `Space`: start / restart\n- `Arrow keys` or `A D`: move\n- `Space`: shoot\n- `F`: fullscreen\n\n## Files\n\n- `src/game/model.js`: state creation and wave generation\n- `src/game/update.js`: gameplay rules\n- `src/game/render.js`: canvas rendering and perspective projection\n- `src/game/text-state.js`: deterministic automation surface\n- `tests/game-logic.test.mjs`: core rules regression coverage\n\nEmoji Star Lanes\nRun\nControls\nFiles",
+                "tags": [
+                  "markdown",
+                  "doc"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              },
+              {
+                "id": "0da5cd5b6ba95ff979a2d4eabe733c45b6dea510",
+                "scope": "file",
+                "refId": "scripts/dev-server.mjs",
+                "title": "scripts/dev-server.mjs",
+                "body": "#!/usr/bin/env node\n\nimport http from \"node:http\";\nimport path from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\nimport { readFile } from \"node:fs/promises\";\n\nconst root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), \"..\");\nconst preferredPort = Number.parseInt(String(process.env.PORT ?? \"4173\"), 10) || 4173;\nconst host = process.env.HOST || \"127.0.0.1\";\n\nconst MIME_TYPES = new Map([\n  [\".html\", \"text/html; charset=utf-8\"],\n  [\".js\", \"text/javascript; charset=utf-8\"],\n  [\".css\", \"text/css; charset=utf-8\"],\n  [\".json\", \"application/json; charset=utf-8\"],\n  [\".png\", \"image/png\"],\n  [\".jpg\", \"image/jpeg\"],\n  [\".jpeg\", \"image/jpeg\"],\n  [\".svg\", \"image/svg+xml; charset=utf-8\"],\n  [\".ico\", \"image/x-icon\"]\n]);\n\nfunction resolveRequestPath(urlPath) {\n  const pathname = decodeURIComponent(String(urlPath || \"/\").split(\"?\")[0]);\n  const normalized = pathname === \"/\" ? \"/index.html\" : pathname;\n  const filePath = path.resolve(root, \".\" + normalized);\n  if (!filePath.startsWith(root)) {\n    return null;\n  }\n  return filePath;\n}\n\nconst server = http.createServer(async (request, response) => {\n  const filePath = resolveRequestPath(request.url);\n  if (!filePath) {\n    response.writeHead(403);\n    response.end(\"Forbidden\");\n    return;\n  }\n  try {\n    const body = await readFile(filePath);\n    response.writeHead(200, {\n      \"Content-Type\": MIME_TYPES.get(path.extname(filePath)) || \"application/octet-stream\",\n      \"Cache-Control\": \"no-cache\"\n    });\n    response.end(body);\n  } catch (error) {\n    if (error?.code === \"ENOENT\") {\n      response.writeHead(404);\n      response.end(\"Not found\");\n      return;\n    }\n    response.writeHead(500);\n    response.end(String(error?.message ?? error));\n  }\n});\n\nfunction start(port) {\n  server.listen(port, host, () => {\n    const address = server.address();\n    const finalPort = typeof address === \"object\" && address ? address.port : port;\n    process.stdout.write(\"Serving Emoji Star Lanes at http://\" + host + \":\" + finalPort + \"\\n\");\n  });\n}\n\nserver.on(\"error\", (error) => {\n  if (error?.code === \"EADDRINUSE\") {\n    process.stderr.write(\"Port \" + preferredPort + \" is busy; falling back to a free port.\\n\");\n    start(0);\n    return;\n  }\n  throw error;\n});\n\nfor (const signal of [\"SIGINT\", \"SIGTERM\"]) {\n  process.on(signal, () => {\n    server.close(() => process.exit(0));\n  });\n}\n\nstart(preferredPort);\n\nnode:http\nnode:path\nnode:url\nnode:fs/promises\nresolveRequestPath\nstart\nroot\npreferredPort\nhost\nMIME_TYPES\npathname\nnormalized\nfilePath\nserver\nbody\naddress\nfinalPort",
+                "tags": [
+                  "mjs",
+                  "code"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              },
+              {
+                "id": "d99b8985f2a5f018ec1506989020e4ccecaf0036",
+                "scope": "file",
+                "refId": "src/game/render.js",
+                "title": "src/game/render.js",
+                "body": "function projectPoint(entity, width, height) {\n  const depth = 1 / (1 + (entity.z * 0.8));\n  return {\n    x: width / 2 + (entity.x * width * 0.36 * depth),\n    y: (height * 0.82) - (entity.y * height * 0.4 * depth) - (entity.z * 34),\n    scale: Math.max(0.42, depth * 1.8)\n  };\n}\n\nfunction drawEmoji(ctx, emoji, entity, width, height) {\n  const projected = projectPoint(entity, width, height);\n  ctx.save();\n  ctx.font = `${Math.round(44 * projected.scale)}px \"Segoe UI Emoji\", \"Apple Color Emoji\", sans-serif`;\n  ctx.textAlign = \"center\";\n  ctx.textBaseline = \"middle\";\n  ctx.fillText(emoji, projected.x, projected.y);\n  ctx.restore();\n}\n\nfunction drawStarfield(ctx, state, width, height) {\n  for (const star of state.stars) {\n    const projected = projectPoint(star, width, height);\n    ctx.fillStyle = \"rgba(201, 242, 255, 0.7)\";\n    ctx.beginPath();\n    ctx.arc(projected.x, projected.y, Math.max(1, projected.scale * 1.6), 0, Math.PI * 2);\n    ctx.fill();\n  }\n}\n\nfunction drawFloorGrid(ctx, width, height) {\n  ctx.save();\n  ctx.strokeStyle = \"rgba(84, 205, 255, 0.16)\";\n  ctx.lineWidth = 1;\n  for (let index = -5; index <= 5; index += 1) {\n    ctx.beginPath();\n    ctx.moveTo(width / 2, height * 0.82);\n    ctx.lineTo(width / 2 + (index * width * 0.12), height);\n    ctx.stroke();\n  }\n  for (let row = 0; row < 7; row += 1) {\n    const y = height * (0.82 + (row * 0.035));\n    ctx.beginPath();\n    ctx.moveTo(width * 0.18, y);\n    ctx.lineTo(width * 0.82, y);\n    ctx.stroke();\n  }\n  ctx.restore();\n}\n\nexport function renderScene(ctx, state, canvas) {\n  const width = canvas.width;\n  const height = canvas.height;\n  const background = ctx.createLinearGradient(0, 0, 0, height);\n  background.addColorStop(0, \"#09111b\");\n  background.addColorStop(0.5, \"#11233a\");\n  background.addColorStop(1, \"#1f5f5b\");\n  ctx.fillStyle = background;\n  ctx.fillRect(0, 0, width, height);\n\n  drawStarfield(ctx, state, width, height);\n  drawFloorGrid(ctx, width, height);\n\n  for (const enemy of state.enemies) {\n    drawEmoji(ctx, \"👾\", { x: enemy.x + state.formation.offsetX, y: enemy.y, z: enemy.z }, width, height);\n  }\n  for (const bullet of state.bullets) {\n    drawEmoji(ctx, \"✨\", bullet, width, height);\n  }\n  for (const shot of state.enemyShots) {\n    drawEmoji(ctx, \"💥\", shot, width, height);\n  }\n  for (const explosion of state.explosions) {\n    drawEmoji(ctx, \"💥\", explosion, width, height);\n  }\n\n  drawEmoji(ctx, \"🚀\", state.player, width, height);\n\n  ctx.save();\n  ctx.fillStyle = \"rgba(236, 247, 255, 0.92)\";\n  ctx.font = '600 18px Inter, sans-serif';\n  ctx.textAlign = \"left\";\n  ctx.fillText(`Score ${state.score}`, 22, 32);\n  ctx.fillText(`Lives ${state.lives}`, 22, 58);\n  ctx.fillText(`Wave ${state.level}`, 22, 84);\n  ctx.restore();\n\n  if (state.mode === \"start\" || state.mode === \"gameover\") {\n    ctx.save();\n    ctx.fillStyle = \"rgba(4, 10, 18, 0.62)\";\n    ctx.fillRect(0, 0, width, height);\n    ctx.fillStyle = \"#ecf7ff\";\n    ctx.textAlign = \"center\";\n    ctx.font = '700 42px Inter, sans-serif';\n    ctx.fillText(state.mode === \"start\" ? \"Emoji Star Lanes\" : \"Restart the Run\", width / 2, height * 0.32);\n    ctx.font = '500 20px Inter, sans-serif';\n    ctx.fillText(\"Move with arrows or A / D. Shoot with Space. Fullscreen with F.\", width / 2, height * 0.39);\n    ctx.fillText(state.mode === \"start\" ? \"Press Enter or Space to launch.\" : \"Press Enter or Space to restart.\", width / 2, height * 0.45);\n    ctx.restore();\n  }\n}\n\nprojectPoint\ndrawEmoji\ndrawStarfield\ndrawFloorGrid\nrenderScene\ndepth\nprojected\nindex\nrow\ny\nwidth\nheight\nbackground",
+                "tags": [
+                  "js",
+                  "code"
+                ],
+                "updatedAt": "2026-04-18T17:58:53.343Z"
+              }
+            ],
+            "evidence": [
+              {
+                "command": "ai-workflow project search \"Emoji Star Lanes\" --json"
+              },
+              {
+                "snippet": "[\n  {\n    \"id\": \"ac48a8e6215fa2ab8b62df67182b79611f9f99ed\",\n    \"scope\": \"symbol\",\n    \"refId\": \"5ed9554ad8c959391299546e4da9211cab954b4c\",\n    \"title\": \"heading Emoji Star Lanes\",\n    \"body\": \"README.md\\nlocal heading\",\n    \"tags\": [\n      \"heading\",\n      \"local\",\n      \"README.md\",\n      \"Emoji Star Lanes\"\n    ],\n    \"updatedAt\": \"2026-04-18T17:58:53.343Z\"\n  },\n  {\n    \"id\": \"c6d10d3de7c1f66de5"
+              }
+            ],
+            "artifacts": [],
+            "classification": "completed",
+            "ok": true
+          }
+        },
+        {
+          "id": "n2",
+          "kind": "synthesize",
+          "type": "synthesize",
+          "dependsOn": [
+            "n1"
+          ],
+          "status": "ok",
+          "result": {
+            "summary": "Synthesized 1 successful prerequisite node.",
+            "structuredPayload": {
+              "dependencyIds": [
+                "n1"
+              ],
+              "completed": 1,
+              "failed": 0
+            },
+            "evidence": [
+              {
+                "node": "n1",
+                "classification": "completed"
+              }
+            ],
+            "artifacts": [],
+            "classification": "synthesized",
+            "ok": true
+          }
+        }
+      ],
+      "branchPath": []
+    },
+    "outcome": {
+      "planKind": "plan",
+      "failed": [],
+      "pending": []
+    }
+  },
+  "preRendered": true,
+  "recovery": null,
+  "assistantReply": null
+}

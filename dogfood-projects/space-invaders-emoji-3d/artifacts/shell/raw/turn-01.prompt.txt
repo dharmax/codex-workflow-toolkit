@@ -1,0 +1,1 @@
+Please create a new feature for a modular, expandable 3d canvas Space Invaders-style game that uses emoji ships. I want the long-term vision, epics, features, modules, planning notes, tests, and debugging expectations to be part of the work.

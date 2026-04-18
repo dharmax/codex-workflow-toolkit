@@ -75,6 +75,56 @@ export async function executeOperatorRequest(prompt, options = {}) {
   };
 }
 
+function getOperatorPlannerTimeoutMs(options, candidate) {
+  if (Number.isFinite(options?.plannerTimeoutMs) && options.plannerTimeoutMs > 0) {
+    return options.plannerTimeoutMs;
+  }
+  const envTimeout = Number(process.env.AI_WORKFLOW_OPERATOR_PLANNER_TIMEOUT_MS ?? process.env.AI_WORKFLOW_SHELL_PLANNER_TIMEOUT_MS ?? "");
+  if (Number.isFinite(envTimeout) && envTimeout > 0) {
+    return envTimeout;
+  }
+  if (candidate?.providerId === "ollama") {
+    return 20000;
+  }
+  return 15000;
+}
+
+function buildOperatorPlanningMetric({ candidates, attempts, successfulCandidate, plan, startedAt }) {
+  const providerId = successfulCandidate?.providerId ?? attempts.at(-1)?.providerId ?? candidates[0]?.providerId ?? "unavailable";
+  const modelId = successfulCandidate?.modelId ?? attempts.at(-1)?.modelId ?? candidates[0]?.modelId ?? "unavailable";
+  const failedCandidates = attempts
+    .filter((attempt) => !attempt.success)
+    .map(({ providerId: failedProviderId, modelId: failedModelId, latencyMs, timedOut, error }) => ({
+      providerId: failedProviderId,
+      modelId: failedModelId,
+      latencyMs,
+      timedOut,
+      error
+    }));
+  const failedLatencyMs = failedCandidates.reduce((sum, attempt) => sum + Number(attempt.latencyMs ?? 0), 0);
+
+  return {
+    taskClass: "project-planning",
+    capability: "strategy",
+    providerId,
+    modelId,
+    latencyMs: Date.now() - startedAt,
+    success: Boolean(plan),
+    errorMessage: plan ? null : (failedCandidates.at(-1)?.error ?? "No planning candidates available."),
+    details: {
+      stage: "operator-planning",
+      candidateCount: candidates.length,
+      attemptCount: attempts.length,
+      fallbackUsed: attempts.length > 1,
+      failedAttempts: failedCandidates.length,
+      failedLatencyMs,
+      successfulProviderId: successfulCandidate?.providerId ?? null,
+      successfulModelId: successfulCandidate?.modelId ?? null,
+      failedCandidates
+    }
+  };
+}
+
 export async function planOperatorRequest(inputText, options = {}) {
   const root = options.root ?? process.cwd();
   
@@ -113,13 +163,23 @@ export async function planOperatorRequest(inputText, options = {}) {
   }
 
   const errors = [];
+  const attempts = [];
+  const planningStartedAt = Date.now();
 
   let plan = null;
   let successfulCandidate = null;
-  for (const candidate of candidates.slice(0, 5)) { // Try up to 5 candidates
+  const candidatePool = candidates.slice(0, 5);
+  for (const candidate of candidatePool) {
+    const timeoutMs = getOperatorPlannerTimeoutMs(options, candidate);
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    let timeoutId = null;
+    const attemptStartedAt = Date.now();
     try {
       if (process.env.AI_WORKFLOW_DEBUG_FALLBACK || candidates.length > 1) {
-        console.log(`[operator-brain] Attempting planning with ${candidate.providerId}:${candidate.modelId}...`);
+        console.error(`[operator-brain] Attempting planning with ${candidate.providerId}:${candidate.modelId}...`);
+      }
+      if (controller && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+        timeoutId = setTimeout(() => controller.abort(new Error(`planner timed out after ${timeoutMs}ms`)), timeoutMs);
       }
 
       const completion = await generateCompletion({
@@ -127,22 +187,57 @@ export async function planOperatorRequest(inputText, options = {}) {
         modelId: candidate.modelId,
         system,
         prompt,
-        config: { host: candidate.host, apiKey: candidate.apiKey, baseUrl: candidate.baseUrl, format: "json" }
+        config: { host: candidate.host, apiKey: candidate.apiKey, baseUrl: candidate.baseUrl, format: "json" },
+        signal: controller?.signal ?? null
       });
 
       plan = parsePlannerResponse(completion.response);
+      attempts.push({
+        providerId: candidate.providerId,
+        modelId: candidate.modelId,
+        latencyMs: Date.now() - attemptStartedAt,
+        success: true,
+        timedOut: false,
+        error: null
+      });
       successfulCandidate = candidate;
       break;
     } catch (error) {
-      console.error(`[operator-brain] Planning failed with ${candidate.providerId}:${candidate.modelId}:`, error.message);
-      errors.push(`${candidate.providerId}:${candidate.modelId} failed: ${error.message}`);
+      const timedOut = controller?.signal?.aborted && Number.isFinite(timeoutMs) && timeoutMs > 0;
+      const message = timedOut ? `planner timed out after ${timeoutMs}ms` : (error?.message ?? String(error));
+      attempts.push({
+        providerId: candidate.providerId,
+        modelId: candidate.modelId,
+        latencyMs: Date.now() - attemptStartedAt,
+        success: false,
+        timedOut,
+        error: message
+      });
+      console.error(`[operator-brain] Planning failed with ${candidate.providerId}:${candidate.modelId}:`, message);
+      errors.push(`${candidate.providerId}:${candidate.modelId} failed: ${message}`);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
   }
+
+  await withWorkflowStore(root, async (store) => {
+    store.appendMetric(buildOperatorPlanningMetric({
+      candidates: candidatePool,
+      attempts,
+      successfulCandidate,
+      plan,
+      startedAt: planningStartedAt
+    }));
+  }).catch(() => {});
 
   if (!plan) {
     return { 
       kind: "reply", 
-      assistantReply: `Planning failed for all candidates:\n- ${errors.join("\n- ")}` 
+      assistantReply: errors.length
+        ? `Planning failed for all candidates:\n- ${errors.join("\n- ")}`
+        : "Planning failed because no planning candidates were available."
     };
   }
 

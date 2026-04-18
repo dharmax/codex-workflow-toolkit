@@ -1,0 +1,15 @@
+{
+  "source": "duckduckgo",
+  "query": "gemma4 vision multimodal benchmark",
+  "generatedAt": "2026-04-18T17:58:06.856Z",
+  "fingerprint": "54336d85662060f6f14c95475f4130b3a07a192e",
+  "results": [],
+  "signals": {
+    "logic": 0,
+    "strategy": 0,
+    "prose": 0,
+    "visual": 0,
+    "speed": 0,
+    "taskFit": 0
+  }
+}

@@ -2,6 +2,7 @@ import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { routeTask } from "./router.mjs";
 import { generateCompletion } from "./providers.mjs";
+import { withWorkflowStore } from "./sync.mjs";
 
 const TEXT_EXTENSIONS = new Set([
   ".md",
@@ -70,9 +71,10 @@ export async function judgeArtifacts({
   const routed = applyRouteOverride(route, providerId, modelId);
   const prompt = buildArtifactJudgePrompt({ projectRoot, goal, rubric: rubricText, artifacts });
   const contentParts = buildArtifactJudgeContentParts({ artifacts });
+  const startedAt = Date.now();
 
   if (!routed.recommended) {
-    return buildFallbackArtifactJudgment({
+    const unavailablePayload = buildFallbackArtifactJudgment({
       projectRoot,
       route: sanitizeRoute(routed),
       prompt,
@@ -81,49 +83,116 @@ export async function judgeArtifacts({
       artifacts,
       reason: "No suitable model route is available."
     });
+    await recordArtifactJudgeMetric({
+      projectRoot,
+      route: routed,
+      attempts: [],
+      successfulCandidate: null,
+      success: false,
+      errorMessage: unavailablePayload.result.summary,
+      startedAt
+    });
+    return unavailablePayload;
   }
 
   const provider = routed.providers?.[routed.recommended.providerId] ?? {};
+  const attempts = [];
+  const candidates = buildRouteCandidates(routed);
 
-  try {
-    const completion = await generateCompletion({
-      providerId: routed.recommended.providerId,
-      modelId: routed.recommended.modelId,
-      prompt,
-      system: [
-        "You are a strict artifact judge.",
-        "Return concise JSON only.",
-        "Pass only when the supplied artifacts satisfy the rubric and the evidence is sufficient.",
-        "Use needs_human_review when the artifact is ambiguous, incomplete, or the model cannot justify a confident judgment."
-      ].join(" "),
-      config: provider,
-      contentParts
-    });
+  for (const candidate of candidates) {
+    const attemptStartedAt = Date.now();
+    try {
+      const completion = await generateCompletion({
+        providerId: candidate.providerId,
+        modelId: candidate.modelId,
+        prompt,
+        system: [
+          "You are a strict artifact judge.",
+          "Return concise JSON only.",
+          "Pass only when the supplied artifacts satisfy the rubric and the evidence is sufficient.",
+          "Use needs_human_review when the artifact is ambiguous, incomplete, or the model cannot justify a confident judgment."
+        ].join(" "),
+        config: routed.providers?.[candidate.providerId] ?? provider,
+        contentParts
+      });
 
-    return {
-      codelet: {
-        id: "artifact-judge",
-        summary: "Judge soft artifacts against a rubric and return a pass/fail report.",
-        taskClass: "artifact-evaluation"
-      },
-      root: projectRoot,
-      route: sanitizeRoute(routed),
-      goal,
-      rubric: rubricText,
-      artifacts,
-      result: normalizeJudgmentResponse(completion.response, artifacts, rubricText, goal)
-    };
-  } catch (error) {
-    return buildFallbackArtifactJudgment({
-      projectRoot,
-      route: sanitizeRoute(routed),
-      prompt,
-      rubric: rubricText,
-      goal,
-      artifacts,
-      reason: error?.message ?? String(error)
-    });
+      const result = normalizeJudgmentResponse(completion.response, artifacts, rubricText, goal);
+      if (!result.structuredVerdict) {
+        attempts.push({
+          providerId: candidate.providerId,
+          modelId: candidate.modelId,
+          success: false,
+          latencyMs: Date.now() - attemptStartedAt,
+          error: "judge returned unstructured output",
+          rawResponse: result.rawResponse ?? null
+        });
+        continue;
+      }
+
+      attempts.push({
+        providerId: candidate.providerId,
+        modelId: candidate.modelId,
+        success: true,
+        latencyMs: Date.now() - attemptStartedAt,
+        error: null
+      });
+
+      const payload = {
+        codelet: {
+          id: "artifact-judge",
+          summary: "Judge soft artifacts against a rubric and return a pass/fail report.",
+          taskClass: "artifact-evaluation"
+        },
+        root: projectRoot,
+        route: sanitizeRoute(routed),
+        goal,
+        rubric: rubricText,
+        artifacts,
+        diagnostics: summarizeRouteAttempts(attempts, candidate),
+        result
+      };
+      await recordArtifactJudgeMetric({
+        projectRoot,
+        route: routed,
+        attempts,
+        successfulCandidate: candidate,
+        success: true,
+        errorMessage: null,
+        startedAt
+      });
+      return payload;
+    } catch (error) {
+      attempts.push({
+        providerId: candidate.providerId,
+        modelId: candidate.modelId,
+        success: false,
+        latencyMs: Date.now() - attemptStartedAt,
+        error: error?.message ?? String(error),
+        rawResponse: null
+      });
+    }
   }
+
+  const fallbackPayload = buildFallbackArtifactJudgment({
+    projectRoot,
+    route: sanitizeRoute(routed),
+    prompt,
+    rubric: rubricText,
+    goal,
+    artifacts,
+    reason: buildAttemptFailureReason(attempts, "Artifact judging failed because every routed candidate returned an error or an unstructured verdict."),
+    diagnostics: summarizeRouteAttempts(attempts, null)
+  });
+  await recordArtifactJudgeMetric({
+    projectRoot,
+    route: routed,
+    attempts,
+    successfulCandidate: null,
+    success: false,
+    errorMessage: fallbackPayload.result.summary,
+    startedAt
+  });
+  return fallbackPayload;
 }
 
 export async function runArtifactJudge(argv = process.argv.slice(2), env = process.env) {
@@ -235,7 +304,7 @@ export function buildArtifactJudgeContentParts({ artifacts }) {
   return parts;
 }
 
-function buildFallbackArtifactJudgment({ projectRoot, route, prompt, rubric, goal, artifacts, reason }) {
+function buildFallbackArtifactJudgment({ projectRoot, route, prompt, rubric, goal, artifacts, reason, diagnostics = null }) {
   return {
     codelet: {
       id: "artifact-judge",
@@ -248,6 +317,7 @@ function buildFallbackArtifactJudgment({ projectRoot, route, prompt, rubric, goa
     rubric,
     artifacts,
     prompt,
+    diagnostics,
     result: {
       status: "needs_human_review",
       score: 0,
@@ -265,7 +335,8 @@ function buildFallbackArtifactJudgment({ projectRoot, route, prompt, rubric, goa
         findings: [reason]
       })),
       needs_human_review: true,
-      reason
+      reason,
+      structuredVerdict: false
     }
   };
 }
@@ -320,7 +391,10 @@ function formatArtifactJudgeOutput(payload) {
 function normalizeJudgmentResponse(text, artifacts, rubric, goal) {
   const trimmed = String(text ?? "").trim();
   if (!trimmed) {
-    return buildDefaultJudgment(artifacts, rubric, goal, "Empty model response.");
+    return {
+      ...buildDefaultJudgment(artifacts, rubric, goal, "Empty model response."),
+      structuredVerdict: false
+    };
   }
 
   let parsed = null;
@@ -341,7 +415,8 @@ function normalizeJudgmentResponse(text, artifacts, rubric, goal) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return {
       ...buildDefaultJudgment(artifacts, rubric, goal, trimmed.slice(0, 400)),
-      rawResponse: trimmed
+      rawResponse: trimmed,
+      structuredVerdict: false
     };
   }
 
@@ -375,7 +450,8 @@ function normalizeJudgmentResponse(text, artifacts, rubric, goal) {
     recommendations: normalizeArray(parsed.recommendations),
     artifacts: artifactsResult,
     needs_human_review: Boolean(parsed.needs_human_review ?? status === "needs_human_review"),
-    rawResponse: trimmed
+    rawResponse: trimmed,
+    structuredVerdict: true
   };
 }
 
@@ -556,14 +632,96 @@ function applyRouteOverride(route, providerId, modelId) {
       modelId: normalizedModel,
       local: Boolean(provider.local),
       reason: "explicit provider/model override"
+    },
+    fallbackChain: buildRouteCandidates(route)
+      .filter((candidate) => candidate.providerId !== normalizedProvider || candidate.modelId !== normalizedModel)
+  };
+}
+
+function buildRouteCandidates(route, limit = 5) {
+  const seen = new Set();
+  const ordered = [];
+  for (const candidate of [
+    route?.recommended ?? null,
+    ...(Array.isArray(route?.fallbackChain) ? route.fallbackChain : []),
+    ...(Array.isArray(route?.candidates) ? route.candidates : [])
+  ]) {
+    if (!candidate?.providerId || !candidate?.modelId) {
+      continue;
+    }
+    const key = `${candidate.providerId}:${candidate.modelId}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    ordered.push(candidate);
+    if (ordered.length >= limit) {
+      break;
+    }
+  }
+  return ordered;
+}
+
+function summarizeRouteAttempts(attempts, successfulCandidate) {
+  const normalized = Array.isArray(attempts) ? attempts : [];
+  return {
+    attempts: normalized,
+    failedAttempts: normalized.filter((attempt) => attempt.success === false).length,
+    successfulProviderId: successfulCandidate?.providerId ?? null,
+    successfulModelId: successfulCandidate?.modelId ?? null
+  };
+}
+
+function buildAttemptFailureReason(attempts, fallback) {
+  const failures = (Array.isArray(attempts) ? attempts : [])
+    .filter((attempt) => attempt.success === false)
+    .map((attempt) => `${attempt.providerId}:${attempt.modelId} ${attempt.error}`)
+    .filter(Boolean);
+  if (!failures.length) {
+    return fallback;
+  }
+  return `${fallback}\n- ${failures.join("\n- ")}`;
+}
+
+async function recordArtifactJudgeMetric({ projectRoot, route, attempts, successfulCandidate, success, errorMessage, startedAt }) {
+  const diagnostics = summarizeRouteAttempts(attempts, successfulCandidate);
+  const failedLatencyMs = (Array.isArray(attempts) ? attempts : [])
+    .filter((attempt) => attempt.success === false)
+    .reduce((total, attempt) => total + Math.max(0, Number(attempt.latencyMs ?? 0)), 0);
+  const metric = {
+    taskClass: "artifact-evaluation",
+    capability: route?.capability ?? "visual",
+    providerId: successfulCandidate?.providerId ?? route?.recommended?.providerId ?? "unavailable",
+    modelId: successfulCandidate?.modelId ?? route?.recommended?.modelId ?? "unavailable",
+    latencyMs: Date.now() - startedAt,
+    success,
+    errorMessage: success ? null : errorMessage,
+    details: {
+      stage: "artifact-judge",
+      attemptCount: Array.isArray(attempts) ? attempts.length : 0,
+      fallbackUsed: diagnostics.failedAttempts > 0,
+      failedAttempts: diagnostics.failedAttempts,
+      failedLatencyMs,
+      successfulProviderId: diagnostics.successfulProviderId,
+      successfulModelId: diagnostics.successfulModelId
     }
   };
+  await withWorkflowStore(projectRoot, async (store) => {
+    store.appendMetric(metric);
+  }).catch(() => {});
 }
 
 function sanitizeRoute(route) {
   if (!route || typeof route !== "object") {
     return route;
   }
+
+  const redactCandidate = (candidate) => candidate && typeof candidate === "object"
+    ? {
+        ...candidate,
+        apiKey: candidate.apiKey ? "[redacted]" : candidate.apiKey
+      }
+    : candidate;
 
   const providers = {};
   for (const [providerId, provider] of Object.entries(route.providers ?? {})) {
@@ -577,6 +735,9 @@ function sanitizeRoute(route) {
 
   return {
     ...route,
+    recommended: redactCandidate(route.recommended),
+    fallbackChain: Array.isArray(route.fallbackChain) ? route.fallbackChain.map(redactCandidate) : route.fallbackChain,
+    candidates: Array.isArray(route.candidates) ? route.candidates.map(redactCandidate) : route.candidates,
     providers
   };
 }

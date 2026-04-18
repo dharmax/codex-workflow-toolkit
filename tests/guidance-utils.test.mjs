@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { compactGuidanceItems, summarizeGuidance } from "../runtime/scripts/ai-workflow/lib/guidance-utils.mjs";
+import { compileActiveGuardrails, selectActiveGuardrails } from "../runtime/scripts/ai-workflow/lib/active-guardrails.mjs";
 
 test("summarizeGuidance skips placeholder scaffolding lines", () => {
   const markdown = `# Project Guidelines
@@ -49,4 +50,21 @@ test("summarizeGuidance skips standalone file-reference bullets", () => {
   assert.equal(summary.includes("`kanban.md`"), false);
   assert.equal(summary.includes("`execution-protocol.md`"), false);
   assert.equal(summary.includes("Prefer one coherent burst over many tiny unrelated edits."), true);
+});
+
+test("compileActiveGuardrails promotes directive guidance into shared guardrails and can select GoE-relevant items", () => {
+  const guardrails = compileActiveGuardrails({
+    agents: "- Use `ai-workflow` first for project status.\n- If `ai-workflow` fails, stop and fix it before continuing.\n",
+    executionProtocol: "- Keep `ai-workflow sync` as the first step before major context extraction.\n",
+    projectGuidelines: [
+      "- Mutating shell work must be blocked until the board has exactly one ticket in `In Progress`.",
+      "- GoE or model-governance work is not done just because the loop exists."
+    ].join("\n")
+  }, { keywords: ["goe", "workflow"], limit: 6 });
+
+  assert.equal(guardrails.some((item) => /Use `ai-workflow` first/i.test(item.summary)), true);
+  assert.equal(guardrails.some((item) => item.severity === "required"), true);
+
+  const selected = selectActiveGuardrails(guardrails, "continue the GoE implementation", { limit: 2, fallbackLimit: 1 });
+  assert.equal(selected.some((item) => /GoE or model-governance/i.test(item.summary)), true);
 });

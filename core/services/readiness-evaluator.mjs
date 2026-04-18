@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createEvaluateReadinessResponse, PROTOCOL_VERSION, validateEvaluateReadinessRequest } from "../contracts/dual-surface-protocol.mjs";
+import { loadProjectActiveGuardrails, selectActiveGuardrails } from "../../runtime/scripts/ai-workflow/lib/active-guardrails.mjs";
 
 const HIGH_BLOCKER_LANES = new Set(["Bugs P1", "Human Inspection"]);
 const MEDIUM_BLOCKER_LANES = new Set(["Bugs P2/P3", "In Progress"]);
@@ -13,7 +14,7 @@ const FRESHNESS = {
   continuationMaxAgeMs: 24 * 60 * 60 * 1000
 };
 
-export function evaluateReadiness(store, request) {
+export async function evaluateReadiness(store, request) {
   const startedAt = Date.now();
   const lastSync = store.getMeta("lastSync");
   let normalized;
@@ -214,6 +215,16 @@ export function evaluateReadiness(store, request) {
   const summary = verdict === "ready"
     ? `Ready for ${formatGoal(normalized.goal.type)}.`
     : `Not ready for ${formatGoal(normalized.goal.type)}${gaps.length ? " yet" : ""}.`;
+  const activeGuardrails = normalized.constraints.active_guardrails.length
+    ? normalized.constraints.active_guardrails
+    : await loadProjectActiveGuardrails(store.projectRoot, { limit: 10 }).catch(() => []);
+  const relevantGuardrails = selectActiveGuardrails(activeGuardrails, normalized.goal.question, { limit: 4, fallbackLimit: 2 });
+  const guidelineFindings = buildGuidelineFindings({
+    guardrails: relevantGuardrails,
+    request: normalized,
+    verificationSignal,
+    syncFreshness
+  });
 
   const elapsedMs = Date.now() - startedAt;
   return buildTerminalResponse({
@@ -226,7 +237,7 @@ export function evaluateReadiness(store, request) {
     assumptions,
     gaps,
     recommendedNextActions,
-    guidelineFindings: [],
+    guidelineFindings,
     continuationState: {
       token: `eval-readiness:${traceId}`,
       originating_operation: "evaluate_readiness",
@@ -329,6 +340,21 @@ function buildTerminalResponse({
       trace_id: traceId,
       ...meta
     }
+  });
+}
+
+function buildGuidelineFindings({ guardrails, request, verificationSignal, syncFreshness }) {
+  return guardrails.map((guardrail) => {
+    if (guardrail.tags?.includes("mutation") && request.constraints.allow_mutation === false) {
+      return `[ok][${guardrail.severity}] ${guardrail.summary} This readiness evaluation stayed non-mutating.`;
+    }
+    if (guardrail.tags?.includes("testing") && /dogfood|workflow-audit/i.test(guardrail.summary) && !verificationSignal.hasFreshSignal) {
+      return `[warning][${guardrail.severity}] ${guardrail.summary} Fresh verification evidence is still missing.`;
+    }
+    if (guardrail.tags?.includes("workflow") && syncFreshness.status !== "fresh") {
+      return `[warning][${guardrail.severity}] ${guardrail.summary} Workflow state is stale until the next sync.`;
+    }
+    return `[active][${guardrail.severity}] ${guardrail.summary}`;
   });
 }
 

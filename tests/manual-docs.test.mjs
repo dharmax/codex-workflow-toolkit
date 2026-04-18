@@ -68,8 +68,15 @@ test("buildShellContext loads the canonical manual and planner prompt surfaces m
   ].join("\n"), "utf8");
 
   try {
+    await writeFile(path.join(root, "project-guidelines.md"), [
+      "# Project Guidelines",
+      "",
+      "- Operator-surface changes are not done until `ai-workflow dogfood` and `workflow-audit` both pass."
+    ].join("\n"), "utf8");
     const context = await buildShellContext(root);
     assert.match(context.manual, /providers\.ollama\.host/);
+    assert.equal(Array.isArray(context.activeGuardrails), true);
+    assert.equal(context.activeGuardrails.some((item) => /workflow-audit/.test(item.summary)), true);
 
     const prompt = await buildShellPlannerPrompt("how do i configure ollama host?", {
       root,
@@ -84,6 +91,7 @@ test("buildShellContext loads the canonical manual and planner prompt surfaces m
     });
 
     assert.match(prompt.prompt, /## Guidance Highlights/);
+    assert.match(prompt.prompt, /Active guardrail \[required\|Project Guidelines\]/);
     assert.match(prompt.prompt, /Manual: `providers\.ollama\.host` sets the primary Ollama URL\./);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -104,6 +112,8 @@ test("guidance-summary includes manual guidance from the toolkit fallback", asyn
     const payload = JSON.parse(result.stdout);
     assert.equal(Array.isArray(payload.sections.manual), true);
     assert.equal(payload.sections.manual.length > 0, true);
+    assert.equal(Array.isArray(payload.activeGuardrails), true);
+    assert.equal(payload.activeGuardrails.length > 0, true);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
   }

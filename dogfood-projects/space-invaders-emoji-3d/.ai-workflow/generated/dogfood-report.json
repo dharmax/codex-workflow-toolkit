@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-18T17:58:03.223Z",
+  "root": "/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d",
+  "toolkitRoot": "/home/dharmax/work/ai-workflow",
+  "profile": "bootstrap",
+  "timeoutMs": 20000,
+  "surfaces": {
+    "shell": {
+      "description": "Interactive and non-interactive shell routing, planner selection, and mutation control.",
+      "fileCount": 0,
+      "files": [],
+      "fileHashes": {},
+      "scenarioCount": 4,
+      "status": "pass",
+      "scenarios": [
+        {
+          "id": "doctor-command",
+          "description": "shell handles `doctor` locally",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"shell\" \"doctor\" \"--json\" \"--no-ai\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 1890,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"input\": \"doctor\",\n  \"plan\": {\n    \"kind\": \"plan\",\n    \"actions\": [\n      {\n        \"type\": \"doctor\"\n      }\n    ],\n    \"graph\": {\n      \"nodes\": [\n        {\n          \"id\": \"n1\",\n          \"kind\": \"action\",\n          \"type\": \"doctor\",\n          \"action\": {\n            \"type\": \"doctor\"\n          },\n          \"dependsOn\": [],\n          \"status\": \"pending\"\n        },\n        {\n          \"id\": \"n2\",\n          \"kind\": \"synthesize\",\n          \"type\": \"synthesize\",\n          \"dependsOn\": [\n            \"n1\"\n          ],\n          \"status\": \"pending\"\n        }\n      ]\n    },\n    \"confidence\": 0.98,\n    \"reason\": \"Explicit diagnostics request.\",\n    \"assistantReply\": null,\n    \"intent\": {\n      \"version\": \"1\",\n      \"capability\": \"project-planning\",\n      \"objective\": \"Handle the current shell request.\",\n      \"subject\": null,\n      \"taskClass\": null,\n      \"scope\": \"repo-targeted\",\n      \"risk\": \"low\",\n      \"responseStyle\": {\n        \"detail\": \"normal\",\n        \"format\": \"paragraphs\",\n        \"includeExamples\": false\n      },\n      \"needsRepoContext\": true,\n      \"needsMutation\": false,\n      \"safeToAutoExecute\": false,\n      \"followUpMode\": \"new-request\",\n      \"references\": {\n        \"tickets\": [],\n        \"files\": [],\n        \"modules\": [],\n        \"graphNodeIds\": [],\n        \"evidence\": []\n      },\n      \"directAnswerOnly\": false\n    },\n    \"finalAnswerPolicy\": {\n      \"verbosity\": \"normal\",\n      \"format\": \"paragraphs\",\n      \"includeEvidence\": true,\n      \"includeNextSteps\": true,\n      \"includeExamples\": false\n    },\n    \"executionGraph\": {\n      \"nodes\": [\n        {\n  \n... [truncated]",
+          "stderr": ""
+        },
+        {
+          "id": "doctor-help-command",
+          "description": "shell handles `doctor help` locally",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"shell\" \"doctor help\" \"--json\" \"--no-ai\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 130,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"input\": \"doctor help\",\n  \"plan\": {\n    \"kind\": \"reply\",\n    \"actions\": [],\n    \"graph\": {\n      \"nodes\": []\n    },\n    \"reply\": \"doctor: run local diagnostics and provider visibility checks.\\nUsage: `doctor`\\nCLI equivalent: `ai-workflow doctor`\",\n    \"confidence\": 0.99,\n    \"reason\": \"Local doctor help reply.\",\n    \"assistantReply\": \"doctor: run local diagnostics and provider visibility checks.\\nUsage: `doctor`\\nCLI equivalent: `ai-workflow doctor`\",\n    \"intent\": {\n      \"version\": \"1\",\n      \"capability\": \"shell-usage\",\n      \"objective\": \"Answer a shell-local request.\",\n      \"subject\": null,\n      \"taskClass\": null,\n      \"scope\": \"shell-local\",\n      \"risk\": \"low\",\n      \"responseStyle\": {\n        \"detail\": \"normal\",\n        \"format\": \"paragraphs\",\n        \"includeExamples\": false\n      },\n      \"needsRepoContext\": false,\n      \"needsMutation\": false,\n      \"safeToAutoExecute\": false,\n      \"followUpMode\": \"new-request\",\n      \"references\": {\n        \"tickets\": [],\n        \"files\": [],\n        \"modules\": [],\n        \"graphNodeIds\": [],\n        \"evidence\": []\n      },\n      \"directAnswerOnly\": true\n    },\n    \"finalAnswerPolicy\": {\n      \"verbosity\": \"normal\",\n      \"format\": \"paragraphs\",\n      \"includeEvidence\": false,\n      \"includeNextSteps\": true,\n      \"includeExamples\": false\n    },\n    \"executionGraph\": {\n      \"nodes\": []\n    },\n    \"focusTaskClass\": null\n  },\n  \"executed\": [],\n  \"executedGraph\": {\n    \"nodes\": [],\n    \"executions\": [],\n    \"branchPath\": []\n  },\n  \"continuationState\": {\n    \"request\": \"doctor help\",\n    \"active\": false,\n    \"intent\": {\n  \n... [truncated]",
+          "stderr": ""
+        },
+        {
+          "id": "incomplete-epic-request",
+          "description": "shell asks for the missing epic topic without AI",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"shell\" \"can you write an epic?\" \"--json\" \"--no-ai\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 126,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"input\": \"can you write an epic?\",\n  \"plan\": {\n    \"kind\": \"reply\",\n    \"actions\": [],\n    \"graph\": {\n      \"nodes\": []\n    },\n    \"reply\": \"Yes.\\nGive me the epic topic, or say `create epic for <topic>`.\\nExample: `create epic for Telegram remote-control`.\",\n    \"confidence\": 0.98,\n    \"reason\": \"Epic ideation request is missing a topic.\",\n    \"assistantReply\": \"Yes.\\nGive me the epic topic, or say `create epic for <topic>`.\\nExample: `create epic for Telegram remote-control`.\",\n    \"intent\": {\n      \"version\": \"1\",\n      \"capability\": \"project-planning\",\n      \"objective\": \"Handle the current shell request.\",\n      \"subject\": null,\n      \"taskClass\": null,\n      \"scope\": \"workflow-state\",\n      \"risk\": \"low\",\n      \"responseStyle\": {\n        \"detail\": \"normal\",\n        \"format\": \"paragraphs\",\n        \"includeExamples\": false\n      },\n      \"needsRepoContext\": false,\n      \"needsMutation\": false,\n      \"safeToAutoExecute\": false,\n      \"followUpMode\": \"new-request\",\n      \"references\": {\n        \"tickets\": [],\n        \"files\": [],\n        \"modules\": [],\n        \"graphNodeIds\": [],\n        \"evidence\": []\n      },\n      \"directAnswerOnly\": true\n    },\n    \"finalAnswerPolicy\": {\n      \"verbosity\": \"normal\",\n      \"format\": \"paragraphs\",\n      \"includeEvidence\": false,\n      \"includeNextSteps\": true,\n      \"includeExamples\": false\n    },\n    \"executionGraph\": {\n      \"nodes\": []\n    },\n    \"focusTaskClass\": null\n  },\n  \"executed\": [],\n  \"executedGraph\": {\n    \"nodes\": [],\n    \"executions\": [],\n    \"branchPath\": []\n  },\n  \"continuationState\": {\n    \"request\": \"can you write\n... [truncated]",
+          "stderr": ""
+        },
+        {
+          "id": "epic-read-request",
+          "description": "shell answers `epic?` without AI",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"shell\" \"epic?\" \"--json\" \"--no-ai\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 114,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"input\": \"epic?\",\n  \"plan\": {\n    \"kind\": \"reply\",\n    \"actions\": [],\n    \"graph\": {\n      \"nodes\": []\n    },\n    \"reply\": \"There is no active epic yet.\\nFor the full list, run `ai-workflow project epic list`.\\nTo create a new one, say `create epic for ...`.\",\n    \"confidence\": 0.9,\n    \"reason\": \"No active epic in smart status.\",\n    \"assistantReply\": \"There is no active epic yet.\\nFor the full list, run `ai-workflow project epic list`.\\nTo create a new one, say `create epic for ...`.\",\n    \"intent\": {\n      \"version\": \"1\",\n      \"capability\": \"project-planning\",\n      \"objective\": \"Handle the current shell request.\",\n      \"subject\": null,\n      \"taskClass\": null,\n      \"scope\": \"workflow-state\",\n      \"risk\": \"low\",\n      \"responseStyle\": {\n        \"detail\": \"normal\",\n        \"format\": \"paragraphs\",\n        \"includeExamples\": false\n      },\n      \"needsRepoContext\": false,\n      \"needsMutation\": false,\n      \"safeToAutoExecute\": false,\n      \"followUpMode\": \"new-request\",\n      \"references\": {\n        \"tickets\": [],\n        \"files\": [],\n        \"modules\": [],\n        \"graphNodeIds\": [],\n        \"evidence\": []\n      },\n      \"directAnswerOnly\": true\n    },\n    \"finalAnswerPolicy\": {\n      \"verbosity\": \"normal\",\n      \"format\": \"paragraphs\",\n      \"includeEvidence\": false,\n      \"includeNextSteps\": true,\n      \"includeExamples\": false\n    },\n    \"executionGraph\": {\n      \"nodes\": []\n    },\n    \"focusTaskClass\": null\n  },\n  \"executed\": [],\n  \"executedGraph\": {\n    \"nodes\": [],\n    \"executions\": [],\n    \"branchPath\": []\n  },\n  \"continuationState\": {\n    \"request\": \"epic?\n... [truncated]",
+          "stderr": ""
+        }
+      ]
+    },
+    "provider": {
+      "description": "Provider discovery, routing, setup, and local model hardware behavior.",
+      "fileCount": 0,
+      "files": [],
+      "fileHashes": {},
+      "scenarioCount": 2,
+      "status": "pass",
+      "scenarios": [
+        {
+          "id": "doctor-json",
+          "description": "doctor returns provider status",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"doctor\" \"--json\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 243,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"cwd\": \"/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d\",\n  \"platform\": \"linux\",\n  \"arch\": \"x64\",\n  \"node\": \"v25.8.1\",\n  \"cpuCount\": 16,\n  \"totalMemoryGb\": 31.29,\n  \"leanCtx\": {\n    \"installed\": true,\n    \"path\": \"/usr/bin/lean-ctx\",\n    \"version\": \"3.2.2\",\n    \"details\": \"lean-ctx available at /usr/bin/lean-ctx (3.2.2)\"\n  },\n  \"git\": {\n    \"installed\": true,\n    \"details\": \"git version 2.53.0\"\n  },\n  \"providers\": {\n    \"openai\": {\n      \"available\": true,\n      \"modelCount\": 2,\n      \"local\": false\n    },\n    \"anthropic\": {\n      \"available\": false,\n      \"modelCount\": 2,\n      \"local\": false\n    },\n    \"google\": {\n      \"available\": true,\n      \"modelCount\": 2,\n      \"local\": false\n    },\n    \"ollama\": {\n      \"available\": true,\n      \"modelCount\": 11,\n      \"local\": true\n    }\n  },\n  \"ollama\": {\n    \"installed\": true,\n    \"configured\": true,\n    \"status\": \"available\",\n    \"host\": \"http://lotus:11434\",\n    \"hardwareClass\": null,\n    \"plannerModel\": null,\n    \"plannerMaxQuality\": null,\n    \"maxModelSizeB\": null,\n    \"models\": [\n      {\n        \"id\": \"hermes3:8b\",\n        \"quality\": \"medium\",\n        \"capabilities\": {\n          \"logic\": 2.9,\n          \"strategy\": 3.2,\n          \"creative\": 3.9,\n          \"visual\": 0,\n          \"prose\": 4.6\n        },\n        \"fitScore\": 100,\n        \"fitReasons\": [\n          \"capability fit 69.8/100\",\n          \"quality medium\",\n          \"local provider\",\n          \"hardware fit +4.0\",\n          \"model family fit +8.0\",\n          \"cost signal +8.0\"\n        ]\n      },\n      {\n        \"id\": \"fluffy/llama-3.1-8b-st\n... [truncated]",
+          "stderr": ""
+        },
+        {
+          "id": "route-shell-planning",
+          "description": "route shell-planning returns the current planner chain",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"route\" \"shell-planning\" \"--json\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 188,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"taskClass\": \"shell-planning\",\n  \"capability\": \"strategy\",\n  \"minimumQuality\": \"low\",\n  \"recommended\": {\n    \"providerId\": \"ollama\",\n    \"modelId\": \"hermes3:8b\",\n    \"local\": true,\n    \"quality\": \"medium\",\n    \"costTier\": 1,\n    \"competency\": 3.2,\n    \"fitScore\": 100,\n    \"fitReasons\": [\n      \"capability fit 69.8/100\",\n      \"quality medium\",\n      \"local provider\",\n      \"hardware fit +4.0\",\n      \"model family fit +8.0\",\n      \"cost signal +8.0\"\n    ],\n    \"quota\": null,\n    \"freeQuotaRemaining\": null,\n    \"apiKey\": null,\n    \"host\": \"http://lotus:11434\",\n    \"baseUrl\": null,\n    \"score\": 45.4,\n    \"reason\": \"competency 3.2/5 for strategy, local-first candidate, fit score 100, low cost tier\"\n  },\n  \"fallbackChain\": [\n    {\n      \"providerId\": \"ollama\",\n      \"modelId\": \"qwen2.5-coder:7b\",\n      \"local\": true,\n      \"quality\": \"low\",\n      \"costTier\": 1,\n      \"competency\": 3.2,\n      \"fitScore\": 97,\n      \"fitReasons\": [\n        \"capability fit 67.0/100\",\n        \"quality low\",\n        \"local provider\",\n        \"hardware fit +4.0\",\n        \"cost signal +8.0\"\n      ],\n      \"quota\": null,\n      \"freeQuotaRemaining\": null,\n      \"apiKey\": null,\n      \"host\": \"http://lotus:11434\",\n      \"baseUrl\": null,\n      \"score\": 44.099999999999994,\n      \"reason\": \"competency 3.2/5 for strategy, local-first candidate, fit score 97, low cost tier\"\n    },\n    {\n      \"providerId\": \"ollama\",\n      \"modelId\": \"fluffy/llama-3.1-8b-stheno-v3.4:latest\",\n      \"local\": true,\n      \"quality\": \"medium\",\n      \"costTier\": 1,\n      \"competency\": 2.5,\n      \"fitScore\": 100,\n      \"fitReasons\":\n... [truncated]",
+          "stderr": ""
+        }
+      ]
+    },
+    "workflow": {
+      "description": "Top-level workflow command dispatch, ask/host resolution, and project workflow scripts.",
+      "fileCount": 22,
+      "files": [
+        "scripts/ai-workflow/artifact-judge.mjs",
+        "scripts/ai-workflow/context-pack.mjs",
+        "scripts/ai-workflow/dogfood.mjs",
+        "scripts/ai-workflow/execute-ticket.mjs",
+        "scripts/ai-workflow/execution-dry-run.mjs",
+        "scripts/ai-workflow/guidance-summary.mjs",
+        "scripts/ai-workflow/guideline-audit.mjs",
+        "scripts/ai-workflow/kanban-ticket.mjs",
+        "scripts/ai-workflow/kanban.mjs",
+        "scripts/ai-workflow/programming-dogfood-build.mjs",
+        "scripts/ai-workflow/programming-dogfood.mjs",
+        "scripts/ai-workflow/project-summary.mjs",
+        "scripts/ai-workflow/review-summary.mjs",
+        "scripts/ai-workflow/route-task.mjs",
+        "scripts/ai-workflow/shell-transcript-judge.mjs",
+        "scripts/ai-workflow/smart-codelet-runner.mjs",
+        "scripts/ai-workflow/sync.mjs",
+        "scripts/ai-workflow/telegram-preview.mjs",
+        "scripts/ai-workflow/ticket-proving-run.mjs",
+        "scripts/ai-workflow/tutorial-web.mjs",
+        "scripts/ai-workflow/verification-summary.mjs",
+        "scripts/ai-workflow/workflow-audit.mjs"
+      ],
+      "fileHashes": {
+        "scripts/ai-workflow/artifact-judge.mjs": "5126823f0732f44342dcdcaae5963b910db78b0da9b963ad99ec050278a8f6ea",
+        "scripts/ai-workflow/context-pack.mjs": "a31d800ec60c3c3a670d1b8b4f443fa2403692adc7cedcbb3193b1ddaf6ecd39",
+        "scripts/ai-workflow/dogfood.mjs": "63d1ba16d9904b70c51d6ef10c0762a63555e1a28792fe32e387f02166570587",
+        "scripts/ai-workflow/execute-ticket.mjs": "a4fc00671a71245c35f1cf1510e87d011ccc658db623a8968ef05cc981213c20",
+        "scripts/ai-workflow/execution-dry-run.mjs": "59bf8aca650872f1b526261a1a6a157deb3f20fecf36b8fa092d70a5a92c448d",
+        "scripts/ai-workflow/guidance-summary.mjs": "f7dae34fccd0e64ebfcf9ab8499cf50d3d50922fc3f1ec3c7c84c14e4671470a",
+        "scripts/ai-workflow/guideline-audit.mjs": "758f65df09461928be88023aa7f84548fd95e8d74094442f4b970d4e59a92173",
+        "scripts/ai-workflow/kanban-ticket.mjs": "e0789d54595fae4a6263e3d4021c67878169a339d19f81a04e4ae4ea1bab133e",
+        "scripts/ai-workflow/kanban.mjs": "b4152e38642571330b6a2f821557aa1fca9b44a8a8f0d3903fcad2eb53eaae86",
+        "scripts/ai-workflow/programming-dogfood-build.mjs": "b977b4af1d95243ef3050a20f813135f6a42a419f58ade3ecb252d6c107c81d5",
+        "scripts/ai-workflow/programming-dogfood.mjs": "9191f6dc6ce7ea11ba0d24bcb0b117cf3cb864989684b64cae5b883992ab9ac2",
+        "scripts/ai-workflow/project-summary.mjs": "d14fbf1ee09443a9d33b9776cb169b660538918a8dddcb966ffa1ef66df1c719",
+        "scripts/ai-workflow/review-summary.mjs": "ffd1b7711706c00e5459cffe17be09765340f04f7c7b09c0a6769f582e026488",
+        "scripts/ai-workflow/route-task.mjs": "1ca1bed137006cdc561d5fb4d612355addc98c59abdc1b6cd8f3f8fd9d84f07d",
+        "scripts/ai-workflow/shell-transcript-judge.mjs": "0ea4290d1aeb87186be7143ea76236c478539a0119435253069edb5ccebce8cc",
+        "scripts/ai-workflow/smart-codelet-runner.mjs": "6013aa2d1d4b8f9029e00cf90b1397da29b0154c15be055b7a2f8af7e6a0c98b",
+        "scripts/ai-workflow/sync.mjs": "eec8faeea43ea280d2b326e8fc621fc7dcd96d59570c4fe3e2f06e975ae761c7",
+        "scripts/ai-workflow/telegram-preview.mjs": "2910235ec99b7a61df91495c7aeba9a55a26044b2d404a41d9539a62ee8c1367",
+        "scripts/ai-workflow/ticket-proving-run.mjs": "07dc1e9f0294f847926b4b0077e0f32453de862a74887d76469aeb481b07c45e",
+        "scripts/ai-workflow/tutorial-web.mjs": "f00c3b36ac35f08bbdbb9a4a35a6ca93efc255156b5a23d11e4f2e94de1b3bc5",
+        "scripts/ai-workflow/verification-summary.mjs": "3a78165fe210ccc5f3e76b7dc1314158acd15a2935881c07893311d585572094",
+        "scripts/ai-workflow/workflow-audit.mjs": "5cb08c271635e4234b2bd052c9124906304af634a7c2997ab4d2789bc9ae2f4b"
+      },
+      "scenarioCount": 3,
+      "status": "pass",
+      "scenarios": [
+        {
+          "id": "sync-json",
+          "description": "sync returns workflow summary",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"sync\" \"--json\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 110,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"projectRoot\": \"/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d\",\n  \"dbPath\": \"/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d/.ai-workflow/state/workflow.db\",\n  \"indexedFiles\": 0,\n  \"indexedSymbols\": 0,\n  \"indexedClaims\": 0,\n  \"indexedNotes\": 0,\n  \"codeletRegistry\": {\n    \"codeletsIndexed\": 33\n  },\n  \"importSummary\": {\n    \"importedTickets\": 0\n  },\n  \"lifecycle\": {\n    \"reviewed\": [],\n    \"skipped\": true\n  },\n  \"projections\": null,\n  \"summary\": {\n    \"fileCount\": 26,\n    \"noteCount\": 0,\n    \"symbolCount\": 50,\n    \"claimCount\": 182,\n    \"ticketCount\": 1,\n    \"codeletCount\": 33,\n    \"candidateCount\": 0,\n    \"activeTickets\": [\n      {\n        \"id\": \"TKT-001\",\n        \"title\": \"Replace this example ticket\",\n        \"lane\": \"Backlog\",\n        \"summary\": \"No description provided.\",\n        \"domain\": \"unknown\"\n      }\n    ],\n    \"candidates\": [],\n    \"notes\": [],\n    \"modules\": [\n      {\n        \"name\": \"scripts/ai-workflow\",\n        \"responsibility\": \"Heuristic module for scripts/ai-workflow\"\n      }\n    ]\n  },\n  \"skipped\": true,\n  \"reason\": \"project state unchanged\"\n}\n",
+          "stderr": ""
+        },
+        {
+          "id": "project-summary-json",
+          "description": "project summary is available through the workflow CLI",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"project\" \"summary\" \"--json\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 90,
+          "model": null,
+          "progressLines": [],
+          "stdout": "{\n  \"fileCount\": 26,\n  \"noteCount\": 0,\n  \"symbolCount\": 50,\n  \"claimCount\": 182,\n  \"ticketCount\": 1,\n  \"codeletCount\": 33,\n  \"candidateCount\": 0,\n  \"activeTickets\": [\n    {\n      \"id\": \"TKT-001\",\n      \"title\": \"Replace this example ticket\",\n      \"lane\": \"Backlog\",\n      \"summary\": \"No description provided.\",\n      \"domain\": \"unknown\"\n    }\n  ],\n  \"candidates\": [],\n  \"notes\": [],\n  \"modules\": [\n    {\n      \"name\": \"scripts/ai-workflow\",\n      \"responsibility\": \"Heuristic module for scripts/ai-workflow\"\n    }\n  ]\n}\n",
+          "stderr": ""
+        },
+        {
+          "id": "guidelines-extract",
+          "description": "guideline extraction returns workflow-first guidance",
+          "command": "/usr/local/bin/node /home/dharmax/work/ai-workflow/cli/ai-workflow.mjs \"extract\" \"guidelines\" \"dogfooding\"",
+          "ok": true,
+          "code": 0,
+          "timedOut": false,
+          "durationMs": 178,
+          "model": null,
+          "progressLines": [],
+          "stdout": "Missing guidance files: AGENTS.md, CONTRIBUTING.md, execution-protocol.md, enforcement.md, project-guidelines.md\n\nActive Guardrails\n- [strong] Treat shell mode as a planning and orchestration surface, not as permission to skip workflow discipline. (Manual)\n- [required] Treat the workflow DB as canonical state, and treat projections as readable outputs that must stay reconciled. (Manual)\n- [strong] Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer. (Manual)\n- [strong] If a claim still needs reliable non-human proof, keep it in the active workflow instead of closing it with human-only language. (Knowledge)\n- [strong] Reads live workflow state before acting. (Manual)\n- [strong] State-changing actions that already have a dedicated CLI command should use that command surface instead of improvised shell behavior. (Manual)\n- [required] If `ai-workflow` fails, stop, identify root cause, and either fix it or report the blocker before continuing. (Manual)\n- [required] If verification is no longer broad, stop using broad reruns. (Knowledge)\n\nSuggested Validation\n- Level: small-ticket\n- Recommendation: Run quick but meaningful unit or module tests for the touched behavior.\n- Check: targeted unit/module tests\n\nAGENTS\n\nContributing\n\nExecution Protocol\n\nEnforcement\n\nProject Guidelines\n\nManual\n- Use `ai-workflow` first for project status, ticket lookup, projections, and guideline extraction; fall back to raw shell search/read only when the workflow tool cannot answer\n... [truncated]",
+          "stderr": ""
+        }
+      ]
+    },
+    "init": {
+      "description": "Project bootstrap, template install, audit baseline, and dogfooding/report scaffolding.",
+      "fileCount": 3,
+      "files": [
+        "knowledge.md",
+        "scripts/ai-workflow/dogfood.mjs",
+        "scripts/ai-workflow/workflow-audit.mjs"
+      ],
+      "fileHashes": {
+        "knowledge.md": "dbcc2afc1201c9ab5ebd9d5ec3b55230e5d1ecd8294ea528704a960fc81e0de4",
+        "scripts/ai-workflow/dogfood.mjs": "63d1ba16d9904b70c51d6ef10c0762a63555e1a28792fe32e387f02166570587",
+        "scripts/ai-workflow/workflow-audit.mjs": "5cb08c271635e4234b2bd052c9124906304af634a7c2997ab4d2789bc9ae2f4b"
+      },
+      "scenarioCount": 0,
+      "status": "pass",
+      "scenarios": []
+    }
+  }
+}

@@ -1020,16 +1020,16 @@ test("handleShellCommand toggles plan, mutate, and trace state", () => {
     json: false
   };
 
-  assert.deepEqual(handleShellCommand("mutate", options), { handled: true });
+  assert.deepEqual(handleShellCommand("mutate", options), { handled: true, stateChanged: true });
   assert.equal(options.shellMode, "mutate");
 
-  assert.deepEqual(handleShellCommand("trace on", options), { handled: true });
+  assert.deepEqual(handleShellCommand("trace on", options), { handled: true, stateChanged: true });
   assert.equal(options.trace, true);
 
-  assert.deepEqual(handleShellCommand("plan", options), { handled: true });
+  assert.deepEqual(handleShellCommand("plan", options), { handled: true, stateChanged: true });
   assert.equal(options.shellMode, "plan");
 
-  assert.deepEqual(handleShellCommand("trace off", options), { handled: true });
+  assert.deepEqual(handleShellCommand("trace off", options), { handled: true, stateChanged: true });
   assert.equal(options.trace, false);
 });
 
@@ -2319,6 +2319,128 @@ test("validateShellPlan accepts known codelets and rejects unknown ones", () => 
       { type: "run_codelet", codeletId: "missing-codelet" }
     ]
   }, plannerContext));
+});
+
+test("planShellRequestHeuristically parses explicit run codelet prompts with quoted args", () => {
+  const plan = planShellRequestHeuristically(
+    'run codelet custom-check --fast --target "/tmp/space invaders"',
+    plannerContext
+  );
+
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [{
+    type: "run_codelet",
+    codeletId: "custom-check",
+    args: ["--fast", "--target", "/tmp/space invaders"]
+  }]);
+});
+
+test("planShellRequestHeuristically routes natural-language programming dogfood build prompts", () => {
+  const dogfoodPlannerContext = {
+    ...plannerContext,
+    toolkitCodelets: [...plannerContext.toolkitCodelets, { id: "programming-dogfood-build", summary: "Build the programming dogfood project." }]
+  };
+  const plan = planShellRequestHeuristically(
+    'Please build that into a dedicated programming dogfood project in "/tmp/space-invaders-dogfood" from scratch, and reply in JSON so I can inspect the result.',
+    dogfoodPlannerContext
+  );
+
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [{
+    type: "run_codelet",
+    codeletId: "programming-dogfood-build",
+    args: ["--target", "/tmp/space-invaders-dogfood", "--force", "--json"]
+  }]);
+});
+
+test("planShellRequestHeuristically carries prior game context into a dogfood build follow-up", () => {
+  const dogfoodPlannerContext = {
+    ...plannerContext,
+    toolkitCodelets: [...plannerContext.toolkitCodelets, { id: "programming-dogfood-build", summary: "Build the programming dogfood project." }]
+  };
+  const plan = planShellRequestHeuristically(
+    'Please build that into a dedicated project in "/tmp/space-invaders-follow-up" from scratch, and reply in JSON so I can inspect the result.',
+    dogfoodPlannerContext,
+    {
+      activeGraphState: {
+        request: "Please create a new feature for a modular, expandable 3d canvas Space Invaders-style game that uses emoji ships.",
+        focus: {
+          subject: "modular expandable 3d canvas space invaders style game with emoji ships"
+        },
+        references: {
+          evidence: ["EPIC-GAME-001", "Emoji Star Lanes"]
+        }
+      }
+    }
+  );
+
+  assert.equal(plan.kind, "plan");
+  assert.deepEqual(plan.actions, [{
+    type: "run_codelet",
+    codeletId: "programming-dogfood-build",
+    args: ["--target", "/tmp/space-invaders-follow-up", "--force", "--json"]
+  }]);
+});
+
+test("handleShellCommand updates operator work mode separately from mutation stance", () => {
+  const options = {
+    json: true,
+    trace: false,
+    shellMode: "plan",
+    requestedWorkMode: "auto",
+    effectiveWorkMode: "planning",
+    modeSource: "default"
+  };
+
+  const modeResult = handleShellCommand("mode bug-hunting", options);
+  assert.deepEqual(modeResult, { handled: true, stateChanged: true });
+  assert.equal(options.requestedWorkMode, "bug-hunting");
+  assert.equal(options.effectiveWorkMode, "bug-hunting");
+  assert.equal(options.modeSource, "explicit");
+  assert.equal(options.shellMode, "plan");
+
+  const stanceResult = handleShellCommand("mutate", options);
+  assert.deepEqual(stanceResult, { handled: true, stateChanged: true });
+  assert.equal(options.shellMode, "mutate");
+  assert.equal(options.requestedWorkMode, "bug-hunting");
+});
+
+test("shell one-shot invocations persist state when --state-file is provided", async () => {
+  const root = path.resolve("/tmp/ai-workflow-shell-state-" + Math.random().toString(36).slice(2));
+  const statePath = path.join(root, "shell-state.json");
+  await fs.mkdir(root, { recursive: true });
+
+  try {
+    let result = await runNode([
+      "cli/ai-workflow.mjs",
+      "shell",
+      "--json",
+      "--state-file",
+      statePath,
+      "version"
+    ], { cwd: repoRoot });
+    assert.equal(result.code, 0, result.stderr);
+
+    let state = JSON.parse(await fs.readFile(statePath, "utf8"));
+    assert.equal(typeof state.runId, "string");
+    assert.equal(state.history.length, 2);
+
+    result = await runNode([
+      "cli/ai-workflow.mjs",
+      "shell",
+      "--json",
+      "--state-file",
+      statePath,
+      "version"
+    ], { cwd: repoRoot });
+    assert.equal(result.code, 0, result.stderr);
+
+    const secondState = JSON.parse(await fs.readFile(statePath, "utf8"));
+    assert.equal(secondState.runId, state.runId);
+    assert.equal(secondState.history.length, 4);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test("chooseShellPlannerModel defaults to a smaller model when hardware is unknown", () => {

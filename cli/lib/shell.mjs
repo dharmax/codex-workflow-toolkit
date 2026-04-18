@@ -6,6 +6,7 @@
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { getToolkitRoot, listToolkitCodelets } from "./codelets.mjs";
@@ -19,6 +20,7 @@ import { executeCodelet } from "../../core/services/codelet-executor.mjs";
 import { buildTicketEntity, inferTicketLane } from "../../core/services/projections.mjs";
 import { buildTelegramPreview } from "../../core/services/telegram.mjs";
 import { parseArgs, printAndExit } from "../../runtime/scripts/ai-workflow/lib/cli.mjs";
+import { loadProjectActiveGuardrails, selectActiveGuardrails } from "../../runtime/scripts/ai-workflow/lib/active-guardrails.mjs";
 import { runDogfood } from "../../runtime/scripts/ai-workflow/lib/dogfood-utils.mjs";
 import { buildWorkflowAuditSummary } from "../../runtime/scripts/ai-workflow/lib/workflow-audit-report.mjs";
 import { getConfigValue, getGlobalConfigPath, getProjectConfigPath, readConfig, removeConfigFile, removeConfigValue, writeConfigValue } from "./config-store.mjs";
@@ -26,6 +28,7 @@ import { buildDoctorReport, renderDoctorReport } from "./doctor.mjs";
 import { configureOllamaHardware } from "./ollama-hw.mjs";
 import { runProviderSetupWizard } from "./provider-setup.mjs";
 import { handleProviderConnect } from "./provider-connect.mjs";
+import { stableId } from "../../core/lib/hash.mjs";
 import { withWorkspaceMutation } from "../../core/lib/workspace-mutation.mjs";
 import { formatStatusReport, resolveProjectStatus } from "../../core/services/status.mjs";
 import { executeJsOrchestrator } from "../../core/services/js-orchestrator.mjs";
@@ -67,6 +70,15 @@ const FAST_DIRECT_ACTIONS = new Set([
   "extract_ticket",
   "next_ticket"
 ]);
+const FAST_GRAPH_ACTIONS = new Set([
+  ...FAST_DIRECT_ACTIONS,
+  "decompose_ticket",
+  "extract_guidelines",
+  "ideate_feature",
+  "run_codelet",
+  "sweep_bugs"
+]);
+const OPERATOR_SHELL_MODES = new Set(["auto", "planning", "fixing", "feature", "auditing", "bug-hunting"]);
 const NOTE_TYPES = ["NOTE", "TODO", "FIXME", "HACK", "BUG", "RISK"];
 const KNOWN_TASK_CLASSES = [
   "summarization",
@@ -186,6 +198,8 @@ export async function handleShell(rest, { cliPath } = {}) {
   }
 
   const root = process.cwd();
+  const stateFile = args["state-file"] ? path.resolve(root, String(args["state-file"])) : null;
+  const restoredState = stateFile ? await readShellStateFile(stateFile) : null;
   const options = {
     root,
     json: Boolean(args.json),
@@ -194,7 +208,14 @@ export async function handleShell(rest, { cliPath } = {}) {
     planOnly: Boolean(args["plan-only"]),
     trace: Boolean(args.trace),
     autoExecuteSafe: true,
-    shellMode: "plan",
+    shellMode: restoredState?.executionStance === "mutation-enabled" ? "mutate" : "plan",
+    requestedWorkMode: normalizeRequestedShellWorkMode(args.mode ?? restoredState?.requestedWorkMode ?? "auto"),
+    effectiveWorkMode: normalizeRequestedShellWorkMode(restoredState?.effectiveWorkMode ?? "planning"),
+    modeSource: normalizeShellModeSource(restoredState?.modeSource ?? "default"),
+    stateFile,
+    runId: String(args["run-id"] ?? restoredState?.runId ?? stableId("shell-run", root, Date.now())),
+    activeGraphState: restoredState?.activeGraphState ?? null,
+    history: Array.isArray(restoredState?.history) ? restoredState.history : [],
     cliPath: cliPath ?? path.resolve(root, "cli", "ai-workflow.mjs"),
     plannerContext: null,
     planners: null
@@ -203,8 +224,12 @@ export async function handleShell(rest, { cliPath } = {}) {
 
   const prompt = args._.join(" ").trim();
   if (prompt) {
+    refreshShellWorkModeForInput(prompt, options);
     const fastResult = await tryRunShellFastPath(prompt, options);
     if (fastResult) {
+      options.activeGraphState = fastResult.continuationState ?? options.activeGraphState ?? null;
+      recordShellTurnHistory(options, prompt, fastResult);
+      await writeShellStateFile(stateFile, options);
       return emitShellResult(fastResult, options);
     }
     const processingIndicator = createShellProcessingIndicator(options);
@@ -223,6 +248,9 @@ export async function handleShell(rest, { cliPath } = {}) {
       }
       processingIndicator.update("planning and running", { planner: getShellProgressPlanner(prompt, options) });
       const result = await runShellTurn(prompt, options);
+      options.activeGraphState = result.continuationState ?? options.activeGraphState ?? null;
+      recordShellTurnHistory(options, prompt, result);
+      await writeShellStateFile(stateFile, options);
       processingIndicator.clear();
       return emitShellResult(result, options);
     } finally {
@@ -237,11 +265,15 @@ export async function handleShell(rest, { cliPath } = {}) {
 }
 
 async function buildFastShellContext(root = process.cwd()) {
-  const summary = await safeGetProjectSummary(root);
+  const [summary, toolkitCodelets, projectCodelets] = await Promise.all([
+    safeGetProjectSummary(root),
+    listToolkitCodelets(),
+    listProjectCodelets(root)
+  ]);
   return {
     root,
-    toolkitCodelets: [],
-    projectCodelets: [],
+    toolkitCodelets,
+    projectCodelets,
     summary,
     smartStatus: null,
     providerState: { providers: {} },
@@ -286,6 +318,28 @@ async function tryRunShellFastPath(inputText, options) {
         }
       }
     };
+    const mutatingModeReply = await ensureMutatingModeForPlan(plan, fastOptions);
+    if (mutatingModeReply) {
+      return {
+        input: inputText,
+        plan: {
+          kind: "reply",
+          confidence: plan.confidence,
+          reply: mutatingModeReply.reply,
+          planner: fastOptions.planners.heuristic
+        },
+        executed: [],
+        executedGraph: { nodes: [], executions: [], branchPath: [] },
+        continuationState: buildContinuationState({
+          inputText,
+          plan,
+          executedGraph: { nodes: [], executions: [], branchPath: [] }
+        }),
+        preRendered: false,
+        recovery: null,
+        assistantReply: null
+      };
+    }
     const executedGraph = await executeActionGraph(plan.graph, fastOptions);
     const executed = executedGraph.nodes
       .filter((node) => node.execution)
@@ -314,20 +368,36 @@ function isFastShellActionPlan(plan) {
     && (plan.confidence ?? 0) >= 0.93
     && Array.isArray(plan.actions)
     && plan.actions.length > 0
-    && plan.actions.every((action) => FAST_DIRECT_ACTIONS.has(action.type));
+    && plan.actions.every((action) => FAST_GRAPH_ACTIONS.has(action.type));
 }
 
 function parseShellArgs(argv) {
   const args = { _: [] };
   const booleanFlags = new Set(["help", "json", "yes", "plan-only", "no-ai", "trace"]);
-  for (const value of argv) {
+  const valueFlags = new Set(["mode", "run-id", "state-file"]);
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
     if (!String(value).startsWith("--")) {
       args._.push(value);
       continue;
     }
-    const key = String(value).slice(2);
+    const trimmed = String(value).slice(2);
+    const equalIndex = trimmed.indexOf("=");
+    if (equalIndex >= 0) {
+      args[trimmed.slice(0, equalIndex)] = trimmed.slice(equalIndex + 1);
+      continue;
+    }
+    const key = trimmed;
     if (booleanFlags.has(key)) {
       args[key] = true;
+      continue;
+    }
+    if (valueFlags.has(key)) {
+      const nextValue = argv[index + 1];
+      if (nextValue && !String(nextValue).startsWith("--")) {
+        args[key] = nextValue;
+        index += 1;
+      }
       continue;
     }
     args._.push(value);
@@ -361,12 +431,13 @@ function getShellProgressPlanner(inputText, options) {
 }
 
 export async function buildShellContext(root = process.cwd()) {
-  const [toolkitCodelets, projectCodelets, summary, providerState, smartStatus] = await Promise.all([
+  const [toolkitCodelets, projectCodelets, summary, providerState, smartStatus, activeGuardrails] = await Promise.all([
     listToolkitCodelets(),
     listProjectCodelets(root),
     safeGetProjectSummary(root),
     discoverProviderState({ root, forceRefresh: true }),
-    getSmartProjectStatus({ projectRoot: root }).catch(() => "Status unavailable.")
+    getSmartProjectStatus({ projectRoot: root }).catch(() => "Status unavailable."),
+    loadProjectActiveGuardrails(root, { limit: 10 }).catch(() => [])
   ]);
 
   const [mission, kanbanEntry, gemini, guidelines, manual] = await Promise.all([
@@ -408,7 +479,8 @@ export async function buildShellContext(root = process.cwd()) {
     kanbanPath: kanbanEntry?.path ? path.relative(root, kanbanEntry.path) : null,
     gemini,
     guidelines,
-    manual
+    manual,
+    activeGuardrails
   };
 }
 
@@ -843,6 +915,13 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
     return readinessContinuationPlan;
   }
 
+  const explicitCommandPlan = buildExplicitShellCommandPlan(text, lower, plannerContext, {
+    activeGraphState
+  });
+  if (explicitCommandPlan) {
+    return explicitCommandPlan;
+  }
+
   const followUpMode = inferShellFollowUpMode({
     inputText: text,
     activeGraphState,
@@ -1078,6 +1157,18 @@ export function planShellRequestHeuristically(inputText, plannerContext, options
       ticketId: executeTicketMatch[1].toUpperCase(),
       apply: true
     }], 0.96, "Explicit ticket execution request.");
+  }
+
+  const runCodeletMatch = text.match(/^run\s+(?:the\s+)?codelet\s+([a-z0-9._-]+)(?:\s+(.+))?$/i);
+  if (runCodeletMatch) {
+    const codeletId = runCodeletMatch[1].trim();
+    if (hasKnownCodelet(plannerContext, codeletId)) {
+      return actionPlan([{
+        type: "run_codelet",
+        codeletId,
+        args: splitShellWords(runCodeletMatch[2] ?? "")
+      }], 0.99, "Explicit codelet run request.");
+    }
   }
 
   const featureMatch = text.match(/^(?:add|create|new)\s+(?:new\s+)?(?:feature|epic|big task)\b\s*(?:for\s+)?(.*)$/i);
@@ -2156,7 +2247,11 @@ function buildShellPlannerGuidanceContext(inputText, plannerContext = {}) {
   const sections = [];
   const guidelines = summarizePlannerGuidance(plannerContext.guidelines, inputText, { limit: 2, fallbackLimit: 1 });
   const manual = summarizePlannerGuidance(plannerContext.manual, inputText, { limit: 4, fallbackLimit: 2 });
+  const activeGuardrails = selectActiveGuardrails(plannerContext.activeGuardrails, inputText, { limit: 3, fallbackLimit: 2 });
 
+  if (activeGuardrails.length) {
+    sections.push(...activeGuardrails.map((item) => `- Active guardrail [${item.severity}|${item.sourceLabel}]: ${item.summary}`));
+  }
   if (guidelines.length) {
     sections.push(...guidelines.map((item) => `- Project guidelines: ${item}`));
   }
@@ -2270,8 +2365,10 @@ export async function planShellRequestWithAgent(inputText, options) {
 
   const start = Date.now();
   let completion;
-  let success = true;
+  let planResult = null;
+  let success = false;
   let errorMsg = null;
+  const timeoutMs = getShellPlannerTimeoutMs(options, options.planner);
 
   try {
     completion = await runShellCompletion({
@@ -2288,9 +2385,29 @@ export async function planShellRequestWithAgent(inputText, options) {
       options,
       contentParts: null
     });
+    const rawResponse = completion.response.trim();
+    // Extract JSON block even if there's conversational filler around it
+    const jsonMatch = rawResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const cleanJson = jsonMatch ? jsonMatch[1].trim() : rawResponse;
+
+    let parsed;
+    try {
+      parsed = parseShellPlannerJson(cleanJson);
+    } catch {
+      const plainTextReply = coercePlannerPlainTextReply(rawResponse, inputText);
+      if (plainTextReply) {
+        planResult = plainTextReply;
+        success = true;
+        return planResult;
+      }
+      throw new Error("planner returned non-JSON text");
+    }
+
+    planResult = validateShellPlan(parsed, options.plannerContext, inputText);
+    success = true;
+    return planResult;
   } catch (error) {
-    success = false;
-    errorMsg = error.message;
+    errorMsg = error?.message ?? String(error);
     throw error;
   } finally {
     const latencyMs = Date.now() - start;
@@ -2303,31 +2420,19 @@ export async function planShellRequestWithAgent(inputText, options) {
         modelId: options.planner.modelId,
         latencyMs,
         success,
-        errorMessage: errorMsg
+        errorMessage: errorMsg,
+        details: {
+          stage: "shell-planner",
+          timeoutMs,
+          attemptCount: 1,
+          fallbackUsed: false,
+          failedAttempts: success ? 0 : 1,
+          failedLatencyMs: success ? 0 : latencyMs,
+          responseKind: planResult?.kind ?? null,
+          timedOut: !success && /timed out/i.test(errorMsg ?? "")
+        }
       }
-    }).catch(() => {}); // Fire and forget
-  }
-
-  try {
-    const rawResponse = completion.response.trim();
-    // Extract JSON block even if there's conversational filler around it
-    const jsonMatch = rawResponse.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-    const cleanJson = jsonMatch ? jsonMatch[1].trim() : rawResponse;
-
-    let parsed;
-    try {
-      parsed = parseShellPlannerJson(cleanJson);
-    } catch {
-      const plainTextReply = coercePlannerPlainTextReply(rawResponse, inputText);
-      if (plainTextReply) {
-        return plainTextReply;
-      }
-      throw new Error("planner returned non-JSON text");
-    }
-
-    return validateShellPlan(parsed, options.plannerContext, inputText);
-  } catch (error) {
-    throw error;
+    }).catch(() => {});
   }
 }
 
@@ -3761,6 +3866,7 @@ export async function executeShellAction(action, options) {
       });
     }
     if (action.type === "evaluate_readiness") {
+      const relevantGuardrails = selectActiveGuardrails(options.plannerContext?.activeGuardrails, action.question, { limit: 4, fallbackLimit: 2 });
       const payload = await evaluateProjectReadiness({
         projectRoot: options.root,
         request: {
@@ -3775,7 +3881,8 @@ export async function executeShellAction(action, options) {
             allow_mutation: false,
             context_budget: "medium",
             time_budget_ms: 15000,
-            guideline_mode: "advisory"
+            guideline_mode: relevantGuardrails.length ? "active" : "advisory",
+            active_guardrails: relevantGuardrails
           },
           inputs: {
             tickets_scope: "active_and_blocked",
@@ -4035,7 +4142,7 @@ export async function runInteractiveShell(options) {
   const rl = readline.createInterface({ input, output });
   options.rl = rl;
   options.blacklist = new Set();
-  options.history = [];
+  options.history ??= [];
   options.shellMode ??= "plan";
   options.trace ??= false;
   options.traceAi ??= (event) => logShellTrace(options, event);
@@ -4106,15 +4213,21 @@ export async function runInteractiveShell(options) {
 
         const commandResult = handleShellCommand(line, options);
         if (commandResult?.handled) {
+          if (commandResult.stateChanged) {
+            await writeShellStateFile(options.stateFile, options);
+          }
           if (commandResult.exit) {
             break;
           }
           continue;
         }
 
+        refreshShellWorkModeForInput(line, options);
         const fastResult = await tryRunShellFastPath(line, options);
         if (fastResult) {
           options.activeGraphState = fastResult.continuationState ?? null;
+          recordShellTurnHistory(options, line, fastResult);
+          await writeShellStateFile(options.stateFile, options);
           if (options.json) {
             output.write(`${JSON.stringify(fastResult, null, 2)}\n`);
           } else {
@@ -4136,28 +4249,11 @@ export async function runInteractiveShell(options) {
         const result = await runShellTurn(line, options);
         processingIndicator.clear();
         options.activeGraphState = result.continuationState ?? null;
+        recordShellTurnHistory(options, line, result);
+        await writeShellStateFile(options.stateFile, options);
         if (result.plan.kind === "exit") {
           break;
         }
-
-        // 2. Maintain high-signal history (max 10 messages)
-        options.history.push({ role: "user", content: line });
-        if (result.plan.reply) {
-          options.history.push({ role: "ai", content: result.plan.reply });
-        } else if (result.plan.actions?.length) {
-          // Include actual command output in history so the Brain "sees" what happened
-          const executionSummary = result.executed.map(e => {
-            const out = (e.stdout || "").trim();
-            const displayOut = out.length > 500 ? out.slice(0, 500) + "... [truncated]" : out;
-            return `Action [${e.action.type}] output:\n${displayOut || "(no output)"}`;
-          }).join("\n\n");
-          
-          options.history.push({ 
-            role: "ai", 
-            content: `Strategy: ${result.plan.strategy || "Execute actions"}\n\n${executionSummary}` 
-          });
-        }
-        if (options.history.length > 10) options.history = options.history.slice(-10);
 
         const mutated = result.executed.some(e => e.mutation);
         if (mutated) {
@@ -4210,13 +4306,21 @@ function createShellProcessingIndicator(options) {
 }
 
 function renderShellModeLine(options) {
-  const mode = options.shellMode === "mutate" ? "mutating" : "plan-only";
+  const requestedMode = normalizeRequestedShellWorkMode(options.requestedWorkMode ?? "auto");
+  const effectiveMode = normalizeRequestedShellWorkMode(options.effectiveWorkMode ?? "planning");
+  const modeLabel = requestedMode === effectiveMode ? requestedMode : `${requestedMode} -> ${effectiveMode}`;
+  const source = normalizeShellModeSource(options.modeSource ?? "default");
+  const stance = options.shellMode === "mutate" ? "mutation-enabled" : "plan-only";
   const trace = options.trace ? "on" : "off";
-  return `mode: ${mode} | trace: ${trace}`;
+  return `mode: ${modeLabel} | source: ${source} | stance: ${stance} | trace: ${trace}`;
 }
 
 function renderShellModeMessage(mode) {
-  return `Shell mode: ${mode === "mutate" ? "mutating" : "plan-only"}.`;
+  return `Execution stance: ${mode === "mutate" ? "mutation-enabled" : "plan-only"}.`;
+}
+
+function renderShellWorkModeMessage(options) {
+  return `Work mode: ${normalizeRequestedShellWorkMode(options.requestedWorkMode ?? "auto")} -> ${normalizeRequestedShellWorkMode(options.effectiveWorkMode ?? "planning")} (${normalizeShellModeSource(options.modeSource ?? "default")}).`;
 }
 
 function setShellMode(options, mode, { announce = false } = {}) {
@@ -4248,22 +4352,40 @@ export function handleShellCommand(line, options) {
 
   if (normalized === "plan") {
     setShellMode(options, "plan", { announce: true });
-    return { handled: true };
+    return { handled: true, stateChanged: true };
   }
 
   if (normalized === "mutate") {
     setShellMode(options, "mutate", { announce: true });
+    return { handled: true, stateChanged: true };
+  }
+
+  if (normalized === "mode status" || normalized === "status mode") {
+    if (!options.json) {
+      output.write(`${renderShellModeLine(options)}\n`);
+    }
     return { handled: true };
+  }
+
+  if (normalized === "mode auto") {
+    setShellWorkMode(options, "auto", { announce: true, source: "explicit" });
+    return { handled: true, stateChanged: true };
+  }
+
+  const modeMatch = normalized.match(/^mode\s+(planning|fixing|feature|auditing|bug-hunting)$/);
+  if (modeMatch) {
+    setShellWorkMode(options, modeMatch[1], { announce: true, source: "explicit" });
+    return { handled: true, stateChanged: true };
   }
 
   if (normalized === "trace on") {
     setShellTrace(options, true, { announce: true });
-    return { handled: true };
+    return { handled: true, stateChanged: true };
   }
 
   if (normalized === "trace off") {
     setShellTrace(options, false, { announce: true });
-    return { handled: true };
+    return { handled: true, stateChanged: true };
   }
 
   if (normalized === "trace") {
@@ -4482,6 +4604,7 @@ async function runShellActionDirect(action, options) {
     case "sync":
       return formatSyncResult(await syncProject({ projectRoot: options.root }), options.json);
     case "evaluate_readiness": {
+      const relevantGuardrails = selectActiveGuardrails(options.plannerContext?.activeGuardrails, action.question, { limit: 4, fallbackLimit: 2 });
       const response = await evaluateProjectReadiness({
         projectRoot: options.root,
         request: {
@@ -4496,7 +4619,8 @@ async function runShellActionDirect(action, options) {
             allow_mutation: false,
             context_budget: "medium",
             time_budget_ms: 15000,
-            guideline_mode: "advisory"
+            guideline_mode: relevantGuardrails.length ? "active" : "advisory",
+            active_guardrails: relevantGuardrails
           },
           inputs: {
             tickets_scope: "active_and_blocked",
@@ -6208,6 +6332,253 @@ function hasKnownCodelet(plannerContext, codeletId) {
   return [...(plannerContext?.toolkitCodelets ?? []), ...(plannerContext?.projectCodelets ?? [])].some((item) => item.id === codeletId);
 }
 
+function buildExplicitShellCommandPlan(text, lower, plannerContext, { activeGraphState = null } = {}) {
+  const dogfoodBuildPlan = buildProgrammingDogfoodBuildPlan(text, plannerContext, {
+    activeGraphState
+  });
+  if (dogfoodBuildPlan) {
+    return dogfoodBuildPlan;
+  }
+
+  const searchMatch = text.match(/^(?:(?:please\s+)?(?:search|find|look up)(?:\s+for)?|(?:can|could|would)\s+you\s+(?:search for|find|look up))\s+(.+?)[?.!]*$/i);
+  if (searchMatch) {
+    const query = searchMatch[1]
+      .replace(/^for\s+/i, "")
+      .replace(/\s+(?:in|inside)\s+the\s+(?:generated|project)\s+project.*$/i, "")
+      .replace(/\s+and\s+show\s+me.*$/i, "")
+      .replace(/\s+and\s+tell\s+me.*$/i, "")
+      .replace(/\s+and\s+check.*$/i, "")
+      .trim();
+    return actionPlan([{ type: "search", query }], 0.95, "Explicit search request.");
+  }
+
+  const ticketMatch = text.match(new RegExp(`(?:extract\\s+ticket|show\\s+ticket|ticket|decompose\\s+ticket|break\\s+down)\\s+(${TICKET_ID_PATTERN})`, "i"));
+  if (ticketMatch) {
+    const isDecompose = /\b(?:decompose|break down|split)\b/i.test(text);
+    return actionPlan([{
+      type: isDecompose ? "decompose_ticket" : "extract_ticket",
+      ticketId: ticketMatch[1].toUpperCase()
+    }], 0.94, `Explicit ticket ${isDecompose ? "decomposition" : "extraction"} request.`);
+  }
+
+  const executeTicketMatch = text.match(new RegExp(`^(?:fix|resolve|complete|finish|execute|handle|work\\s+on|do)\\s+(?:ticket\\s+|issue\\s+)?(${TICKET_ID_PATTERN})$`, "i"));
+  if (executeTicketMatch) {
+    return actionPlan([{
+      type: "execute_ticket",
+      ticketId: executeTicketMatch[1].toUpperCase(),
+      apply: true
+    }], 0.96, "Explicit ticket execution request.");
+  }
+
+  const runCodeletMatch = text.match(/^run\s+(?:the\s+)?codelet\s+([a-z0-9._-]+)(?:\s+(.+))?$/i);
+  if (runCodeletMatch) {
+    const codeletId = runCodeletMatch[1].trim();
+    if (hasKnownCodelet(plannerContext, codeletId)) {
+      return actionPlan([{
+        type: "run_codelet",
+        codeletId,
+        args: splitShellWords(runCodeletMatch[2] ?? "")
+      }], 0.99, "Explicit codelet run request.");
+    }
+  }
+
+  const featureMatch = text.match(/^(?:(?:please\s+)?(?:add|create|new)|(?:can|could|would)\s+you\s+(?:add|create))\s+(?:new\s+)?(?:feature|epic|big task)\b\s*(?:for\s+)?(.*?)[?.!]*$/i);
+  if (featureMatch) {
+    return actionPlan([{
+      type: "ideate_feature",
+      intent: featureMatch[1].trim()
+    }], 0.95, "New feature ideation request.");
+  }
+
+  if (text.match(/^(?:sweep|fix|handle)\s+(?:all\s+)?(?:top\s+)?(?:priority\s+)?bugs\b/i)) {
+    return actionPlan([{ type: "sweep_bugs" }], 0.98, "Automated bug sweeping request.");
+  }
+
+  const guidelinesMatch = text.match(new RegExp(`(?:extract\\s+guidelines|guidelines)(?:\\s+for)?(?:\\s+(${TICKET_ID_PATTERN}))?`, "i"));
+  if (guidelinesMatch && /guideline/i.test(text)) {
+    return actionPlan([{
+      type: "extract_guidelines",
+      ticketId: guidelinesMatch[1]?.toUpperCase() ?? null,
+      changed: /\bchanged\b/.test(lower)
+    }], 0.9, "Explicit guideline extraction request.");
+  }
+
+  return null;
+}
+
+function buildProgrammingDogfoodBuildPlan(text, plannerContext, { activeGraphState = null } = {}) {
+  if (!hasKnownCodelet(plannerContext, "programming-dogfood-build")) {
+    return null;
+  }
+
+  const requestText = String(text ?? "");
+  const lower = requestText.toLowerCase();
+  const priorContext = [
+    activeGraphState?.focus?.subject,
+    activeGraphState?.request,
+    ...(Array.isArray(activeGraphState?.references?.evidence) ? activeGraphState.references.evidence : [])
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const mentionsProgrammingDogfood = /\b(programming dogfood project|dogfood project)\b/.test(lower);
+  const mentionsGenericTarget = /\b(dedicated project|project folder|project in|from scratch)\b/.test(lower);
+  const mentionsGameInRequest = /\b(space invaders|emoji ships|emoji ship|3d canvas|game)\b/.test(lower);
+  const mentionsGameInPriorContext = /\b(space invaders|emoji ships|emoji ship|3d canvas|game)\b/.test(priorContext);
+  const refersBackToPriorSubject = /\b(that|it|this)\b/.test(lower);
+  const soundsLikeDogfoodBuild = (
+    /\b(build|create|generate|make)\b/.test(lower)
+    && (
+      mentionsProgrammingDogfood
+      || (
+        mentionsGenericTarget
+        && (mentionsGameInRequest || (refersBackToPriorSubject && mentionsGameInPriorContext))
+      )
+    )
+  );
+  if (!soundsLikeDogfoodBuild) {
+    return null;
+  }
+
+  const quotedPathMatch = requestText.match(/["'](\/[^"']+)["']/);
+  const barePathMatch = requestText.match(/\s(\/[A-Za-z0-9._/-]+)/);
+  const targetPath = quotedPathMatch?.[1] ?? barePathMatch?.[1] ?? null;
+  if (!targetPath) {
+    return null;
+  }
+
+  const args = ["--target", targetPath];
+  if (/\b(from scratch|recreate|replace|overwrite|start over|clean rebuild|fresh)\b/.test(lower)) {
+    args.push("--force");
+  }
+  if (/\bjson\b/.test(lower)) {
+    args.push("--json");
+  }
+
+  return actionPlan([{
+    type: "run_codelet",
+    codeletId: "programming-dogfood-build",
+    args
+  }], 0.97, "Natural-language programming dogfood build request.");
+}
+
+function splitShellWords(text) {
+  const tokens = [];
+  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let match = null;
+  while ((match = pattern.exec(String(text ?? ""))) !== null) {
+    tokens.push(match[1] ?? match[2] ?? match[3]);
+  }
+  return tokens;
+}
+
+function normalizeRequestedShellWorkMode(value) {
+  const normalized = String(value ?? "auto").trim().toLowerCase();
+  return OPERATOR_SHELL_MODES.has(normalized) ? normalized : "auto";
+}
+
+function normalizeShellModeSource(value) {
+  const normalized = String(value ?? "default").trim().toLowerCase();
+  return ["default", "explicit", "inferred", "restored", "inherited", "fallback"].includes(normalized)
+    ? normalized
+    : "default";
+}
+
+function inferShellWorkModeFromInput(inputText) {
+  const text = normalizeConversationText(inputText);
+  if (!text) {
+    return "planning";
+  }
+  if (/\b(audit|auditing|review|readiness|healthy|ship|shipping|ready|approval|verify|verification)\b/.test(text)) {
+    return "auditing";
+  }
+  if (/\b(debug|diagnose|investigate|trace|broken|failing|failure|bug|bugs|regression|root cause)\b/.test(text)) {
+    return "bug-hunting";
+  }
+  if (/\b(fix|repair|resolve|patch|hotfix)\b/.test(text)) {
+    return "fixing";
+  }
+  if (/\b(create|add|new|build|implement|feature|epic|codelet|game)\b/.test(text)) {
+    return "feature";
+  }
+  return "planning";
+}
+
+function refreshShellWorkModeForInput(inputText, options) {
+  if (normalizeRequestedShellWorkMode(options.requestedWorkMode) === "auto") {
+    options.effectiveWorkMode = inferShellWorkModeFromInput(inputText);
+    options.modeSource = "inferred";
+    return;
+  }
+  options.effectiveWorkMode = normalizeRequestedShellWorkMode(options.requestedWorkMode);
+  options.modeSource = "explicit";
+}
+
+function setShellWorkMode(options, requestedMode, { announce = false, source = "explicit" } = {}) {
+  options.requestedWorkMode = normalizeRequestedShellWorkMode(requestedMode);
+  options.effectiveWorkMode = options.requestedWorkMode === "auto"
+    ? (options.effectiveWorkMode ?? "planning")
+    : options.requestedWorkMode;
+  options.modeSource = normalizeShellModeSource(source);
+  if (announce && !options.json) {
+    output.write(`${renderShellWorkModeMessage(options)}\n`);
+  }
+}
+
+function recordShellTurnHistory(options, line, result) {
+  options.history ??= [];
+  options.history.push({ role: "user", content: line });
+  if (result.plan?.reply) {
+    options.history.push({ role: "ai", content: result.plan.reply });
+  } else if (result.plan?.actions?.length || result.executed?.length) {
+    const executionSummary = (result.executed ?? []).map((execution) => {
+      const out = String(execution.stdout ?? "").trim();
+      const displayOut = out.length > 500 ? `${out.slice(0, 500)}... [truncated]` : out;
+      return `Action [${execution.action?.type ?? execution.summary ?? "unknown"}] output:\n${displayOut || execution.summary || "(no output)"}`;
+    }).join("\n\n");
+    options.history.push({
+      role: "ai",
+      content: `Strategy: ${result.plan?.strategy || "Execute actions"}\n\n${executionSummary || result.assistantReply || "(no output)"}`
+    });
+  } else if (result.assistantReply) {
+    options.history.push({ role: "ai", content: result.assistantReply });
+  }
+  if (options.history.length > 10) {
+    options.history = options.history.slice(-10);
+  }
+}
+
+async function readShellStateFile(filePath) {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function writeShellStateFile(filePath, options) {
+  if (!filePath) {
+    return;
+  }
+  const payload = {
+    runId: options.runId,
+    requestedWorkMode: normalizeRequestedShellWorkMode(options.requestedWorkMode ?? "auto"),
+    effectiveWorkMode: normalizeRequestedShellWorkMode(options.effectiveWorkMode ?? "planning"),
+    modeSource: normalizeShellModeSource(options.modeSource ?? "default"),
+    executionStance: options.shellMode === "mutate" ? "mutation-enabled" : "plan-only",
+    trace: Boolean(options.trace),
+    activeGraphState: options.activeGraphState ?? null,
+    history: Array.isArray(options.history) ? options.history : [],
+    updatedAt: new Date().toISOString()
+  };
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+}
+
 function buildTicketContextPackArgs(plannerContext, ticketId) {
   return [
     "--ticket",
@@ -7095,6 +7466,19 @@ function formatProjectMetrics(metrics, json) {
     lines.push(`- Quality: ${window.quality.qualityScore}/100 based on ${window.quality.basisLabel} (${window.quality.successRate}% success, ${window.quality.fastEnoughRate}% fast-enough)`);
     lines.push(`- Mix: ${window.localCalls} local / ${window.remoteCalls} remote, ${window.realTraffic.calls} real / ${window.mockTraffic.calls} mock calls`);
     lines.push(`- Tokens: ${window.totalTokens} total (${window.realTraffic.totalTokens} real / ${window.mockTraffic.totalTokens} mock)`);
+    if (window.diagnostics?.fallbackRuns || window.diagnostics?.failedAttempts) {
+      lines.push(`- Fallback: ${window.diagnostics.fallbackRuns} run(s), ${window.diagnostics.fallbackRecoveries} recovered, ${window.diagnostics.failedAttempts} failed attempt(s), ${Math.round(window.diagnostics.wastedLatencyMs / 1000)}s wasted`);
+    }
+    if (window.diagnostics?.byStage?.length) {
+      const stageSummary = window.diagnostics.byStage
+        .slice(0, 2)
+        .map((entry) => `${entry.stage} ${entry.successRate}% success over ${entry.calls} call(s)`)
+        .join("; ");
+      lines.push(`- Stages: ${stageSummary}`);
+    }
+    if (window.diagnostics?.topFailures?.length) {
+      lines.push(`- Failure hotspot: ${window.diagnostics.topFailures[0].label} (${window.diagnostics.topFailures[0].count})`);
+    }
     if (window.byModel?.length) {
       lines.push(`- Top model: ${window.byModel[0].model_id} (${window.byModel[0].count} calls, ${window.byModel[0].success_rate}% success)`);
     }
@@ -7136,6 +7520,13 @@ function formatReadinessEvaluation(response, json) {
     lines.push("Evidence gaps:");
     for (const gap of response.gaps.slice(0, 4)) {
       lines.push(`- ${gap}`);
+    }
+  }
+  if (response.guideline_findings?.length) {
+    lines.push("");
+    lines.push("Guardrail findings:");
+    for (const item of response.guideline_findings.slice(0, 4)) {
+      lines.push(`- ${item}`);
     }
   }
   if (response.recommended_next_actions?.length) {

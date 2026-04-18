@@ -15,12 +15,15 @@ const METRICS_DEFAULT_PROFILE = {
 };
 const METRICS_TASK_PROFILES = {
   "shell-planning": { manualBaselineMs: 8 * 60 * 1000, operatorOverheadMs: 45 * 1000, fastEnoughMs: 8 * 1000 },
+  "project-planning": { manualBaselineMs: 14 * 60 * 1000, operatorOverheadMs: 75 * 1000, fastEnoughMs: 15 * 1000 },
   "task-decomposition": { manualBaselineMs: 18 * 60 * 1000, operatorOverheadMs: 90 * 1000, fastEnoughMs: 20 * 1000 },
   "review": { manualBaselineMs: 25 * 60 * 1000, operatorOverheadMs: 90 * 1000, fastEnoughMs: 20 * 1000 },
   "architectural-reasoning": { manualBaselineMs: 22 * 60 * 1000, operatorOverheadMs: 90 * 1000, fastEnoughMs: 20 * 1000 },
+  "architectural-design": { manualBaselineMs: 22 * 60 * 1000, operatorOverheadMs: 90 * 1000, fastEnoughMs: 20 * 1000 },
   "code-generation": { manualBaselineMs: 30 * 60 * 1000, operatorOverheadMs: 2 * 60 * 1000, fastEnoughMs: 30 * 1000 },
   "refactoring": { manualBaselineMs: 24 * 60 * 1000, operatorOverheadMs: 90 * 1000, fastEnoughMs: 25 * 1000 },
   "bug-hunting": { manualBaselineMs: 28 * 60 * 1000, operatorOverheadMs: 2 * 60 * 1000, fastEnoughMs: 30 * 1000 },
+  "debugging": { manualBaselineMs: 28 * 60 * 1000, operatorOverheadMs: 2 * 60 * 1000, fastEnoughMs: 30 * 1000 },
   "summarization": { manualBaselineMs: 10 * 60 * 1000, operatorOverheadMs: 60 * 1000, fastEnoughMs: 12 * 1000 },
   "extraction": { manualBaselineMs: 8 * 60 * 1000, operatorOverheadMs: 60 * 1000, fastEnoughMs: 12 * 1000 },
   "classification": { manualBaselineMs: 7 * 60 * 1000, operatorOverheadMs: 45 * 1000, fastEnoughMs: 10 * 1000 },
@@ -182,7 +185,103 @@ function emptyMetricsSetSummary() {
       failureRate: 0,
       fastEnoughRate: 0,
       qualityScore: 0
+    },
+    diagnostics: {
+      fallbackRuns: 0,
+      fallbackRecoveries: 0,
+      failedAttempts: 0,
+      wastedLatencyMs: 0,
+      byStage: [],
+      topFailures: []
     }
+  };
+}
+
+function normalizeMetricFailureLabel(text) {
+  const normalized = String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) {
+    return "";
+  }
+  return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+}
+
+function summarizeMetricDiagnostics(metrics) {
+  if (!metrics.length) {
+    return emptyMetricsSetSummary().diagnostics;
+  }
+
+  const byStage = new Map();
+  const failureCounts = new Map();
+  let fallbackRuns = 0;
+  let fallbackRecoveries = 0;
+  let failedAttempts = 0;
+  let wastedLatencyMs = 0;
+
+  for (const metric of metrics) {
+    const details = metric.details ?? {};
+    const stage = String(details.stage ?? metric.task_class ?? "unknown").trim() || "unknown";
+    const attemptCount = Number.isFinite(Number(details.attemptCount)) ? Math.max(0, Math.round(Number(details.attemptCount))) : 0;
+    const explicitFailedAttempts = Number.isFinite(Number(details.failedAttempts)) ? Math.max(0, Math.round(Number(details.failedAttempts))) : null;
+    const failedCandidateList = Array.isArray(details.failedCandidates) ? details.failedCandidates : [];
+    const metricFailedAttempts = explicitFailedAttempts ?? failedCandidateList.length;
+    const fallbackUsed = Boolean(details.fallbackUsed) || attemptCount > 1 || metricFailedAttempts > 0;
+    const failedLatencyMs = Number.isFinite(Number(details.failedLatencyMs)) ? Math.max(0, Math.round(Number(details.failedLatencyMs))) : 0;
+
+    const stageEntry = byStage.get(stage) ?? {
+      stage,
+      calls: 0,
+      successes: 0,
+      fallbackRuns: 0,
+      failedAttempts: 0,
+      wastedLatencyMs: 0
+    };
+    stageEntry.calls += 1;
+    stageEntry.successes += metric.success ? 1 : 0;
+    stageEntry.fallbackRuns += fallbackUsed ? 1 : 0;
+    stageEntry.failedAttempts += metricFailedAttempts;
+    stageEntry.wastedLatencyMs += failedLatencyMs;
+    byStage.set(stage, stageEntry);
+
+    fallbackRuns += fallbackUsed ? 1 : 0;
+    fallbackRecoveries += fallbackUsed && metric.success ? 1 : 0;
+    failedAttempts += metricFailedAttempts;
+    wastedLatencyMs += failedLatencyMs;
+
+    const directError = normalizeMetricFailureLabel(metric.error_message);
+    if (directError) {
+      failureCounts.set(directError, (failureCounts.get(directError) ?? 0) + 1);
+    }
+    for (const failed of failedCandidateList) {
+      const providerModel = [failed?.providerId, failed?.modelId].filter(Boolean).join(":");
+      const label = normalizeMetricFailureLabel([providerModel, failed?.error].filter(Boolean).join(" "));
+      if (!label) {
+        continue;
+      }
+      failureCounts.set(label, (failureCounts.get(label) ?? 0) + 1);
+    }
+  }
+
+  return {
+    fallbackRuns,
+    fallbackRecoveries,
+    failedAttempts,
+    wastedLatencyMs,
+    byStage: Array.from(byStage.values())
+      .map((entry) => ({
+        stage: entry.stage,
+        calls: entry.calls,
+        successRate: Math.round((entry.successes / entry.calls) * 100),
+        fallbackRuns: entry.fallbackRuns,
+        failedAttempts: entry.failedAttempts,
+        wastedLatencyMs: entry.wastedLatencyMs
+      }))
+      .sort((left, right) => right.calls - left.calls || left.stage.localeCompare(right.stage)),
+    topFailures: Array.from(failureCounts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label))
+      .slice(0, 5)
   };
 }
 
@@ -251,6 +350,7 @@ function summarizeMetricSet(metrics) {
   const fastEnoughRate = Math.round((fastEnoughCount / calls) * 100);
   const failureRate = 100 - successRate;
   const qualityScore = Math.round((successRate * 0.7) + (fastEnoughRate * 0.3));
+  const diagnostics = summarizeMetricDiagnostics(metrics);
   const estimatedMinutesSaved = Math.round((estimatedManualMs - estimatedToolMs) / 60000);
   const leverageRatio = estimatedToolMs > 0
     ? Number((estimatedManualMs / estimatedToolMs).toFixed(2))
@@ -301,7 +401,8 @@ function summarizeMetricSet(metrics) {
       failureRate,
       fastEnoughRate,
       qualityScore
-    }
+    },
+    diagnostics
   };
 }
 
@@ -330,6 +431,10 @@ function summarizeMetricsWindow(metrics) {
   }
   if (realTraffic.calls && (realTraffic.quality.successRate < 50 || realTraffic.quality.fastEnoughRate < 50)) {
     alerts.push(`Real traffic is degraded: ${realTraffic.quality.successRate}% success, ${realTraffic.avgLatencyMs}ms avg latency.`);
+  }
+  if (overall.diagnostics.fallbackRuns) {
+    const wastedSeconds = Math.round(overall.diagnostics.wastedLatencyMs / 1000);
+    alerts.push(`Fallback used in ${overall.diagnostics.fallbackRuns} run(s), with ${overall.diagnostics.failedAttempts} failed attempt(s) and ${wastedSeconds}s lost before recovery.`);
   }
 
   return {
@@ -374,6 +479,7 @@ export class SqliteWorkflowStore {
     // duplicate-column failures and re-read the schema after each attempt.
     await this.ensureColumn("entities", "consultation_question", "TEXT");
     await this.ensureColumn("entities", "parent_id", "TEXT");
+    await this.ensureColumn("metrics", "details_json", "TEXT NOT NULL DEFAULT '{}'");
   }
 
   constructor({ db, dbPath, projectRoot }) {
@@ -1080,13 +1186,13 @@ export class SqliteWorkflowStore {
     );
   }
 
-  appendMetric({ taskClass, capability, providerId, modelId, promptTokens, completionTokens, latencyMs, success, errorMessage = null, createdAt = nowIso() }) {
+  appendMetric({ taskClass, capability, providerId, modelId, promptTokens, completionTokens, latencyMs, success, errorMessage = null, details = null, createdAt = nowIso() }) {
     const normalizedPromptTokens = Number.isFinite(Number(promptTokens)) ? Number(promptTokens) : 0;
     const normalizedCompletionTokens = Number.isFinite(Number(completionTokens)) ? Number(completionTokens) : 0;
     const normalizedLatencyMs = Number.isFinite(Number(latencyMs)) ? Math.max(0, Math.round(Number(latencyMs))) : 0;
     this.db.prepare(`
-      INSERT INTO metrics (id, task_class, capability, provider_id, model_id, prompt_tokens, completion_tokens, latency_ms, success, error_message, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO metrics (id, task_class, capability, provider_id, model_id, prompt_tokens, completion_tokens, latency_ms, success, error_message, details_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       stableId("metric", taskClass, providerId, modelId, createdAt, Math.random()),
       taskClass,
@@ -1098,6 +1204,7 @@ export class SqliteWorkflowStore {
       normalizedLatencyMs,
       success ? 1 : 0,
       errorMessage,
+      asJson(details ?? {}),
       createdAt
     );
   }
@@ -1125,6 +1232,7 @@ export class SqliteWorkflowStore {
         activeWork: "latency plus a fixed operator-overhead allowance per recorded metric event",
         qualityBasis: "quality/help score prefers real traffic when available and excludes mock traffic from scoring",
         tokens: "token counts show actual model usage only; manual-baseline token savings are not estimated",
+        details: "structured metric details capture stage, fallback, and wasted-latency diagnostics when a caller provides them",
         sessionIdleGapMinutes: Math.round(METRICS_SESSION_IDLE_GAP_MS / 60000),
         trailingWeekDays: 7,
         lastWorkHours: 4
@@ -1165,6 +1273,7 @@ export class SqliteWorkflowStore {
       latency_ms: m.latency_ms,
       success: Boolean(m.success),
       error_message: m.error_message,
+      details: parseJson(m.details_json, {}),
       created_at: m.created_at
     }));
   }

@@ -22,6 +22,7 @@ import { runProviderSetupWizard } from "./provider-setup.mjs";
 import { installAgents } from "./install.mjs";
 import { forgeProjectCodelet, removeProjectCodelet, upsertProjectCodelet } from "./project-codelets.mjs";
 import { routeTask } from "../../core/services/router.mjs";
+import { loadProjectActiveGuardrails, selectActiveGuardrails } from "../../runtime/scripts/ai-workflow/lib/active-guardrails.mjs";
 import { auditArchitecture } from "../../core/services/critic.mjs";
 import { refreshProviderQuotaState } from "../../core/services/providers.mjs";
 import { refreshCodeletRegistry, listCodeletsFromStore, getCodeletFromStore, searchCodeletsFromStore } from "../../core/services/codelets.mjs";
@@ -526,6 +527,8 @@ async function handleProject(rest) {
     });
     assertSafeRepairTarget(context, { action: "readiness evaluation" });
     const projectRoot = context.mode === "tool-dev" ? context.evidenceRoot : context.repairTargetRoot;
+    const activeGuardrails = await loadProjectActiveGuardrails(projectRoot, { limit: 8 }).catch(() => []);
+    const relevantGuardrails = selectActiveGuardrails(activeGuardrails, question, { limit: 4, fallbackLimit: 2 });
     const response = await evaluateProjectReadiness({
       projectRoot,
       request: {
@@ -540,7 +543,8 @@ async function handleProject(rest) {
           allow_mutation: false,
           context_budget: "medium",
           time_budget_ms: 15000,
-          guideline_mode: "advisory"
+          guideline_mode: relevantGuardrails.length ? "active" : "advisory",
+          active_guardrails: relevantGuardrails
         },
         inputs: {
           tickets_scope: "active_and_blocked",
@@ -1421,6 +1425,19 @@ function renderMetricsSummary(metrics) {
     lines.push(`- Quality: ${window.quality.qualityScore}/100 based on ${window.quality.basisLabel} (${window.quality.successRate}% success, ${window.quality.fastEnoughRate}% fast-enough)`);
     lines.push(`- Mix: ${window.localCalls} local / ${window.remoteCalls} remote, ${window.realTraffic.calls} real / ${window.mockTraffic.calls} mock calls`);
     lines.push(`- Tokens: ${window.totalTokens} total (${window.realTraffic.totalTokens} real / ${window.mockTraffic.totalTokens} mock)`);
+    if (window.diagnostics?.fallbackRuns || window.diagnostics?.failedAttempts) {
+      lines.push(`- Fallback: ${window.diagnostics.fallbackRuns} run(s), ${window.diagnostics.fallbackRecoveries} recovered, ${window.diagnostics.failedAttempts} failed attempt(s), ${Math.round(window.diagnostics.wastedLatencyMs / 1000)}s wasted`);
+    }
+    if (window.diagnostics?.byStage?.length) {
+      const stageSummary = window.diagnostics.byStage
+        .slice(0, 2)
+        .map((entry) => `${entry.stage} ${entry.successRate}% success over ${entry.calls} call(s)`)
+        .join("; ");
+      lines.push(`- Stages: ${stageSummary}`);
+    }
+    if (window.diagnostics?.topFailures?.length) {
+      lines.push(`- Failure hotspot: ${window.diagnostics.topFailures[0].label} (${window.diagnostics.topFailures[0].count})`);
+    }
     if (window.byModel?.length) {
       lines.push(`- Top model: ${window.byModel[0].model_id} (${window.byModel[0].count} calls, ${window.byModel[0].success_rate}% success)`);
     }

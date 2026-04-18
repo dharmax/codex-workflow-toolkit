@@ -1,0 +1,20 @@
+export const CONFIG = {
+  playerSpeed: 0.95,
+  playerY: -0.34,
+  playerZ: 0.16,
+  playerCooldown: 0.26,
+  bulletSpeed: 1.75,
+  enemyShotSpeed: 0.92,
+  enemyShiftSpeed: 0.18,
+  enemyDropStep: 0.055,
+  waveRows: 4,
+  waveCols: 7,
+  enemyBaseY: 0.62,
+  enemyRowStep: 0.12,
+  enemyColStep: 0.24,
+  enemyBaseZ: 1.3,
+  enemyRowZStep: 0.22,
+  worldMinX: -0.92,
+  worldMaxX: 0.92,
+  restartDelay: 0.35
+};

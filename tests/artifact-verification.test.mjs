@@ -83,6 +83,88 @@ test("artifact judge passes text and image evidence through structured content p
   }
 });
 
+test("artifact judge falls back when the first provider returns unstructured output", { concurrency: false }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "artifact-judge-fallback-"));
+  const primaryProviderId = `mock-artifact-primary-${Date.now()}`;
+  const fallbackProviderId = `mock-artifact-fallback-${Date.now()}`;
+
+  try {
+    await mkdir(path.join(root, ".ai-workflow"), { recursive: true });
+    await writeFile(path.join(root, ".ai-workflow", "config.json"), JSON.stringify({
+      providers: {
+        [primaryProviderId]: {
+          apiKey: "primary-key",
+          models: ["judge-v1"]
+        },
+        [fallbackProviderId]: {
+          apiKey: "fallback-key",
+          models: ["judge-v2"]
+        },
+        openai: {
+          enabled: false
+        },
+        anthropic: {
+          enabled: false
+        },
+        google: {
+          enabled: false
+        },
+        ollama: {
+          enabled: false
+        }
+      }
+    }, null, 2), "utf8");
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await writeFile(path.join(root, "docs", "review.md"), "# Design review\n\nThe artifact looks good.\n", "utf8");
+
+    registerProvider(primaryProviderId, {
+      generate: async () => ({
+        providerId: primaryProviderId,
+        modelId: "judge-v1",
+        response: "[0.42, 0.22, 0.79, 0.38]"
+      })
+    });
+    registerProvider(fallbackProviderId, {
+      generate: async () => ({
+        providerId: fallbackProviderId,
+        modelId: "judge-v2",
+        response: JSON.stringify({
+          status: "pass",
+          score: 95,
+          confidence: 0.99,
+          summary: "Fallback judge returned a valid structured verdict.",
+          findings: ["Review content is present"],
+          recommendations: [],
+          artifacts: [
+            {
+              path: "docs/review.md",
+              status: "pass",
+              score: 95,
+              findings: ["Fallback provider judged the artifact"]
+            }
+          ],
+          needs_human_review: false
+        })
+      })
+    });
+
+    const payload = await judgeArtifacts({
+      projectRoot: root,
+      artifactPaths: ["docs/review.md"],
+      rubric: "The design note must include enough context to explain the generated project.",
+      providerId: primaryProviderId,
+      modelId: "judge-v1"
+    });
+
+    assert.equal(payload.result.status, "pass");
+    assert.equal(payload.result.summary, "Fallback judge returned a valid structured verdict.");
+    assert.equal(payload.diagnostics.failedAttempts, 1);
+    assert.equal(payload.diagnostics.successfulProviderId, fallbackProviderId);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("verification summary incorporates artifact judgments into the final conclusion", { concurrency: false }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "artifact-verify-summary-"));
   const providerId = `mock-artifact-summary-${Date.now()}`;

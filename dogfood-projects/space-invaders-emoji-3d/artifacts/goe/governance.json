@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-18T17:58:54.010Z",
+  "turns": [
+    {
+      "turn": 1,
+      "prompt": "Please create a new feature for a modular, expandable 3d canvas Space Invaders-style game that uses emoji ships. I want the long-term vision, epics, features, modules, planning notes, tests, and debugging expectations to be part of the work.",
+      "interpretation": {
+        "requestedWorkMode": "auto",
+        "effectiveWorkMode": "feature",
+        "modeSource": "inferred",
+        "executionStance": "plan-only",
+        "verdict": "approved"
+      },
+      "artifactAudit": {
+        "status": "pending-build-audit"
+      }
+    },
+    {
+      "turn": 2,
+      "prompt": "Please build that into a dedicated programming dogfood project in \"/home/dharmax/work/ai-workflow/dogfood-projects/space-invaders-emoji-3d\" from scratch, and reply in JSON so I can inspect the result.",
+      "interpretation": {
+        "requestedWorkMode": "auto",
+        "effectiveWorkMode": "feature",
+        "modeSource": "inferred",
+        "executionStance": "plan-only",
+        "verdict": "approved"
+      },
+      "artifactAudit": {
+        "status": "observational"
+      }
+    },
+    {
+      "turn": 3,
+      "prompt": "Can you find Emoji Star Lanes in the generated project and show me where the title and main game files ended up?",
+      "interpretation": {
+        "requestedWorkMode": "auto",
+        "effectiveWorkMode": "feature",
+        "modeSource": "inferred",
+        "executionStance": "plan-only",
+        "verdict": "approved"
+      },
+      "artifactAudit": {
+        "status": "observational"
+      }
+    },
+    {
+      "turn": 4,
+      "prompt": "Can you look up EPIC-GAME-001 in the generated project and show me whether the long-term vision and module split are there?",
+      "interpretation": {
+        "requestedWorkMode": "auto",
+        "effectiveWorkMode": "feature",
+        "modeSource": "inferred",
+        "executionStance": "plan-only",
+        "verdict": "approved"
+      },
+      "artifactAudit": {
+        "status": "observational"
+      }
+    }
+  ]
+}

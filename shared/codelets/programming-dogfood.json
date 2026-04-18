@@ -1,0 +1,8 @@
+{
+  "id": "programming-dogfood",
+  "stability": "beta",
+  "category": "execution",
+  "summary": "Use the real ai-workflow shell to drive a dedicated programming dogfood session, capture the shell dialog, and verify the generated modular emoji Space Invaders web game.",
+  "runner": "node-script",
+  "entry": "runtime/scripts/ai-workflow/programming-dogfood.mjs"
+}

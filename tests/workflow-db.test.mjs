@@ -823,6 +823,53 @@ test("metrics summary scores mixed windows from real traffic instead of mock tra
   }
 });
 
+test("metrics summary surfaces fallback diagnostics and failure hotspots from structured details", async () => {
+  const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-metrics-details-"));
+
+  try {
+    const store = await openWorkflowStore({ projectRoot: targetRoot, dbPath: path.join(targetRoot, "workflow.db") });
+    store.appendMetric({
+      taskClass: "project-planning",
+      capability: "strategy",
+      providerId: "openai",
+      modelId: "gpt-4o",
+      latencyMs: 18250,
+      success: true,
+      createdAt: "2026-04-09T10:00:00.000Z",
+      details: {
+        stage: "operator-planning",
+        candidateCount: 2,
+        attemptCount: 2,
+        fallbackUsed: true,
+        failedAttempts: 1,
+        failedLatencyMs: 3150,
+        failedCandidates: [
+          {
+            providerId: "google",
+            modelId: "gemini-2.0-pro-exp",
+            latencyMs: 3150,
+            timedOut: false,
+            error: "Gemini API key is blocked for Generative Language API."
+          }
+        ]
+      }
+    });
+
+    const summary = store.getMetricsSummary({ now: new Date("2026-04-09T12:00:00.000Z") });
+    store.close();
+
+    assert.equal(summary.windows.latestSession.diagnostics.fallbackRuns, 1);
+    assert.equal(summary.windows.latestSession.diagnostics.fallbackRecoveries, 1);
+    assert.equal(summary.windows.latestSession.diagnostics.failedAttempts, 1);
+    assert.equal(summary.windows.latestSession.diagnostics.wastedLatencyMs, 3150);
+    assert.equal(summary.windows.latestSession.diagnostics.byStage[0].stage, "operator-planning");
+    assert.match(summary.windows.latestSession.diagnostics.topFailures[0].label, /google:gemini-2.0-pro-exp/i);
+    assert.match(summary.windows.latestSession.alerts.join("\n"), /Fallback used in 1 run/);
+  } finally {
+    await rm(targetRoot, { recursive: true, force: true });
+  }
+});
+
 test("project summary excludes done tickets and sync suppresses projection/progress note noise", async () => {
   const targetRoot = await mkdtemp(path.join(os.tmpdir(), "workflow-db-summary-"));
 
@@ -879,6 +926,8 @@ test("evaluateProjectReadiness returns insufficient_evidence when verification p
     assert.equal(response.status, "insufficient_evidence");
     assert.equal(response.opinion.verdict, "not_ready");
     assert.equal(response.gaps.some((item) => /verification artifact/i.test(item)), true);
+    assert.equal(Array.isArray(response.guideline_findings), true);
+    assert.equal(response.guideline_findings.length > 0, true);
     assert.equal(response.recommended_next_actions.length >= 1, true);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });
@@ -930,6 +979,8 @@ test("evaluateProjectReadiness returns complete when checklist and verification 
     assert.equal(response.status, "complete");
     assert.equal(response.opinion.verdict, "ready");
     assert.equal(response.gaps.length, 0);
+    assert.equal(Array.isArray(response.guideline_findings), true);
+    assert.equal(response.guideline_findings.length > 0, true);
     assert.equal(response.opinion.confidence >= 0.6, true);
   } finally {
     await rm(targetRoot, { recursive: true, force: true });

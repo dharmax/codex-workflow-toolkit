@@ -1,0 +1,19 @@
+{
+  "generatedAt": "2026-04-18T17:58:05.091Z",
+  "fingerprint": "e3c551bf9126145593069167851aade8e63a3179",
+  "packages": [
+    {
+      "name": "@dharmax/ai-workflow",
+      "currentVersion": null,
+      "latestVersion": null,
+      "status": "unknown"
+    },
+    {
+      "name": "lean-ctx",
+      "currentVersion": "3.2.2",
+      "latestVersion": null,
+      "status": "unknown"
+    }
+  ],
+  "comment": "Upgrade check:\n- @dharmax/ai-workflow: current unknown, latest unavailable.\n- lean-ctx: current 3.2.2, latest unavailable.\nKeep ai-workflow and related tooling on the latest stable release before shipping changes."
+}

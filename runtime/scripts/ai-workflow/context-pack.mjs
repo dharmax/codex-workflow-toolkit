@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import path from "node:path";
+import { compileActiveGuardrails } from "./lib/active-guardrails.mjs";
 import { parseArgs, printAndExit, splitCsv } from "./lib/cli.mjs";
 import { isWorkflowStatePath, normalizePath, readText } from "./lib/fs-utils.mjs";
 import { compactGuidanceItems, deriveKeywords, inferValidationPlan, summarizeGuidance } from "./lib/guidance-utils.mjs";
@@ -82,6 +83,15 @@ const guidanceSlices = compactGuidanceItems([
   ...summarizeGuidance(manual, keywords, { limit: 4, fallbackLimit: 2 }),
   ...summarizeGuidance(knowledge, keywords, { limit: 2, fallbackLimit: 1 })
 ], { limit: 10 });
+const activeGuardrails = compileActiveGuardrails({
+  agents,
+  contributing,
+  executionProtocol,
+  enforcement,
+  projectGuidelines: guidelines,
+  manual,
+  knowledge
+}, { keywords, limit: 6 });
 
 const reviewFocus = buildReviewFocus(workingSetFiles, inferredWorkingSet);
 const hygiene = recommendSessionHygiene({ fileCount: workingSetFiles.length, guidanceCount: guidanceSlices.length, ticket });
@@ -94,13 +104,14 @@ const summary = {
   workingSetSource: uniqueFiles.length ? "explicit-or-changed" : "ticket-inference",
   workingSetEvidence: inferredWorkingSet.evidence,
   guidanceSlices,
+  activeGuardrails,
   reviewFocus,
   validationPlan: inferValidationPlan({ ticket, files: workingSetFiles }),
   risks: buildRisks({ files: workingSetFiles, reviewFocus }),
   openQuestions: buildOpenQuestions({ ticket, files: workingSetFiles, inferredWorkingSet }),
   sessionHygiene: hygiene,
   freshSessionRecommended: hygiene.recommendation === "/new",
-  resumePrompt: buildResumePrompt({ ticket, files: workingSetFiles, symbols: inferredWorkingSet.symbols, guidanceSlices, reviewFocus, hygiene })
+  resumePrompt: buildResumePrompt({ ticket, files: workingSetFiles, symbols: inferredWorkingSet.symbols, guidanceSlices, activeGuardrails, reviewFocus, hygiene })
 };
 
 if (args.json) {
@@ -123,6 +134,11 @@ lines.push("");
 lines.push("Guidance bundle");
 for (const item of summary.guidanceSlices) {
   lines.push(`- ${item}`);
+}
+lines.push("");
+lines.push("Active guardrails");
+for (const item of summary.activeGuardrails) {
+  lines.push(`- [${item.severity}] ${item.summary}`);
 }
 lines.push("");
 lines.push("Review focus");
@@ -219,7 +235,7 @@ function buildOpenQuestions({ ticket, files, inferredWorkingSet }) {
   return questions;
 }
 
-function buildResumePrompt({ ticket, files, symbols, guidanceSlices, reviewFocus, hygiene }) {
+function buildResumePrompt({ ticket, files, symbols, guidanceSlices, activeGuardrails, reviewFocus, hygiene }) {
   const parts = [];
   parts.push("Resume this work using the compact bundle below.");
 
@@ -237,6 +253,10 @@ function buildResumePrompt({ ticket, files, symbols, guidanceSlices, reviewFocus
 
   if (guidanceSlices.length) {
     parts.push(`Guidance: ${guidanceSlices.join(" | ")}.`);
+  }
+
+  if (activeGuardrails.length) {
+    parts.push(`Active guardrails: ${activeGuardrails.map((item) => `[${item.severity}] ${item.summary}`).join(" | ")}.`);
   }
 
   if (reviewFocus.length) {

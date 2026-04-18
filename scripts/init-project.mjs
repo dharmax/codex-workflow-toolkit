@@ -28,14 +28,14 @@ const repoRoot = path.resolve(__dirname, "..");
 const templatesRoot = path.resolve(repoRoot, "templates");
 const runtimeRoot = path.resolve(repoRoot, "runtime", "scripts", "ai-workflow");
 const WORKFLOW_PACKAGE_SCRIPTS = {
-  "workflow:kanban": "ai-workflow kanban",
-  "workflow:ticket": "ai-workflow project ticket",
-  "workflow:guidance": "ai-workflow run guidelines",
-  "workflow:review": "ai-workflow run review",
-  "workflow:verify": "ai-workflow run verify",
-  "workflow:dogfood": "ai-workflow dogfood",
-  "workflow:guideline-audit": "ai-workflow run guideline-audit",
-  "workflow:audit": "ai-workflow audit workflow"
+  "workflow:kanban": "node scripts/ai-workflow/kanban.mjs",
+  "workflow:ticket": "node scripts/ai-workflow/kanban-ticket.mjs",
+  "workflow:guidance": "node scripts/ai-workflow/guidance-summary.mjs",
+  "workflow:review": "node scripts/ai-workflow/review-summary.mjs",
+  "workflow:verify": "node scripts/ai-workflow/verification-summary.mjs",
+  "workflow:dogfood": "node scripts/ai-workflow/dogfood.mjs",
+  "workflow:guideline-audit": "node scripts/ai-workflow/guideline-audit.mjs",
+  "workflow:audit": "node scripts/ai-workflow/workflow-audit.mjs"
 };
 
 const args = parseArgs(process.argv.slice(2));
@@ -101,6 +101,18 @@ const plan = [
     target: path.resolve(targetRoot, ".github", "workflows", "ai-workflow-audit.yml")
   }
 ];
+const runtimeScripts = await readdir(runtimeRoot, { withFileTypes: true });
+for (const entry of runtimeScripts) {
+  if (!entry.isFile() || !entry.name.endsWith(".mjs")) {
+    continue;
+  }
+  const relativeRuntimePath = entry.name;
+  plan.push({
+    target: path.resolve(targetRoot, "scripts", "ai-workflow", relativeRuntimePath),
+    content: buildRuntimeWrapper(relativeRuntimePath),
+    essential: true
+  });
+}
 
 const summary = {
   installed: [],
@@ -340,6 +352,27 @@ async function walkFiles(rootPath) {
   }
 
   return files;
+}
+
+function buildRuntimeWrapper(relativeRuntimePath) {
+  const runtimeScriptPath = path.resolve(runtimeRoot, relativeRuntimePath);
+  return `#!/usr/bin/env node
+import { spawn } from "node:child_process";
+
+const child = spawn(process.execPath, [${JSON.stringify(runtimeScriptPath)}, ...process.argv.slice(2)], {
+  cwd: process.cwd(),
+  env: process.env,
+  stdio: "inherit"
+});
+
+child.on("exit", (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+    return;
+  }
+  process.exit(code ?? 0);
+});
+`;
 }
 
 async function classifyAction(entry, forceOverwrite) {
